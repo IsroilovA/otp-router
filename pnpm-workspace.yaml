@@ -1,0 +1,7 @@
+allowBuilds:
+  '@parcel/watcher': false
+  esbuild: true
+  msgpackr-extract: false
+patchedDependencies:
+  pg-boss@12.33.2: patches/pg-boss@12.33.2.patch
+  vitest@3.2.7: patches/vitest@3.2.7.patch

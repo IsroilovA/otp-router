@@ -1,0 +1,33 @@
+diff --git a/dist/types.d.ts b/dist/types.d.ts
+index c04203536be4b3cb91cac20ce8b65c66f512a11a..f749469c39e1ad9f3bb4f1d6620940beee433335 100644
+--- a/dist/types.d.ts
++++ b/dist/types.d.ts
+@@ -1310,3 +1310,28 @@ export type PgBossEventMap = {
+     flow: [data: FlowEvent];
+ };
+ //# sourceMappingURL=types.d.ts.map
++export interface CompatibilityFlags {
++  noSkipLocked?: boolean;
++  noMultiMutationCte?: boolean;
++  noTablePartitioning?: boolean;
++  noDeferrableConstraints?: boolean;
++  noAdvisoryLocks?: boolean;
++  noCoveringIndexes?: boolean;
++  noAddColumnBackfill?: boolean;
++  noListenNotify?: boolean;
++  noIndexProgressView?: boolean;
++  noReindex?: boolean;
++  noMonitorVacuum?: boolean;
++  noTransactionalHeartbeat?: boolean;
++}
++
++export interface ResolvedConstructorOptions extends ConstructorOptions, CompatibilityFlags {
++  schema: string;
++  clock: Clock;
++  monitorIntervalSeconds: number;
++  cronMonitorIntervalSeconds: number;
++  maintenanceIntervalSeconds: number;
++  bamIntervalSeconds: number;
++  flowIntervalSeconds: number;
++  reindexIntervalSeconds: number;
++}

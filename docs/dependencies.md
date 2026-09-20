@@ -1,6 +1,6 @@
 # Implementation dependencies
 
-Status: selected stack. Choose stable compatible versions and lock them at implementation time.
+Status: foundation dependencies installed and pinned. Application integration remains unimplemented.
 
 ## Selected stack
 
@@ -55,8 +55,30 @@ Do not substitute `any`, unchecked assertions, or suppressed errors for validati
 - Commit exact resolved versions to the lockfile; production installs must not drift.
 - Keep one supported Node.js range and test its minimum and preferred versions in CI. Do not encode a permanent major version in the product specification.
 - Confirm each direct dependency's license, runtime requirements, and current maintenance before adding it.
-- Verify the selected migration mechanisms and choose the phone-number parsing package, formatter, lint setup, and telemetry exporter.
+- Verify the selected migration mechanisms and choose the phone-number parsing package and telemetry exporter.
 - Test transaction rollback, worker restart, cancellation, and duplicate callbacks against real PostgreSQL.
 - Select the PostgreSQL support range and test its oldest supported version.
 
-Rerun the nine [SQL integration checks](research/sql-pg-research.md) and strict type checking with the selected versions. The historical probe used dependencies outside this documentation-only project.
+Rerun the nine [SQL integration checks](research/sql-pg-research.md) and strict type checking with the selected versions. The historical probe used a separate dependency installation.
+
+## Installed development tooling
+
+Use TypeScript 7 for checks/builds, Oxlint with `oxlint-tsgolint` for typed linting, `@effect/tsgo` for Effect diagnostics, and Biome for formatting. Effect diagnostics run as a separate CLI step, without patching installed compiler binaries. The tsconfig plugin settings configure that step.
+
+Oxlint covers the selected safety, complexity, import, and test rules. Both it and typescript-eslint caught unsafe assertions, floating Promises, incomplete union switches, and excess complexity in a temporary comparison fixture. ESLint also works with TypeScript 7 through Microsoft's TypeScript 6 compatibility alias, but this project needs no ESLint-only plugin. Keep one linter. See [TypeScript compatibility](https://devblogs.microsoft.com/typescript/announcing-typescript-7-0/#running-side-by-side-with-typescript-6-0), [Oxlint typed linting](https://oxc.rs/docs/guide/usage/linter/type-aware.html), and [Effect diagnostics](https://github.com/Effect-TS/tsgo).
+
+Effect 3 is the current stable line. Vitest 3 satisfies `@effect/vitest`'s peer range; later Vitest majors do not. Node types target the supported Node 24 baseline. Exact versions live in `package.json` and the lockfile. `pnpm-workspace.yaml` stores dependency build-script permissions for this single package; it does not define a monorepo.
+
+The pinned Vitest patch removes a duplicate Chai `Assert.containSubset` declaration already supplied by its required `@types/chai`. This keeps `skipLibCheck: false`; remove the patch when upgrading to a version without the conflict.
+
+## PostgreSQL query and migration choice
+
+Keep `@effect/sql-pg` and `PgMigrator`. Use parameterized SQL for queries and Effect `SqlSchema` to validate returned rows before domain use. This fits the existing Effect runtime and explicit transaction boundaries for challenge state, quota reservation, and queue insertion. [Effect SQL](https://github.com/Effect-TS/effect/blob/v3/packages/sql/README.md) supports parameterized queries and forward-only authored migrations; [pg-boss adapters](https://pgboss.io/api/adapters) support enqueue within the application transaction. This is a project-specific choice, not a requirement to avoid ORMs. There is no ORM or automatic schema-diff generator. SQL column names and constraints need PostgreSQL integration checks; TypeScript does not check SQL text.
+
+Drizzle adds typed table definitions and generated migrations, and Effect provides an [official adapter](https://effect.website/docs/v3/api/sql-drizzle/Pg). A local compatibility check of `@effect/sql-drizzle` 0.51.0 with `drizzle-orm` 0.45.2 failed under the project's TypeScript 7 configuration with `skipLibCheck: false`. Errors included missing unrelated driver types and incompatible library declarations. These packages were removed. Keep the already tested Effect SQL transaction path for pg-boss.
+
+Drizzle's [lint plugin](https://orm.drizzle.team/docs/eslint-plugin) checks updates and deletes for a `where` clause. It applies to Drizzle calls, not Effect SQL strings, so it is not installed. Require predicates in query review and test consequential mutation boundaries against PostgreSQL.
+
+The database scaffold exports a pool layer and an empty migration layer. Startup composition and database behavior remain unimplemented. Migration authoring rules live in [AGENTS.md](../AGENTS.md) and [database instructions](../src/database/AGENTS.md).
+
+The pinned pg-boss 12.33.2 patch restores `CompatibilityFlags` and `ResolvedConstructorOptions` from the matching upstream source. Published declarations reference these omitted types. No runtime code changes; remove the patch when the package supplies them.

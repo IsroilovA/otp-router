@@ -14,6 +14,10 @@ A worker runs durable delivery jobs and expiry cleanup. The self-hosted image de
 
 Each deployment serves one application. Independent deployments need separate storage namespaces. See [data ownership](data-model.md#ownership-and-identifiers) and [deployment](operations.md).
 
+## Source organization
+
+Use feature-first modules. `challenges/` owns creation, verification, cancellation, and expiry; `delivery/` owns send actions, routing, dispatch, and outcomes. Colocate feature types, queries, and tests. `providers/`, `http/`, `worker/`, `database/`, and `config/` contain their respective integration concerns. Features never depend on HTTP handlers or worker startup. See [AGENTS.md](../AGENTS.md) for coding conventions.
+
 ## Configuration and extensions
 
 One trusted [TypeScript configuration file](operations.md#configuration-entry-file) registers providers, named policies, and secrets at startup. The supported extensions are [provider adapters and creation-time routing selectors](plugins.md). Persist the selected route and non-secret settings before delivery.

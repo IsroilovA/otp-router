@@ -18,9 +18,31 @@ pnpm build
 pnpm lint
 pnpm format:check
 pnpm check
+pnpm test
 ```
 
-Run `pnpm format` to format supported files. Build output goes to `dist/`, which Git ignores.
+Run `pnpm format` to format supported files. Build output goes to `dist/`; tests are excluded. `pnpm test` currently checks queue lifecycle failure and interruption; it does not require PostgreSQL. CI runs checks, tests, and builds on Node 24 and 26.
+
+`pnpm typecheck` runs TypeScript 7 and Effect diagnostics. `pnpm lint` runs Oxlint with type information; Biome handles formatting only. Lints reject unsafe types, floating Promises, incomplete union switches, import cycles, focused/skipped tests, complexity above 10, nesting above 4, and more than 4 parameters. Read [AGENTS.md](AGENTS.md) before implementation.
+
+## PostgreSQL foundation
+
+Use `@effect/sql-pg` for parameterized SQL and transactions, `SqlSchema` for result validation, and `PgMigrator` for authored migrations. No ORM or schema-diff generator is installed. `src/database/client.ts` defines a lazy pool layer using a redacted `DATABASE_URL`; `src/database/migrations.ts` defines an empty migration layer. Startup composition, tables, queries, and queue integration remain unimplemented. Importing either module does not connect or migrate.
+
+## Local PostgreSQL and queue
+
+```sh
+cp .env.example .env
+pnpm db:up
+```
+
+Compose runs PostgreSQL 17 on `127.0.0.1:54329` with a persistent volume. The example credentials are for local development. `pnpm db:down` stops the database and preserves its data. This development image does not establish the production PostgreSQL support range.
+
+Node processes must load `.env` explicitly with `node --env-file=.env ...` or receive `DATABASE_URL` from the environment. No application entry point exists yet.
+
+`src/queue/client.ts` exports a scoped `QueueLive` layer. It owns a separate pg-boss pool, starts pg-boss with automatic migrations enabled, and stops it when the scope closes. Startup failures are typed and background logs omit raw error payloads. Shutdown failures become defects so cleanup errors remain visible. The 30-second shutdown timeout is pg-boss's worker-drain limit, not a hard deadline for every database operation.
+
+When composing startup, finish router migrations before building `QueueLive`; keep readiness false until both succeed. Queue handlers, transactional enqueue, startup migration deadlines, and process signal handling belong to the first complete flow.
 
 ## Current contracts
 
