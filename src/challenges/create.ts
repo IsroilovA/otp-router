@@ -195,5 +195,5 @@ const initialPosition = (
       return yield* Effect.fail(
         new DomainError({ code: "rate_limited", retryAt: selected.retryAt }),
       );
-    return saved.providers.indexOf(selected.provider);
+    return selected.position;
   });

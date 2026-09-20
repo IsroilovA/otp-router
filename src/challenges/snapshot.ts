@@ -1,8 +1,14 @@
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { availableProviders } from "../delivery/eligibility.js";
+import {
+  availableProviders,
+  chooseAvailable,
+  nextProvider,
+  userSendBlock,
+  type ProviderAvailability,
+} from "../delivery/eligibility.js";
 import type { Snapshot } from "./contracts.js";
-import type { Challenge, Delivery, SavedProvider } from "./records.js";
+import type { Challenge, Delivery } from "./records.js";
 import { findDelivery, invalidRecipient } from "./store.js";
 import { quotaRetryAt, recipientLimit } from "./quotas.js";
 
@@ -21,44 +27,20 @@ const activeAction = (challenge: Challenge): Action =>
 const sendAction = (challenge: Challenge, time: Date, retryAt: string | undefined): Action => {
   const active = activeAction(challenge);
   if (!active.allowed) return active;
-  if (challenge.send_count >= challenge.snapshot.maxSends) return deny("rate_limited");
-  const cooldown =
-    time < challenge.next_user_send_at ? challenge.next_user_send_at.toISOString() : undefined;
-  if (retryAt !== undefined)
-    return deny("rate_limited", cooldown !== undefined && cooldown > retryAt ? cooldown : retryAt);
-  if (cooldown !== undefined) return deny("cooldown_active", cooldown);
-  return { allowed: true };
-};
-interface Option {
-  readonly provider: SavedProvider;
-  readonly action: Action;
-}
-const optionsFor = (config: RuntimeConfiguration, challenge: Challenge, time: Date) =>
-  Effect.gen(function* () {
-    const available = yield* availableProviders(config, challenge, time);
-    return available.map(({ provider, retryAt }) => ({
-      provider,
-      action: sendAction(challenge, time, retryAt),
-    }));
-  });
-const selectAction = (challenge: Challenge, options: readonly Option[]): Action => {
-  if (!challenge.snapshot.manualSelectionEnabled) return deny("manual_selection_disabled");
-  if (options.length === 0) return deny("provider_unavailable");
-  if (options.some((option) => option.action.allowed)) return { allowed: true };
-  const future = options
-    .flatMap((option) =>
-      option.action.availableAt === undefined ? [] : [option.action.availableAt],
-    )
-    .sort()[0];
-  return deny(options[0]?.action.reason ?? "provider_unavailable", future);
+  const blocked = userSendBlock(challenge, time, retryAt);
+  return blocked === undefined ? { allowed: true } : deny(blocked.code, blocked.retryAt);
 };
 const deliveryActions = (
   config: RuntimeConfiguration,
   challenge: Challenge,
   delivery: Delivery,
-  availability: { readonly options: readonly Option[]; readonly stopped: boolean },
+  availability: {
+    readonly options: readonly ProviderAvailability[];
+    readonly stopped: boolean;
+    readonly time: Date;
+  },
 ) => {
-  const { options, stopped } = availability;
+  const { options, stopped, time } = availability;
   const common = stopped ? deny("delivery_unavailable") : activeAction(challenge);
   const manual = options.filter((option) =>
     challenge.snapshot.manualProviderIds.includes(option.provider.providerInstanceId),
@@ -71,13 +53,23 @@ const deliveryActions = (
   const current = options.find(
     (option) => option.provider.providerInstanceId === delivery.provider_instance_id,
   );
-  const next = options.find(
-    (option) => challenge.snapshot.providers.indexOf(option.provider) > delivery.route_position,
-  );
+  const next = nextProvider(options, delivery.route_position);
+  const selected = chooseAvailable(manual);
+  const action = (
+    option: ProviderAvailability | undefined,
+    missing: NonNullable<Action["reason"]>,
+  ) => (option === undefined ? deny(missing) : sendAction(challenge, time, option.retryAt));
   return {
-    resend: common.allowed ? (current?.action ?? deny("provider_unavailable")) : common,
-    next: common.allowed ? (next?.action ?? deny("no_next_provider")) : common,
-    select: { ...(common.allowed ? selectAction(challenge, manual) : common), choices },
+    resend: common.allowed ? action(current, "provider_unavailable") : common,
+    next: common.allowed ? action(next, "no_next_provider") : common,
+    select: {
+      ...(common.allowed
+        ? challenge.snapshot.manualSelectionEnabled
+          ? action(selected, "provider_unavailable")
+          : deny("manual_selection_disabled")
+        : common),
+      choices,
+    },
     hasNext: next !== undefined,
   };
 };
@@ -85,7 +77,8 @@ export const snapshot = (config: RuntimeConfiguration, challenge: Challenge, tim
   Effect.gen(function* () {
     const delivery = yield* findDelivery(challenge.current_delivery_id);
     const { hasNext, ...actions } = deliveryActions(config, challenge, delivery, {
-      options: yield* optionsFor(config, challenge, time),
+      options: yield* availableProviders(config, challenge, time),
+      time,
       stopped: yield* invalidRecipient(challenge.id),
     });
     const common = activeAction(challenge);

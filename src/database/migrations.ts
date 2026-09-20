@@ -1,7 +1,6 @@
 import * as PgMigrator from "@effect/sql-pg/PgMigrator";
 import { SqlClient } from "effect/unstable/sql";
 import { Data, Effect, Layer, Schema } from "effect";
-import controls from "./migrations/0002_deployment_controls.js";
 import initial from "./migrations/0001_initial.js";
 import { rows } from "./query.js";
 export class SchemaCompatibilityError extends Data.TaggedError("SchemaCompatibilityError")<{}> {}
@@ -21,14 +20,13 @@ export const migrate = Effect.gen(function* () {
         table: "public.effect_sql_migrations",
         loader: PgMigrator.fromRecord({
           "0001_initial_schema": initial,
-          "0002_deployment_controls": controls,
         }),
       });
       const versions = yield* rows(
         Schema.Struct({ migration_id: Schema.Int }),
         sql`SELECT migration_id FROM public.effect_sql_migrations ORDER BY migration_id DESC LIMIT 1`,
       );
-      if (versions[0]?.migration_id !== 2)
+      if (versions[0]?.migration_id !== 1)
         return yield* Effect.fail(new SchemaCompatibilityError());
     }),
   );

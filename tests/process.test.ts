@@ -178,7 +178,7 @@ const provider = {
     if (process.env.OTP_TEST_BEFORE_SEND === "1") await new Promise(() => {});
     await appendFile(sink, JSON.stringify({ deliveryId: input.deliveryId, code: input.code }) + "\\n", { encoding: "utf8", mode: 0o600 });
     if (process.env.OTP_TEST_BLOCK === "1") await new Promise(() => {});
-    return { providerRequestId: "process:" + input.deliveryId, acceptanceEvidence: "process_fake_accepted" };
+    return { providerRequestId: "process:" + input.deliveryId };
   }),
 };
 

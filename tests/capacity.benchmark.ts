@@ -163,7 +163,7 @@ const provider = {
     await appendFile(sink, JSON.stringify({ deliveryId: input.deliveryId, invokedAt: Date.now() }) + "\\n", { encoding: "utf8", mode: 0o600 });
     if (process.env.OTP_BENCHMARK_BLOCK === "1") await new Promise(() => {});
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
-    return { providerRequestId: "benchmark:" + input.deliveryId, acceptanceEvidence: "benchmark_fake_accepted" };
+    return { providerRequestId: "benchmark:" + input.deliveryId };
   }),
 };
 

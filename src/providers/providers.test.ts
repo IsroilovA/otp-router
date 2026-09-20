@@ -86,7 +86,6 @@ it.effect("normalizes every consequential fake send outcome", () =>
     const accepted = yield* build(FakeProvider, fakeConfig("accepted"));
     expect(yield* accepted.send(sendInput())).toEqual({
       providerRequestId: `fake:${deliveryId}`,
-      acceptanceEvidence: "fake_accepted",
     });
     for (const [outcome, tag, acceptance] of expectations) {
       const provider = yield* build(FakeProvider, fakeConfig(outcome));

@@ -71,7 +71,7 @@ const sendForOutcome = (
 ): Effect.Effect<SendAccepted, ProviderSendError> => {
   switch (outcome) {
     case "accepted":
-      return Effect.succeed({ providerRequestId, acceptanceEvidence: "fake_accepted" });
+      return Effect.succeed({ providerRequestId });
     case "recipient_unavailable":
       return Effect.fail(
         new RecipientUnavailable({

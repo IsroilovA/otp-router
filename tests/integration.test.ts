@@ -7,6 +7,7 @@ import {
   type CreateInput,
   type OperationResult,
 } from "../src/challenges/contracts.js";
+import { challengeStatus } from "../src/challenges/status.js";
 import { createChallenge } from "../src/challenges/create.js";
 import { decrypt, operationIdentity } from "../src/challenges/crypto.js";
 import { verifyChallenge } from "../src/challenges/verify.js";
@@ -88,7 +89,6 @@ const sendOutcome = (
     case "accepted":
       return Effect.succeed({
         providerRequestId: `${id}:${input.deliveryId}`,
-        acceptanceEvidence: "integration_fake_accepted",
       });
     case "rejected":
       return Effect.fail(
@@ -130,7 +130,6 @@ const sendOutcome = (
       return Effect.promise(() => control.release?.promise ?? Promise.resolve()).pipe(
         Effect.as({
           providerRequestId: `${id}:${input.deliveryId}`,
-          acceptanceEvidence: "integration_fake_accepted",
         }),
       );
   }
@@ -301,9 +300,6 @@ const withProviderIdempotency = (
     ...provider,
     idempotency: {
       supported: true,
-      keyScope: "delivery",
-      retention: "integration-test",
-      deduplicationEvidence: "provider-request-id",
     },
   });
   return { ...config, providers };
@@ -317,6 +313,40 @@ const createDirect = (
   currentRuntime().run(
     createChallenge(config, { key: operationKey, input, requestId: randomUUID() }),
   );
+
+const withThreeProviders = (): RuntimeConfiguration => {
+  const harness = currentRuntime();
+  const providers = new Map(harness.configuration.providers);
+  const second = providers.get("fake-secondary");
+  const policy = harness.configuration.settings.policies["default"];
+  if (second === undefined || policy === undefined)
+    throw new Error("Expected the secondary provider and default policy");
+  const tertiaryId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-tertiary");
+  providers.set("fake-tertiary", {
+    ...second,
+    instanceId: tertiaryId,
+    settingsFingerprint: "fake-tertiary-settings-v1",
+    send: (input) =>
+      Effect.sync(() => {
+        tertiary.sends.push(input);
+        return tertiary.outcome;
+      }).pipe(Effect.flatMap((outcome) => sendOutcome("fake-tertiary", input, tertiary, outcome))),
+  });
+  return {
+    ...harness.configuration,
+    providers,
+    settings: {
+      ...harness.configuration.settings,
+      policies: {
+        ...harness.configuration.settings.policies,
+        default: {
+          ...policy,
+          providerInstanceIds: ["fake-primary", "fake-secondary", "fake-tertiary"],
+        },
+      },
+    },
+  };
+};
 
 const Counts = Schema.Struct({ count: Schema.Int });
 const count = async (table: string): Promise<number> => {
@@ -683,7 +713,7 @@ describe("PostgreSQL integration", () => {
       const release = Promise.withResolvers<void>();
       const blocker = harness.run(
         harness.pg.withTransaction(
-          harness.pg`SELECT identity FROM otp_router.quota_keys WHERE identity = ${quotaIdentity} FOR UPDATE`.pipe(
+          harness.pg`SELECT pg_advisory_xact_lock(hashtextextended(${`quota:${quotaIdentity}`},0))`.pipe(
             Effect.tap(() => Effect.sync(() => entered.resolve())),
             Effect.andThen(Effect.promise(() => release.promise)),
           ),
@@ -1000,9 +1030,6 @@ describe("PostgreSQL integration", () => {
     const created = await createDirect(config, "quota-retry-create");
     const challengeId = challengeIdFrom(created);
     const eventId = randomUUID();
-    await harness.run(
-      harness.pg`INSERT INTO otp_router.quota_keys(identity) VALUES ('provider:fake-primary') ON CONFLICT DO NOTHING`,
-    );
     await harness.run(
       harness.pg`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES ('provider:fake-primary','send',${eventId},clock_timestamp())`,
     );
@@ -1382,39 +1409,7 @@ describe("PostgreSQL integration", () => {
   });
 
   it("falls forward from an initially selected middle provider without route wraparound", async () => {
-    const harness = currentRuntime();
-    const providers = new Map(harness.configuration.providers);
-    const second = providers.get("fake-secondary");
-    const policy = harness.configuration.settings.policies["default"];
-    if (second === undefined || policy === undefined)
-      throw new Error("Expected the secondary provider and default policy");
-    const tertiaryId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-tertiary");
-    providers.set("fake-tertiary", {
-      ...second,
-      instanceId: tertiaryId,
-      settingsFingerprint: "fake-tertiary-settings-v1",
-      send: (input) =>
-        Effect.sync(() => {
-          tertiary.sends.push(input);
-          return tertiary.outcome;
-        }).pipe(
-          Effect.flatMap((outcome) => sendOutcome("fake-tertiary", input, tertiary, outcome)),
-        ),
-    });
-    const config: RuntimeConfiguration = {
-      ...harness.configuration,
-      providers,
-      settings: {
-        ...harness.configuration.settings,
-        policies: {
-          ...harness.configuration.settings.policies,
-          default: {
-            ...policy,
-            providerInstanceIds: ["fake-primary", "fake-secondary", "fake-tertiary"],
-          },
-        },
-      },
-    };
+    const config = withThreeProviders();
     secondary.outcome = "rejected";
     await createDirect(config, "middle-provider-create", {
       ...createInput(),
@@ -1479,7 +1474,7 @@ describe("PostgreSQL integration", () => {
     };
     expect(await Effect.runPromise(Effect.result(harness.router.deliver(request)))).toMatchObject({
       _tag: "Failure",
-      failure: { code: "delivery_option_not_allowed" },
+      failure: { code: "rate_limited", retryAt: "2099-01-01T00:00:00.000Z" },
     });
 
     await harness.run(
@@ -2073,9 +2068,6 @@ describe("PostgreSQL integration", () => {
       providers,
     };
     await harness.run(
-      harness.pg`INSERT INTO otp_router.quota_keys(identity) VALUES ('provider:fake-primary')`,
-    );
-    await harness.run(
       harness.pg`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES ('provider:fake-primary','send',${randomUUID()},clock_timestamp())`,
     );
     const created = await createDirect(config, "same-channel-create", {
@@ -2462,5 +2454,119 @@ describe("PostgreSQL integration", () => {
       ),
     ).toEqual([{ verification_state: "expired" }]);
     expect(await count("challenge_secrets")).toBe(0);
+  });
+});
+
+it.each([
+  {
+    phase: "creation",
+    blockedId: "fake-primary",
+    blocked: primary,
+    delivered: secondary,
+    sends: 1,
+  },
+  {
+    phase: "dispatch",
+    blockedId: "fake-primary",
+    blocked: primary,
+    delivered: secondary,
+    sends: 1,
+  },
+  {
+    phase: "fallback",
+    blockedId: "fake-secondary",
+    blocked: secondary,
+    delivered: tertiary,
+    sends: 2,
+  },
+  { phase: "next", blockedId: "fake-secondary", blocked: secondary, delivered: tertiary, sends: 2 },
+])(
+  "skips a provider-specific quota exhausted before $phase",
+  async ({ phase, blockedId, blocked, delivered, sends }) => {
+    const harness = currentRuntime();
+    const base = withThreeProviders();
+    const config: RuntimeConfiguration = {
+      ...base,
+      settings: { ...base.settings, providerSendLimits15m: { [blockedId]: 1 } },
+    };
+    const exhaust = () =>
+      harness.run(
+        harness.pg`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES (${`provider:${blockedId}`},'send',${randomUUID()},clock_timestamp())`,
+      );
+    if (phase === "creation") await exhaust();
+    const created = await createDirect(config, `skip-quota-${phase}`);
+    const challengeId = challengeIdFrom(created);
+    if (phase !== "creation") await exhaust();
+    if (phase === "fallback") primary.outcome = "rejected";
+    await dispatchNext(config);
+    if (phase === "next") {
+      await harness.run(
+        harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() WHERE id = ${challengeId}`,
+      );
+      await harness.run(
+        requestDelivery(config, {
+          key: "skip-capped-next",
+          challengeId,
+          requestId: randomUUID(),
+          input: { action: "next" },
+        }),
+      );
+    }
+    if (phase !== "creation") await dispatchNext(config);
+    expect(blocked.sends).toHaveLength(0);
+    expect(delivered.sends).toHaveLength(1);
+    const status = await harness.run(challengeStatus(config, challengeId));
+    expect(status.body).toMatchObject({ delivery: { state: "accepted" } });
+    expect(await harness.queue.fetch(deliveryQueue)).toHaveLength(0);
+    expect(
+      await query(
+        Schema.Struct({ send_count: Schema.Int }),
+        `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeId}'`,
+      ),
+    ).toEqual([{ send_count: sends }]);
+  },
+);
+
+it("forecasts the same restriction and cooldown decision as an explicit resend", async () => {
+  const harness = currentRuntime();
+  const created = await create("restriction-forecast");
+  const challengeId = challengeIdFrom(created);
+  await dispatchNext();
+  const retryAt = new Date(Date.now() + 45_000);
+  await harness.run(
+    harness.pg`INSERT INTO otp_router.provider_restrictions(provider_instance_id,retry_at) VALUES ('fake-primary',${retryAt})`,
+  );
+  const status = await Effect.runPromise(harness.router.status(challengeId));
+  expect(status.body).toMatchObject({
+    actions: {
+      resend: {
+        allowed: false,
+        reason: "rate_limited",
+        availableAt: retryAt.toISOString(),
+      },
+    },
+  });
+  const request = {
+    key: "restricted-resend",
+    challengeId,
+    requestId: randomUUID(),
+    input: { action: "resend" as const },
+  };
+  expect(await Effect.runPromise(Effect.result(harness.router.deliver(request)))).toMatchObject({
+    _tag: "Failure",
+    failure: { code: "rate_limited", retryAt: retryAt.toISOString() },
+  });
+  expect(primary.sends).toHaveLength(1);
+  expect(await count("deliveries")).toBe(1);
+  await harness.run(
+    harness.pg`UPDATE otp_router.provider_restrictions SET retry_at = clock_timestamp() WHERE provider_instance_id = 'fake-primary'`,
+  );
+  const cooldownStatus = Schema.decodeUnknownSync(Snapshot)(
+    (await Effect.runPromise(harness.router.status(challengeId))).body,
+  );
+  expect(cooldownStatus.actions.resend.reason).toBe("cooldown_active");
+  expect(await Effect.runPromise(Effect.result(harness.router.deliver(request)))).toMatchObject({
+    _tag: "Failure",
+    failure: { code: "cooldown_active", retryAt: cooldownStatus.actions.resend.availableAt },
   });
 });

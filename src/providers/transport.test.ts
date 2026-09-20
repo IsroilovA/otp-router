@@ -69,3 +69,44 @@ it.effect("aborts a timed-out response body without retrying the provider reques
     expect(fetch).toHaveBeenCalledOnce();
   }),
 );
+
+it.effect("bounds streamed response bodies and cancels oversized responses without retrying", () =>
+  Effect.gen(function* () {
+    const request = {
+      url: "https://provider.invalid/send",
+      method: "POST" as const,
+      headers: {},
+      body: new Uint8Array(),
+    };
+    for (const headers of [{}, { "content-length": "999999" }, { "content-length": "1" }]) {
+      const cancel = vi.fn<() => void>();
+      const fetch = vi.fn<typeof globalThis.fetch>(() =>
+        Promise.resolve(
+          new Response(
+            new ReadableStream<Uint8Array>({
+              pull(controller) {
+                controller.enqueue(new Uint8Array(64 * 1024));
+              },
+              cancel,
+            }),
+            { headers },
+          ),
+        ),
+      );
+      vi.stubGlobal("fetch", fetch);
+      expect(yield* Effect.result(fetchTransport.execute(request))).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "response_too_large" },
+      });
+      expect(cancel).toHaveBeenCalledOnce();
+      expect(fetch).toHaveBeenCalledOnce();
+    }
+    vi.stubGlobal(
+      "fetch",
+      vi.fn<typeof globalThis.fetch>(() =>
+        Promise.resolve(new Response(new Uint8Array(256 * 1024))),
+      ),
+    );
+    expect((yield* fetchTransport.execute(request)).body.byteLength).toBe(256 * 1024);
+  }),
+);

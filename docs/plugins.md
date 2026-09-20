@@ -14,7 +14,7 @@ A provider receives a normalized phone number, unchanged router code, absolute e
 
 ## Send outcomes
 
-Success means acceptance, not delivery. Return a provider request ID when available and normalized evidence. Do not return raw responses.
+Success means acceptance, not delivery. Return a provider request ID when available. Do not return raw responses.
 
 Expected failures carry a category, acceptance certainty, a normalized diagnostic code, and an optional retry time. Declare safe diagnostic codes in `diagnosticCodes`; undeclared text is replaced with `unclassified` before persistence. Keep defects and interruption distinct from expected failures.
 

@@ -213,7 +213,7 @@ export const startRuntime = async (
       await queue.deleteAllJobs();
       await run(
         sql.unsafe(
-          "TRUNCATE TABLE otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.deliveries, otp_router.challenge_secrets, otp_router.idempotency_records, otp_router.quota_events, otp_router.quota_keys, otp_router.challenges CASCADE",
+          "TRUNCATE TABLE otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.deliveries, otp_router.challenge_secrets, otp_router.idempotency_records, otp_router.quota_events, otp_router.challenges CASCADE",
         ),
       );
     };

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { ConfigurationError, type Settings } from "../config/config.js";
@@ -74,4 +75,3 @@ export const validateDeploymentIdentity = (settings: Settings, adoptRecipientKey
       }),
     );
   });
-import { createHash } from "node:crypto";

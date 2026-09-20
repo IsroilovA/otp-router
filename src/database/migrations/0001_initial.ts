@@ -42,6 +42,7 @@ export default Effect.gen(function* () {
     delivery_id uuid NOT NULL REFERENCES otp_router.deliveries(id) ON DELETE CASCADE,
     PRIMARY KEY (provider_instance_id, reference)
   )`;
+  yield* sql`CREATE INDEX correlations_delivery ON otp_router.provider_correlations(delivery_id)`;
   yield* sql`CREATE TABLE otp_router.callback_inbox (
     provider_instance_id text NOT NULL, deduplication_key text NOT NULL, reference text NOT NULL,
     status text NOT NULL CHECK (status IN ('accepted','delivered','failed')),
@@ -55,11 +56,12 @@ export default Effect.gen(function* () {
     created_at timestamptz NOT NULL, retain_until timestamptz NOT NULL
   )`;
   yield* sql`CREATE INDEX idempotency_challenge ON otp_router.idempotency_records(challenge_id)`;
-  yield* sql`CREATE TABLE otp_router.quota_keys (identity text PRIMARY KEY)`;
   yield* sql`CREATE TABLE otp_router.quota_events (
-    identity text NOT NULL REFERENCES otp_router.quota_keys(identity), kind text NOT NULL,
+    identity text NOT NULL, kind text NOT NULL,
     event_id uuid NOT NULL, occurred_at timestamptz NOT NULL,
     PRIMARY KEY (identity,kind,event_id)
   )`;
   yield* sql`CREATE INDEX quota_window ON otp_router.quota_events(identity,kind,occurred_at)`;
+  yield* sql`CREATE TABLE otp_router.provider_restrictions(provider_instance_id text PRIMARY KEY,retry_at timestamptz NOT NULL)`;
+  yield* sql`CREATE TABLE otp_router.deployment_identity(singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),deployment_id text NOT NULL,recipient_key_fingerprint text NOT NULL)`;
 });

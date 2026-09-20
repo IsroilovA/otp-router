@@ -48,8 +48,7 @@ export const lockQuotas = (limits: readonly Limit[]) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     for (const identity of [...new Set(limits.map((limit) => limit.identity))].sort()) {
-      yield* sql`INSERT INTO otp_router.quota_keys(identity) VALUES (${identity}) ON CONFLICT DO NOTHING`;
-      yield* sql`SELECT identity FROM otp_router.quota_keys WHERE identity = ${identity} FOR UPDATE`;
+      yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`quota:${identity}`},0))`;
     }
   });
 export const quotaRetryAt = (limits: readonly Limit[], time: Date) =>

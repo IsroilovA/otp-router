@@ -324,9 +324,6 @@ describe("database compatibility and maintenance", () => {
       `,
     );
     await harness.run(
-      harness.pg`INSERT INTO otp_router.quota_keys(identity) VALUES (${quotaIdentity})`,
-    );
-    await harness.run(
       harness.pg`
         INSERT INTO otp_router.quota_events(identity, kind, event_id, occurred_at)
         SELECT ${quotaIdentity}, 'send', gen_random_uuid(), clock_timestamp() - interval '25 hours'
@@ -483,9 +480,6 @@ describe("database compatibility and maintenance", () => {
   it("uses the latest retry time across the 15-minute and 24-hour deployment windows", async () => {
     const harness = current();
     const now = new Date("2030-01-02T12:00:00.000Z");
-    await harness.run(
-      harness.pg`INSERT INTO otp_router.quota_keys(identity) VALUES ('deployment')`,
-    );
     for (const occurredAt of [
       new Date(now.getTime() - 86_400_000),
       new Date(now.getTime() - 23 * 3_600_000),

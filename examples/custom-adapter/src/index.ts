@@ -28,7 +28,6 @@ const send = (config: TextConfiguration, input: ProviderSendInput): Effect.Effec
     void `${config.prefix}${input.code}`;
     return {
       providerRequestId: `text:${input.deliveryId}`,
-      acceptanceEvidence: "custom_text_sink",
     };
   });
 

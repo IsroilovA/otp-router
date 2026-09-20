@@ -8,7 +8,7 @@ Confirmed rejection or final delivery failure advances to the next eligible prov
 
 Unknown acceptance, timeouts, programming defects, and interruption do not authorize fallback or another send. There are no timed fallbacks, automatic provider-send retries, or status polling. Disable retries in transports and provider SDKs as well.
 
-Provider eligibility includes the saved configuration identity, emergency disables, provider restrictions, remaining lifetime, and send budgets. A generic HTTP error does not establish whether the provider accepted a request.
+Provider eligibility includes the saved configuration identity, emergency disables, provider restrictions, remaining lifetime, and send budgets. Creation, next, and automatic fallback skip providers whose individual budgets or restrictions block sending; shared budget exhaustion blocks every provider. A generic HTTP error does not establish whether the provider accepted a request.
 
 ## User actions
 

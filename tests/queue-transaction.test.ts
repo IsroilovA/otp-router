@@ -314,7 +314,7 @@ describe("transaction-local queue integration", () => {
               ),
             )
           ).map((row) => row.migration_id),
-        ).toEqual([1, 2]);
+        ).toEqual([1]);
       } finally {
         await Promise.all(runtimes.map((runtime) => runtime.close()));
       }
@@ -333,7 +333,7 @@ describe("transaction-local queue integration", () => {
             h.pg`SELECT to_regclass('otp_router.effect_sql_migrations')::text AS shadow,
               (SELECT count(*)::integer FROM public.effect_sql_migrations) AS count`,
           );
-          expect(history).toEqual({ shadow: null, count: 2 });
+          expect(history).toEqual({ shadow: null, count: 1 });
         }),
       ),
     );
@@ -354,7 +354,7 @@ describe("transaction-local queue integration", () => {
           ),
         )
       ).count,
-    ).toBe(2);
+    ).toBe(1);
     await h.run(
       h.pg`INSERT INTO effect_sql_migrations(migration_id,name) VALUES (999,'future_test_fixture')`,
     );

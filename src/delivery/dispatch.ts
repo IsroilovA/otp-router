@@ -16,11 +16,17 @@ import {
 import { logEvent } from "../diagnostics/log.js";
 import { count, duration } from "../diagnostics/metrics.js";
 import { decrypt } from "../challenges/crypto.js";
-import { checkQuotas, countQuotas, lockQuotas, sendLimits } from "../challenges/quotas.js";
+import {
+  checkQuotas,
+  commonSendLimits,
+  countQuotas,
+  lockQuotas,
+  sendLimits,
+} from "../challenges/quotas.js";
 import { expire, findChallenge, findDelivery, findSecrets } from "../challenges/store.js";
 import type { Challenge, Delivery } from "../challenges/records.js";
 import type { DeliveryJob } from "../queue/jobs.js";
-import { eligibleProviders } from "./eligibility.js";
+import { availableProviders } from "./eligibility.js";
 import { recordAccepted } from "./callbacks.js";
 import { mergeLockedOutcome, recordOutcome, type Outcome } from "./outcomes.js";
 
@@ -58,24 +64,31 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE id = ${delivery.id} AND state = 'pending'`;
         return undefined;
       }
-      const saved = (yield* eligibleProviders(config, challenge, time)).find(
-        (provider) => provider.providerInstanceId === delivery.provider_instance_id,
+      const sharedBudget = yield* checkQuotas(
+        commonSendLimits(config.settings, challenge.recipient_token),
+        time,
+      ).pipe(
+        Effect.as(true),
+        Effect.catchTag("DomainError", () => Effect.succeed(false)),
       );
-      if (saved === undefined) {
-        // Local ineligibility is not a counted provider request. Advance only the current route.
-        yield* mergeLockedOutcome(config, challenge, delivery, {
-          state: "failed",
-          acceptance: "not_accepted",
-          diagnosticCode: "provider_unavailable",
-        });
-        return undefined;
-      }
-      const budget = yield* checkQuotas(limits, time).pipe(Effect.result);
-      if (budget._tag === "Failure" || challenge.send_count >= challenge.snapshot.maxSends) {
+      if (!sharedBudget || challenge.send_count >= challenge.snapshot.maxSends) {
         yield* count("suppressed", "rate_limited");
         yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id}`;
         return undefined;
       }
+      const target = (yield* availableProviders(config, challenge, time)).find(
+        ({ provider }) => provider.providerInstanceId === delivery.provider_instance_id,
+      );
+      if (target === undefined || target.retryAt !== undefined) {
+        // No provider call occurred. Only this instance is blocked, so the route can advance.
+        yield* mergeLockedOutcome(config, challenge, delivery, {
+          state: "failed",
+          acceptance: "not_accepted",
+          diagnosticCode: target === undefined ? "provider_unavailable" : "rate_limited",
+        });
+        return undefined;
+      }
+      const saved = target.provider;
       const secrets = yield* findSecrets(challenge.id);
       const recipient = yield* Schema.decodeUnknownEffect(NormalizedPhoneSchema)(
         yield* decrypt(config.settings.crypto, challenge.id, "phone", secrets.phone),

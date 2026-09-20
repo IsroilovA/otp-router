@@ -5,7 +5,7 @@ import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime, transaction } from "../database/transaction.js";
 import { expire, findChallenge, findDelivery } from "../challenges/store.js";
 import type { Challenge, Delivery } from "../challenges/records.js";
-import { eligibleProviders } from "./eligibility.js";
+import { availableProviders, nextProvider } from "./eligibility.js";
 import { schedule } from "./schedule.js";
 
 export interface Outcome {
@@ -53,12 +53,16 @@ export const mergeLockedOutcome = (
       yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending' AND reason = 'fallback'`;
     }
     if (shouldAdvance(challenge, delivery, outcome)) {
-      const eligible = yield* eligibleProviders(config, challenge, time);
-      const next = challenge.snapshot.providers.findIndex(
-        (provider, index) => index > delivery.route_position && eligible.includes(provider),
+      const next = nextProvider(
+        yield* availableProviders(config, challenge, time),
+        delivery.route_position,
       );
-      if (next >= 0 && challenge.send_count < challenge.snapshot.maxSends)
-        yield* schedule(challenge, next, "fallback", time);
+      if (
+        next !== undefined &&
+        next.retryAt === undefined &&
+        challenge.send_count < challenge.snapshot.maxSends
+      )
+        yield* schedule(challenge, next.position, "fallback", time);
     }
   });
 export const recordOutcome = (config: RuntimeConfiguration, id: string, outcome: Outcome) =>

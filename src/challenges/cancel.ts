@@ -36,16 +36,3 @@ export const cancelChallenge = (
       });
     }),
   );
-export const challengeStatus = (config: RuntimeConfiguration, id: string) =>
-  domainTransaction(
-    Effect.gen(function* () {
-      const locked = yield* findChallenge(id, true);
-      const time = yield* databaseTime;
-      const challenge = yield* expire(locked, time);
-      return {
-        status: 200,
-        replayed: false,
-        body: yield* snapshot(config, challenge, time),
-      } satisfies OperationResult;
-    }),
-  );

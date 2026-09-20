@@ -18,6 +18,7 @@ import {
 } from "./contract.js";
 import {
   callbackTimestamp,
+  getHeader,
   readyMetadata,
   decodeUtf8,
   encodeJson,
@@ -64,14 +65,6 @@ const constraints = {
   minDeliveryWindowMs: 30_000,
 } as const;
 
-const getHeader = (input: CallbackInput, name: string): string | undefined => {
-  const expected = name.toLowerCase();
-  for (const [key, value] of Object.entries(input.headers)) {
-    if (key.toLowerCase() === expected) return value;
-  }
-  return undefined;
-};
-
 const constantTimeHexEqual = (left: string, right: string): boolean => {
   if (!/^[0-9a-f]+$/iu.test(left) || !/^[0-9a-f]+$/iu.test(right)) return false;
   const leftBytes = Buffer.from(left, "hex");
@@ -83,8 +76,8 @@ const authenticateCallback = (
   input: CallbackInput,
   config: TelegramConfiguration,
 ): Effect.Effect<void, CallbackAuthenticationError> => {
-  const timestamp = getHeader(input, "x-request-timestamp");
-  const signature = getHeader(input, "x-request-signature");
+  const timestamp = getHeader(input.headers, "x-request-timestamp");
+  const signature = getHeader(input.headers, "x-request-signature");
   if (timestamp === undefined || signature === undefined) {
     return Effect.fail(
       new CallbackAuthenticationError({ diagnosticCode: "missing_authentication" }),
@@ -221,7 +214,6 @@ const send = (
     if (!parsed.ok) return yield* mapTelegramError(parsed.error);
     return {
       providerRequestId: parsed.result.request_id,
-      acceptanceEvidence: "telegram_ok",
     };
   });
 

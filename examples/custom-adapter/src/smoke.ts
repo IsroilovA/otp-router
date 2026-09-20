@@ -54,10 +54,10 @@ const run = Effect.scoped(
       locale,
       template: {},
     });
-    if (accepted.acceptanceEvidence !== "custom_text_sink") {
+    if (accepted.providerRequestId !== `text:${deliveryId}`) {
       return yield* Effect.die(new Error("custom provider returned an unexpected result"));
     }
-    return { selector: route._tag, provider: accepted.acceptanceEvidence } as const;
+    return { selector: route._tag, provider: provider.pluginId } as const;
   }),
 );
 

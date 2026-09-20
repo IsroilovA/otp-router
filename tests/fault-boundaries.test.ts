@@ -48,7 +48,6 @@ const provider: ReadyProvider = {
       sends.push(input);
       return {
         providerRequestId: `fault-test:${input.deliveryId}`,
-        acceptanceEvidence: "fault_test_accepted",
       };
     }),
 };

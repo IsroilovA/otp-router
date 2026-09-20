@@ -7,7 +7,7 @@ import type { RuntimeConfiguration } from "../config/config.js";
 import { DomainError, type Choice } from "../challenges/contracts.js";
 import type { Challenge, SavedProvider } from "../challenges/records.js";
 
-export const providerCompatible = (config: RuntimeConfiguration, saved: SavedProvider) => {
+const providerCompatible = (config: RuntimeConfiguration, saved: SavedProvider) => {
   const provider = config.providers.get(saved.providerInstanceId);
   return (
     provider !== undefined &&
@@ -16,26 +16,9 @@ export const providerCompatible = (config: RuntimeConfiguration, saved: SavedPro
     provider.pluginId === saved.pluginId
   );
 };
-export const eligibleProviders = (
-  config: RuntimeConfiguration,
-  challenge: Pick<Challenge, "snapshot" | "expires_at">,
-  time: Date,
-) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const restricted = yield* rows(
-      Schema.Struct({ provider_instance_id: Schema.String }),
-      sql`SELECT provider_instance_id FROM otp_router.provider_restrictions WHERE retry_at > ${time}`,
-    );
-    return challenge.snapshot.providers.filter(
-      (provider) =>
-        providerCompatible(config, provider) &&
-        deliveryWindowFits(provider, challenge.expires_at.getTime() - time.getTime()) &&
-        !restricted.some((row) => row.provider_instance_id === provider.providerInstanceId),
-    );
-  });
 export interface ProviderAvailability {
   readonly provider: SavedProvider;
+  readonly position: number;
   readonly retryAt: string | undefined;
 }
 export const availableProviders = (
@@ -44,25 +27,45 @@ export const availableProviders = (
   time: Date,
 ) =>
   Effect.gen(function* () {
-    const eligible = yield* eligibleProviders(config, challenge, time);
+    const sql = yield* SqlClient.SqlClient;
+    const restrictions = yield* rows(
+      Schema.Struct({ provider_instance_id: Schema.String, retry_at: Schema.Date }),
+      sql`SELECT provider_instance_id,retry_at FROM otp_router.provider_restrictions WHERE retry_at > ${time}`,
+    );
     const commonRetry = yield* quotaRetryAt(
       commonSendLimits(config.settings, challenge.recipient_token),
       time,
     );
-    return yield* Effect.forEach(eligible, (provider) =>
+    const candidates = challenge.snapshot.providers.flatMap((provider, position) =>
+      providerCompatible(config, provider) &&
+      deliveryWindowFits(provider, challenge.expires_at.getTime() - time.getTime())
+        ? [{ provider, position }]
+        : [],
+    );
+    return yield* Effect.forEach(candidates, ({ provider, position }) =>
       Effect.gen(function* () {
         const providerRetry = yield* quotaRetryAt(
           providerSendLimits(config.settings, provider.providerInstanceId),
           time,
         );
-        const retryAt = [commonRetry, providerRetry]
+        const restriction = restrictions.find(
+          (row) => row.provider_instance_id === provider.providerInstanceId,
+        );
+        const retryAt = [commonRetry, providerRetry, restriction?.retry_at.toISOString()]
           .filter((value) => value !== undefined)
           .sort()
           .at(-1);
-        return { provider, retryAt };
+        return { provider, position, retryAt };
       }),
     );
   });
+
+export const chooseAvailable = (available: readonly ProviderAvailability[]) =>
+  available.find((option) => option.retryAt === undefined) ??
+  available.toSorted((a, b) => (a.retryAt ?? "").localeCompare(b.retryAt ?? ""))[0];
+
+export const nextProvider = (available: readonly ProviderAvailability[], position: number) =>
+  chooseAvailable(available.filter((option) => option.position > position));
 
 export const resolveChoice = (
   snapshot: Pick<Challenge["snapshot"], "manualSelectionEnabled" | "manualProviderIds">,
@@ -73,7 +76,7 @@ export const resolveChoice = (
     return Effect.fail(new DomainError({ code: "delivery_option_not_allowed" }));
   const candidates =
     choice === undefined
-      ? available.slice(0, 1)
+      ? available
       : available.filter(
           ({ provider }) =>
             snapshot.manualProviderIds.includes(provider.providerInstanceId) &&
@@ -81,7 +84,7 @@ export const resolveChoice = (
               ? provider.channel === choice.channel
               : provider.providerInstanceId === choice.providerInstanceId),
         );
-  const selected = candidates.find((option) => option.retryAt === undefined) ?? candidates[0];
+  const selected = chooseAvailable(candidates);
   return selected === undefined
     ? Effect.fail(
         new DomainError({
@@ -89,4 +92,20 @@ export const resolveChoice = (
         }),
       )
     : Effect.succeed(selected);
+};
+
+export const userSendBlock = (
+  challenge: Challenge,
+  time: Date,
+  retryAt: string | undefined,
+): { readonly code: "rate_limited" | "cooldown_active"; readonly retryAt?: string } | undefined => {
+  if (challenge.send_count >= challenge.snapshot.maxSends) return { code: "rate_limited" };
+  const cooldown =
+    time < challenge.next_user_send_at ? challenge.next_user_send_at.toISOString() : undefined;
+  if (retryAt !== undefined)
+    return {
+      code: "rate_limited",
+      retryAt: cooldown !== undefined && cooldown > retryAt ? cooldown : retryAt,
+    };
+  return cooldown === undefined ? undefined : { code: "cooldown_active", retryAt: cooldown };
 };

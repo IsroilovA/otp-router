@@ -19,7 +19,13 @@ import {
 } from "../challenges/store.js";
 import { snapshot } from "../challenges/snapshot.js";
 import type { Challenge, Delivery } from "../challenges/records.js";
-import { availableProviders, resolveChoice, type ProviderAvailability } from "./eligibility.js";
+import {
+  availableProviders,
+  resolveChoice,
+  nextProvider,
+  userSendBlock,
+  type ProviderAvailability,
+} from "./eligibility.js";
 import { schedule } from "./schedule.js";
 const selectTarget = (
   challenge: Challenge,
@@ -39,9 +45,7 @@ const selectTarget = (
         : Effect.succeed(target);
     }
     case "next": {
-      const target = available.find(
-        ({ provider }) => challenge.snapshot.providers.indexOf(provider) > current.route_position,
-      );
+      const target = nextProvider(available, current.route_position);
       return target === undefined
         ? Effect.fail(new DomainError({ code: "delivery_unavailable" }))
         : Effect.succeed(target);
@@ -71,29 +75,13 @@ export const requestDelivery = (
         request.input,
         yield* availableProviders(config, challenge, time),
       );
-      if (time < challenge.next_user_send_at)
-        return yield* Effect.fail(
-          new DomainError({
-            code: "cooldown_active",
-            retryAt: challenge.next_user_send_at.toISOString(),
-          }),
-        );
-      if (challenge.send_count >= challenge.snapshot.maxSends)
-        return yield* Effect.fail(new DomainError({ code: "rate_limited" }));
-      if (target.retryAt !== undefined)
-        return yield* Effect.fail(
-          new DomainError({ code: "rate_limited", retryAt: target.retryAt }),
-        );
+      const blocked = userSendBlock(challenge, time, target.retryAt);
+      if (blocked !== undefined) return yield* Effect.fail(new DomainError(blocked));
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending'`;
       yield* sql`UPDATE otp_router.challenges SET routing_revision = routing_revision + 1, automatic_stopped = false, next_user_send_at = ${new Date(time.getTime() + challenge.snapshot.resendCooldownSeconds * 1000)} WHERE id = ${challenge.id}`;
       const updated = yield* findChallenge(challenge.id);
-      const deliveryId = yield* schedule(
-        updated,
-        challenge.snapshot.providers.indexOf(target.provider),
-        request.input.action,
-        time,
-      );
+      const deliveryId = yield* schedule(updated, target.position, request.input.action, time);
       const body = {
         deliveryId,
         challenge: yield* snapshot(config, yield* findChallenge(challenge.id), time),

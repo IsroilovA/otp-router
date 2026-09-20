@@ -176,7 +176,6 @@ const send = (
       }
       return {
         providerRequestId: requestId,
-        acceptanceEvidence: "play_mobile_http_200",
       };
     }
     const json = yield* parseJson(response.body);

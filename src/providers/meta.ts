@@ -17,6 +17,7 @@ import {
 } from "./contract.js";
 import {
   callbackTimestamp,
+  getHeader,
   readyMetadata,
   decodeUtf8,
   encodeJson,
@@ -75,14 +76,6 @@ const constraints = {
   minDeliveryWindowMs: 0,
 } as const;
 
-const getHeader = (input: CallbackInput, name: string): string | undefined => {
-  const expected = name.toLowerCase();
-  for (const [key, value] of Object.entries(input.headers)) {
-    if (key.toLowerCase() === expected) return value;
-  }
-  return undefined;
-};
-
 const constantTimeSignatureEqual = (provided: string, expectedHex: string): boolean => {
   const match = /^sha256=([0-9a-f]{64})$/iu.exec(provided);
   if (match?.[1] === undefined) return false;
@@ -95,7 +88,7 @@ const authenticatePost = (
   input: CallbackInput,
   config: MetaConfiguration,
 ): Effect.Effect<void, CallbackAuthenticationError> => {
-  const signature = getHeader(input, "x-hub-signature-256");
+  const signature = getHeader(input.headers, "x-hub-signature-256");
   if (signature === undefined) {
     return Effect.fail(
       new CallbackAuthenticationError({ diagnosticCode: "missing_authentication" }),
@@ -266,7 +259,6 @@ const send = (
     );
     return {
       providerRequestId: parsed.messages[0].id,
-      acceptanceEvidence: "meta_message_id",
     };
   });
 

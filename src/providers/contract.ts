@@ -104,9 +104,6 @@ export interface ProviderConstraints {
 
 export interface ProviderIdempotency {
   readonly supported: boolean;
-  readonly keyScope?: string;
-  readonly retention?: string;
-  readonly deduplicationEvidence?: string;
 }
 
 export interface ResolvedTemplate {
@@ -136,7 +133,6 @@ export interface NormalizedDeliveryEvent {
 
 export interface SendAccepted {
   readonly providerRequestId?: string;
-  readonly acceptanceEvidence: string;
   readonly deliveryEvent?: NormalizedDeliveryEvent;
 }
 
