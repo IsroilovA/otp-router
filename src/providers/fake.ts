@@ -29,7 +29,7 @@ import {
   validateProviderConfiguration,
 } from "./internal.js";
 
-const FakeOutcomeSchema = Schema.Literal(
+const FakeOutcomeSchema = Schema.Literals([
   "accepted",
   "recipient_unavailable",
   "invalid_recipient",
@@ -38,12 +38,12 @@ const FakeOutcomeSchema = Schema.Literal(
   "temporary_rejected",
   "unknown",
   "never",
-);
+]);
 export type FakeOutcome = typeof FakeOutcomeSchema.Type;
 
 const FakeConfigurationSchema = Schema.Struct({
   outcome: FakeOutcomeSchema,
-  callbackSecret: Schema.Redacted(Schema.NonEmptyString),
+  callbackSecret: Schema.RedactedFromValue(Schema.NonEmptyString),
 });
 export type FakeConfiguration = typeof FakeConfigurationSchema.Type;
 
@@ -52,7 +52,7 @@ const FakeCallbackSchema = Schema.Struct({
     Schema.Struct({
       id: Schema.NonEmptyString,
       correlationReference: Schema.NonEmptyString,
-      status: Schema.Literal("accepted", "delivered", "failed", "cancelled"),
+      status: Schema.Literals(["accepted", "delivered", "failed", "cancelled"]),
       providerEventTime: Schema.optional(IsoDateTimeSchema),
       diagnosticCode: Schema.optional(Schema.NonEmptyString),
     }),
@@ -149,7 +149,7 @@ const decodeCallback = (
       try: () => JSON.parse(text) as unknown,
       catch: () => new CallbackFormatError({ diagnosticCode: "invalid_body" }),
     });
-    const callback = yield* Schema.decodeUnknown(FakeCallbackSchema)(value).pipe(
+    const callback = yield* Schema.decodeUnknownEffect(FakeCallbackSchema)(value).pipe(
       Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
     );
     if (callback.events.length === 0) {
@@ -211,7 +211,7 @@ export const FakeProvider: ProviderDefinition<
           resolveTemplate: resolveNoTemplate,
           send: (input) =>
             validateSendInput(input, constraints).pipe(
-              Effect.zipRight(sendForOutcome(options.config.outcome, `fake:${input.deliveryId}`)),
+              Effect.andThen(sendForOutcome(options.config.outcome, `fake:${input.deliveryId}`)),
             ),
           callback: (input) => decodeCallback(input, Redacted.value(options.config.callbackSecret)),
         };

@@ -40,7 +40,7 @@ const provider: ReadyProvider = {
   resolveTemplate: (locales) => {
     const locale = locales[0];
     return locale === undefined
-      ? Effect.dieMessage("The fault test configuration has no locale")
+      ? Effect.die(new Error("The fault test configuration has no locale"))
       : Effect.succeed({ locale, template: null });
   },
   send: (input) =>
@@ -111,7 +111,7 @@ const State = Schema.Struct({
   sendCount: Schema.Int,
 });
 
-describe.sequential("PostgreSQL fault boundaries", () => {
+describe("PostgreSQL fault boundaries", () => {
   let postgres: PostgresFixture | undefined;
   let application: IntegrationRuntime | undefined;
   let control: IntegrationRuntime | undefined;
@@ -224,7 +224,7 @@ describe.sequential("PostgreSQL fault boundaries", () => {
         Effect.timeout("3 seconds"),
         Effect.flatMap((result) =>
           result.pid === null
-            ? Effect.dieMessage("The create transaction did not reach the queue insert")
+            ? Effect.die(new Error("The create transaction did not reach the queue insert"))
             : Effect.succeed(result.pid),
         ),
       ),
@@ -265,11 +265,11 @@ describe.sequential("PostgreSQL fault boundaries", () => {
             input: { action: "resend" },
             requestId: randomUUID(),
           })
-          .pipe(Effect.either),
+          .pipe(Effect.result),
       );
       expect(result).toMatchObject({
-        _tag: "Left",
-        left: { code: "temporarily_unavailable" },
+        _tag: "Failure",
+        failure: { code: "temporarily_unavailable" },
       });
       expect(await state()).toEqual({
         challenges: 1,

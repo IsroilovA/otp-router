@@ -1,4 +1,4 @@
-import type { Headers } from "@effect/platform";
+import type { Headers } from "effect/unstable/http";
 import { Context, Data, type Effect } from "effect";
 
 export type WebhookQuery = Readonly<Record<string, string | ReadonlyArray<string>>>;
@@ -32,7 +32,7 @@ export class WebhookError extends Data.TaggedError("WebhookError")<{
   readonly code: WebhookErrorCode;
 }> {}
 
-export class WebhookHandler extends Context.Tag("otp-router/http/WebhookHandler")<
+export class WebhookHandler extends Context.Service<
   WebhookHandler,
   {
     readonly handshake: (
@@ -40,7 +40,7 @@ export class WebhookHandler extends Context.Tag("otp-router/http/WebhookHandler"
     ) => Effect.Effect<WebhookHandshakeReply, WebhookError>;
     readonly ingest: (input: WebhookIngestInput) => Effect.Effect<void, WebhookError>;
   }
->() {}
+>()("otp-router/http/WebhookHandler") {}
 
 export const statusForWebhookError = (code: WebhookErrorCode): number => {
   switch (code) {

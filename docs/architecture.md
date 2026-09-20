@@ -10,7 +10,7 @@ The HTTP API and worker share challenge and delivery operations. PostgreSQL hold
 - `http/` authenticates and validates application requests and provider callbacks. `worker/` executes durable jobs.
 - `database/`, `queue/`, and `config/` own their resource lifecycles and startup boundaries.
 
-Domain operations use Effect with explicit expected failures. Layers construct scoped resources; effects run at process, transport, and test boundaries. Features do not import HTTP handlers or worker entry points.
+Domain operations use the pinned Effect 4 release candidate with explicit expected failures. Layers construct scoped resources; effects run at process, transport, and test boundaries. Features do not import HTTP handlers or worker entry points.
 
 ## Delivery and verification
 

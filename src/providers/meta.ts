@@ -8,7 +8,6 @@ import {
   UnknownProviderOutcome,
   type CallbackInput,
   type CallbackResult,
-  type JsonValue,
   type NormalizedDeliveryEvent,
   type ProviderDefinition,
   type ProviderSendError,
@@ -32,29 +31,29 @@ import {
 import { fetchTransport, type HttpTransport } from "./transport.js";
 
 const MetaConfigurationSchema = Schema.Struct({
-  accessToken: Schema.Redacted(Schema.NonEmptyString),
-  appSecret: Schema.Redacted(Schema.NonEmptyString),
-  verifyToken: Schema.Redacted(Schema.NonEmptyString),
-  phoneNumberId: Schema.String.pipe(Schema.pattern(/^[0-9]+$/)),
-  apiVersion: Schema.String.pipe(Schema.pattern(/^v[0-9]+\.[0-9]+$/)),
+  accessToken: Schema.RedactedFromValue(Schema.NonEmptyString),
+  appSecret: Schema.RedactedFromValue(Schema.NonEmptyString),
+  verifyToken: Schema.RedactedFromValue(Schema.NonEmptyString),
+  phoneNumberId: Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9]+$/))),
+  apiVersion: Schema.String.pipe(Schema.check(Schema.isPattern(/^v[0-9]+\.[0-9]+$/))),
 });
 export type MetaConfiguration = typeof MetaConfigurationSchema.Type;
 
 export const MetaTemplateSchema = Schema.Struct({
-  name: Schema.NonEmptyString.pipe(Schema.maxLength(512)),
-  languageCode: Schema.NonEmptyString.pipe(Schema.maxLength(32)),
-  codeButtonIndex: Schema.Int.pipe(Schema.between(0, 9)),
+  name: Schema.NonEmptyString.pipe(Schema.check(Schema.isMaxLength(512))),
+  languageCode: Schema.NonEmptyString.pipe(Schema.check(Schema.isMaxLength(32))),
+  codeButtonIndex: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 0, maximum: 9 }))),
 });
 export type MetaTemplate = typeof MetaTemplateSchema.Type;
 
 const MetaSendResponseSchema = Schema.Struct({
-  messages: Schema.Tuple(Schema.Struct({ id: Schema.NonEmptyString })),
+  messages: Schema.Tuple([Schema.Struct({ id: Schema.NonEmptyString })]),
 });
 
 const MetaStatusSchema = Schema.Struct({
   id: Schema.NonEmptyString,
-  status: Schema.Literal("sent", "delivered", "read", "failed", "deleted"),
-  timestamp: Schema.String.pipe(Schema.pattern(/^[0-9]+$/)),
+  status: Schema.Literals(["sent", "delivered", "read", "failed", "deleted"]),
+  timestamp: Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9]+$/))),
 });
 const MetaCallbackSchema = Schema.Struct({
   object: Schema.Literal("whatsapp_business_account"),
@@ -142,7 +141,7 @@ const decodeMetaEvents = (
       try: () => JSON.parse(text) as unknown,
       catch: () => new CallbackFormatError({ diagnosticCode: "invalid_body" }),
     });
-    const callback = yield* Schema.decodeUnknown(MetaCallbackSchema)(value).pipe(
+    const callback = yield* Schema.decodeUnknownEffect(MetaCallbackSchema)(value).pipe(
       Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
     );
     const statuses = callback.entry.flatMap((entry) =>
@@ -211,7 +210,7 @@ const send = (
   Effect.gen(function* () {
     yield* validateSendInput(input, constraints);
     const template = yield* validateTemplate(MetaTemplateSchema, input.template);
-    const body: JsonValue = {
+    const body: Schema.Json = {
       messaging_product: "whatsapp",
       recipient_type: "individual",
       to: input.recipient.slice(1),
@@ -256,7 +255,7 @@ const send = (
       });
     }
     const json = yield* parseJson(response.body);
-    const parsed = yield* Schema.decodeUnknown(MetaSendResponseSchema)(json).pipe(
+    const parsed = yield* Schema.decodeUnknownEffect(MetaSendResponseSchema)(json).pipe(
       Effect.mapError(
         () =>
           new UnknownProviderOutcome({

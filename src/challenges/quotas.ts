@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
 import { DomainError } from "./contracts.js";
@@ -58,7 +58,7 @@ export const quotaRetryAt = (limits: readonly Limit[], time: Date) =>
     let retry: number | undefined;
     for (const limit of limits) {
       const events = yield* rows(
-        Schema.Struct({ occurred_at: Schema.DateFromSelf }),
+        Schema.Struct({ occurred_at: Schema.Date }),
         sql`SELECT occurred_at FROM otp_router.quota_events WHERE identity = ${limit.identity} AND kind = ${limit.kind} AND occurred_at > ${new Date(time.getTime() - limit.windowMs)} ORDER BY occurred_at DESC OFFSET ${limit.maximum - 1} LIMIT 1`,
       );
       const blocking = events[0];

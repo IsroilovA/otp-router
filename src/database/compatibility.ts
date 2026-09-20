@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { ConfigurationError, type Settings } from "../config/config.js";
 import { rows } from "./query.js";
@@ -7,7 +7,7 @@ export const validateStoredKeys = (settings: Settings) =>
     const sql = yield* SqlClient.SqlClient;
     const references = yield* rows(
       Schema.Struct({
-        purpose: Schema.Literal("encryption", "verification", "fingerprint"),
+        purpose: Schema.Literals(["encryption", "verification", "fingerprint"]),
         key_id: Schema.String,
       }),
       sql`

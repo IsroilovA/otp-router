@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 import type { ProviderSendError } from "../providers/contract.js";
 import type { RuntimeConfiguration } from "../config/config.js";

@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, Either, Exit, Fiber, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Exit, Fiber, Layer, Redacted, Schema } from "effect";
 import {
   ChallengeIdSchema,
   DeliveryIdSchema,
@@ -10,7 +10,6 @@ import {
   OtpCodeSchema,
   ProviderInstance,
   ProviderInstanceIdSchema,
-  type JsonValue,
   type ProviderDefinition,
   type ProviderSendInput,
   type ReadyProvider,
@@ -28,7 +27,7 @@ import {
 
 const encoder = new TextEncoder();
 const decode = (body: Uint8Array): string => new TextDecoder().decode(body);
-const jsonResponse = (status: number, body: JsonValue): HttpResponse => ({
+const jsonResponse = (status: number, body: Schema.Json): HttpResponse => ({
   status,
   headers: {},
   body: encoder.encode(JSON.stringify(body)),
@@ -39,7 +38,7 @@ const locale = Schema.decodeUnknownSync(LocaleSchema)("en");
 const deliveryId = Schema.decodeUnknownSync(DeliveryIdSchema)(
   "018f47cb-5395-7c24-9d99-920f5538b168",
 );
-const sendInput = (template: JsonValue = null): ProviderSendInput => ({
+const sendInput = (template: Schema.Json = null): ProviderSendInput => ({
   challengeId: Schema.decodeUnknownSync(ChallengeIdSchema)("018f47cb-5395-7c24-9d99-920f5538b167"),
   deliveryId,
   recipient: Schema.decodeUnknownSync(NormalizedPhoneSchema)("+998901234567"),
@@ -91,8 +90,8 @@ it.effect("normalizes every consequential fake send outcome", () =>
     });
     for (const [outcome, tag, acceptance] of expectations) {
       const provider = yield* build(FakeProvider, fakeConfig(outcome));
-      const result = yield* Effect.either(provider.send(sendInput()));
-      expect(result).toMatchObject({ _tag: "Left", left: { _tag: tag, acceptance } });
+      const result = yield* Effect.result(provider.send(sendInput()));
+      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: tag, acceptance } });
     }
   }),
 );
@@ -100,9 +99,9 @@ it.effect("normalizes every consequential fake send outcome", () =>
 it.effect("keeps fake sends interruptible and authenticates callback batches", () =>
   Effect.gen(function* () {
     const provider = yield* build(FakeProvider, fakeConfig("never"));
-    const fiber = yield* Effect.fork(provider.send(sendInput()));
+    const fiber = yield* Effect.forkChild(provider.send(sendInput()));
     yield* Fiber.interrupt(fiber);
-    expect(Exit.isInterrupted(yield* Fiber.await(fiber))).toBe(true);
+    expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
 
     const body = encoder.encode(
       JSON.stringify({
@@ -129,7 +128,7 @@ it.effect("keeps fake sends interruptible and authenticates callback batches", (
       _tag: "Events",
       events: [{ deduplicationKey: "event-1", status: "delivered" }],
     });
-    const rejected = yield* Effect.either(
+    const rejected = yield* Effect.result(
       callback({
         body,
         method: "POST",
@@ -139,36 +138,36 @@ it.effect("keeps fake sends interruptible and authenticates callback batches", (
       }),
     );
     expect(rejected).toMatchObject({
-      _tag: "Left",
-      left: { _tag: "CallbackAuthenticationError", diagnosticCode: "invalid_signature" },
+      _tag: "Failure",
+      failure: { _tag: "CallbackAuthenticationError", diagnosticCode: "invalid_signature" },
     });
   }),
 );
 
 it("rejects invalid provider and template configuration before use", () => {
   expect(
-    Either.isLeft(
-      Schema.decodeUnknownEither(PlayMobileTemplateSchema)({ text: "x".repeat(153) + "{{code}}" }),
+    Exit.isFailure(
+      Schema.decodeUnknownExit(PlayMobileTemplateSchema)({ text: "x".repeat(153) + "{{code}}" }),
     ),
   ).toBe(true);
   expect(
-    Either.isLeft(Schema.decodeUnknownEither(FakeProvider.configSchema)({ outcome: "accepted" })),
+    Exit.isFailure(Schema.decodeUnknownExit(FakeProvider.configSchema)({ outcome: "accepted" })),
   ).toBe(true);
   expect(
-    Either.isLeft(
-      Schema.decodeUnknownEither(PlayMobileTemplateSchema)({
+    Exit.isFailure(
+      Schema.decodeUnknownExit(PlayMobileTemplateSchema)({
         text: "Codes {{code}} and {{other}}",
       }),
     ),
   ).toBe(true);
   expect(
-    Either.isLeft(
-      Schema.decodeUnknownEither(makeTelegramDefinition().configSchema)({ apiToken: "" }),
+    Exit.isFailure(
+      Schema.decodeUnknownExit(makeTelegramDefinition().configSchema)({ apiToken: "" }),
     ),
   ).toBe(true);
   expect(
-    Either.isLeft(
-      Schema.decodeUnknownEither(makeMetaDefinition().configSchema)({
+    Exit.isFailure(
+      Schema.decodeUnknownExit(makeMetaDefinition().configSchema)({
         accessToken: "token",
         appSecret: "secret",
         verifyToken: "verify",
@@ -178,8 +177,8 @@ it("rejects invalid provider and template configuration before use", () => {
     ),
   ).toBe(true);
   expect(
-    Either.isLeft(
-      Schema.decodeUnknownEither(makePlayMobileDefinition().configSchema)({
+    Exit.isFailure(
+      Schema.decodeUnknownExit(makePlayMobileDefinition().configSchema)({
         username: "user",
         password: "password",
         originator: "sender-name-too-long",
@@ -197,14 +196,14 @@ it.effect("does not retry an interrupted or failed provider transport", () =>
         return Effect.fail(new HttpTransportError({ reason: "request_failed" }));
       },
     });
-    const config = yield* Schema.decodeUnknown(definition.configSchema)({
+    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
       apiToken: "telegram-secret",
     });
     const provider = yield* build(definition, config);
-    const result = yield* Effect.either(provider.send(sendInput()));
+    const result = yield* Effect.result(provider.send(sendInput()));
     expect(result).toMatchObject({
-      _tag: "Left",
-      left: { _tag: "UnknownProviderOutcome", acceptance: "unknown" },
+      _tag: "Failure",
+      failure: { _tag: "UnknownProviderOutcome", acceptance: "unknown" },
     });
     expect(calls).toBe(1);
   }),
@@ -222,7 +221,7 @@ it.effect("sends Telegram codes once and treats unclassified rejection as uncert
         }),
     };
     const definition = makeTelegramDefinition(transport);
-    const config = yield* Schema.decodeUnknown(definition.configSchema)({
+    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
       apiToken: "telegram-secret",
       callbackUrl: "https://router.example/callbacks/telegram",
     });
@@ -239,10 +238,10 @@ it.effect("sends Telegram codes once and treats unclassified rejection as uncert
     });
 
     response = jsonResponse(400, { ok: false, error: "SOME_NEW_ERROR" });
-    const failure = yield* Effect.either(provider.send(sendInput()));
+    const failure = yield* Effect.result(provider.send(sendInput()));
     expect(failure).toMatchObject({
-      _tag: "Left",
-      left: { _tag: "UnknownProviderOutcome", acceptance: "unknown" },
+      _tag: "Failure",
+      failure: { _tag: "UnknownProviderOutcome", acceptance: "unknown" },
     });
     expect(requests).toHaveLength(2);
     expect(JSON.stringify(failure)).not.toContain("012345");
@@ -255,7 +254,7 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
     const definition = makeTelegramDefinition({
       execute: () => Effect.fail(new HttpTransportError({ reason: "request_failed" })),
     });
-    const config = yield* Schema.decodeUnknown(definition.configSchema)({
+    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
       apiToken: "telegram-secret",
     });
     const provider = yield* build(definition, config);
@@ -303,10 +302,10 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
       path: "/callbacks/telegram",
       query: {},
       headers: { "x-request-timestamp": timestamp, "x-request-signature": invalidSignature },
-    }).pipe(Effect.either);
+    }).pipe(Effect.result);
     expect(invalid).toMatchObject({
-      _tag: "Left",
-      left: { _tag: "CallbackFormatError", diagnosticCode: "invalid_body" },
+      _tag: "Failure",
+      failure: { _tag: "CallbackFormatError", diagnosticCode: "invalid_body" },
     });
   }),
 );
@@ -322,7 +321,7 @@ it.effect("maps one Meta authentication template send and verifies both callback
         }),
     };
     const definition = makeMetaDefinition(transport);
-    const config = yield* Schema.decodeUnknown(definition.configSchema)({
+    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
       accessToken: "meta-token",
       appSecret: "meta-app-secret",
       verifyToken: "meta-verify",
@@ -413,7 +412,7 @@ it.effect(
           }),
       };
       const definition = makePlayMobileDefinition(transport);
-      const config = yield* Schema.decodeUnknown(definition.configSchema)({
+      const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
         username: "play-user",
         password: "play-password",
         originator: "3700",
@@ -433,10 +432,10 @@ it.effect(
         ],
       });
       response = jsonResponse(400, { error_code: "100", error_description: "secret text" });
-      const failure = yield* Effect.either(provider.send(sendInput(resolved.template)));
+      const failure = yield* Effect.result(provider.send(sendInput(resolved.template)));
       expect(failure).toMatchObject({
-        _tag: "Left",
-        left: {
+        _tag: "Failure",
+        failure: {
           _tag: "UnknownProviderOutcome",
           acceptance: "unknown",
           diagnosticCode: "play_mobile_internal_error",

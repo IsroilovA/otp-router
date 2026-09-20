@@ -1,4 +1,4 @@
-import { Effect, Runtime, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { RouterConfig } from "../config/config.js";
 import { cleanup } from "../challenges/cleanup.js";
 import { dispatch } from "../delivery/dispatch.js";
@@ -8,8 +8,8 @@ import { cleanupQueue, DeliveryJob, deliveryQueue, QueueOperationError } from ".
 export const startWorkers = Effect.gen(function* () {
   const boss = yield* Queue,
     config = yield* RouterConfig;
-  const runtime = yield* Effect.runtime<
-    Effect.Effect.Context<ReturnType<typeof dispatch>> | Effect.Effect.Context<typeof cleanup>
+  const runtime = yield* Effect.context<
+    Effect.Services<ReturnType<typeof dispatch>> | Effect.Services<typeof cleanup>
   >();
   const controllers = new Set<AbortController>();
   const running = new Set<Promise<void>>();
@@ -22,12 +22,12 @@ export const startWorkers = Effect.gen(function* () {
     effect: Effect.Effect<
       void,
       QueueOperationError,
-      Effect.Effect.Context<ReturnType<typeof dispatch>> | Effect.Effect.Context<typeof cleanup>
+      Effect.Services<ReturnType<typeof dispatch>> | Effect.Services<typeof cleanup>
     >,
   ) => {
     const controller = new AbortController();
     controllers.add(controller);
-    const promise = Runtime.runPromise(runtime)(effect, { signal: controller.signal });
+    const promise = Effect.runPromiseWith(runtime)(effect, { signal: controller.signal });
     running.add(promise);
     return promise.finally(() => {
       controllers.delete(controller);
@@ -46,7 +46,7 @@ export const startWorkers = Effect.gen(function* () {
       }).pipe(Effect.orDie);
       yield* Effect.promise(() => Promise.allSettled(running)).pipe(
         Effect.timeout(config.settings.shutdownGraceMs),
-        Effect.catchTag("TimeoutException", () =>
+        Effect.catchTag("TimeoutError", () =>
           Effect.sync(() => {
             for (const controller of controllers) controller.abort();
           }),
@@ -67,9 +67,9 @@ export const startWorkers = Effect.gen(function* () {
         async (jobs) => {
           for (const job of jobs)
             await run(
-              Schema.decodeUnknown(DeliveryJob)(job.data, { onExcessProperty: "error" }).pipe(
+              Schema.decodeUnknownEffect(DeliveryJob)(job.data, { onExcessProperty: "error" }).pipe(
                 Effect.flatMap((payload) => dispatch(config, payload)),
-                Effect.catchAllCause(() => Effect.fail(new QueueOperationError())),
+                Effect.catchCause(() => Effect.fail(new QueueOperationError())),
               ),
             );
         },
@@ -79,7 +79,7 @@ export const startWorkers = Effect.gen(function* () {
   yield* Effect.tryPromise({
     try: () =>
       boss.work(cleanupQueue, { batchSize: 1, pollingIntervalSeconds: 1 }, () =>
-        run(cleanup.pipe(Effect.catchAllCause(() => Effect.fail(new QueueOperationError())))),
+        run(cleanup.pipe(Effect.catchCause(() => Effect.fail(new QueueOperationError())))),
       ),
     catch: () => new QueueOperationError(),
   });

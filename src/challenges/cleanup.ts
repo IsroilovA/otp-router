@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
 import { databaseTime, transaction } from "../database/transaction.js";
@@ -41,10 +41,9 @@ const cleanupBatch = transaction(
 );
 // Drain backlog with separate bounded transactions rather than limiting sustained cleanup throughput
 // to one batch per scheduler tick. The Effect remains interruptible between batches.
-export const cleanup = Effect.iterate(true, {
-  while: (fullBatch) => fullBatch,
-  body: () => cleanupBatch,
-}).pipe(Effect.asVoid);
+export const cleanup = Effect.gen(function* () {
+  while (yield* cleanupBatch) {}
+});
 export const invalidateRestoredChallenges = transaction(
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

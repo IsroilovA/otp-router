@@ -23,7 +23,7 @@ export const normalizePhone = (phone: string) =>
     const parsed = parsePhoneNumberFromString(phone);
     if (parsed === undefined || !parsed.isValid() || parsed.ext !== undefined)
       return yield* Effect.fail(new DomainError({ code: "invalid_recipient" }));
-    return yield* Schema.decodeUnknown(NormalizedPhoneSchema)(parsed.number).pipe(
+    return yield* Schema.decodeUnknownEffect(NormalizedPhoneSchema)(parsed.number).pipe(
       Effect.mapError(() => new DomainError({ code: "invalid_recipient" })),
     );
   });
@@ -35,7 +35,7 @@ const prepare = (config: RuntimeConfiguration, input: CreateInput) =>
       config.settings.purposes[input.purpose]?.includes(input.policyId) !== true
     )
       return yield* Effect.fail(new DomainError({ code: "policy_not_allowed" }));
-    const recipient = yield* Schema.decodeUnknown(NormalizedPhoneSchema)(
+    const recipient = yield* Schema.decodeUnknownEffect(NormalizedPhoneSchema)(
       input.recipient.phoneNumber,
     );
     const locale = input.locale ?? config.settings.defaultLocale;
@@ -45,7 +45,7 @@ const prepare = (config: RuntimeConfiguration, input: CreateInput) =>
       locale,
       permitted: policy.providerInstanceIds,
     });
-    const locales = yield* Schema.decodeUnknown(Schema.Array(LocaleSchema))([
+    const locales = yield* Schema.decodeUnknownEffect(Schema.Array(LocaleSchema))([
       ...new Set([locale, ...config.settings.fallbackLocales]),
     ]);
     const providers = yield* Effect.forEach(route.providerInstanceIds, (id) =>
@@ -151,16 +151,16 @@ const selectRoute = (
             locale,
             routingContext: input.routingContext ?? {},
           }).pipe(
-            Effect.timeoutFail({
+            Effect.timeoutOrElse({
               duration: config.settings.selectorTimeoutMs,
-              onTimeout: () => new DomainError({ code: "temporarily_unavailable" }),
+              orElse: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
             }),
             Effect.mapError(() => new DomainError({ code: "temporarily_unavailable" })),
             Effect.ensuring(
               Effect.suspend(() => duration("selector", performance.now() - started)),
             ),
           );
-    const route = yield* Schema.decodeUnknown(SelectorResult)(selected, {
+    const route = yield* Schema.decodeUnknownEffect(SelectorResult)(selected, {
       onExcessProperty: "error",
     }).pipe(Effect.mapError(() => new DomainError({ code: "temporarily_unavailable" })));
     if (route._tag === "Reject")

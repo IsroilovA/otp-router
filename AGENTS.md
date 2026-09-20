@@ -16,7 +16,7 @@
 
 ## TypeScript and Effect
 
-- Use the pinned stable Effect API. Check installed types or version-matched official docs; do not copy Effect 4 examples into Effect 3 code.
+- Use the exactly pinned Effect 4 package set. Check installed types or version-matched official docs before changing Effect APIs.
 - Keep domain operations in Effect with explicit tagged failures. Preserve defects and interruption separately. Use Layers for resources and dependency boundaries, not every helper. Run Effects only at process/transport boundaries and tests.
 - Validate external input with Effect Schema. Derive types from schemas; use discriminated unions and exhaustive handling. Never use `any`, unsafe casts, non-null assertions, or suppressed diagnostics to bypass a missing model or validation.
 - Use `unknown` only at untrusted boundaries and validate it before domain use. Do not replace domain models with untyped property bags or use `eval`/`Function` to bypass static checks.
@@ -41,4 +41,4 @@
 - Use pnpm and preserve exact versions in the lockfile. `pnpm check` runs TypeScript, Effect diagnostics, typed linting, and formatting checks. `pnpm build` checks emitted output.
 - For tests, read [write-tests](.agents/skills/write-tests/SKILL.md). Use `pnpm exec vitest run <file>` for focused runs and `pnpm test` for the suite. Do not present an empty suite as passing coverage.
 - Run checks and relevant tests after changes. Report what ran and any unverified behavior. Do not add tests for empty modules or merely to increase coverage.
-- Keep agent instructions and docs concise; apply [unslop](.agents/skills/unslop/SKILL.md) when editing prose.
+- Keep agent instructions and docs concise.

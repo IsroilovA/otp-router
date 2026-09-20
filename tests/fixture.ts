@@ -1,8 +1,8 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
-import { NodeContext } from "@effect/platform-node";
-import { SqlClient } from "@effect/sql";
+import { NodeServices } from "@effect/platform-node";
+import { SqlClient } from "effect/unstable/sql";
 import { PgClient } from "@effect/sql-pg";
 import { ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect";
 import type { PgBoss } from "pg-boss";
@@ -138,9 +138,9 @@ export const startPostgres = async (): Promise<PostgresFixture> => {
 
 export interface IntegrationRuntime {
   readonly configuration: RuntimeConfiguration;
-  readonly pg: Context.Tag.Service<typeof PgClient.PgClient>;
+  readonly pg: Context.Service.Shape<typeof PgClient.PgClient>;
   readonly queue: PgBoss;
-  readonly router: Context.Tag.Service<typeof Router>;
+  readonly router: Context.Service.Shape<typeof Router>;
   readonly run: <A, E>(
     effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue>,
   ) => Promise<A>;
@@ -159,21 +159,25 @@ export const startRuntime = async (
   configuration: Configuration,
 ): Promise<IntegrationRuntime> => {
   const scope = await Effect.runPromise(Scope.make());
-  const configProvider = ConfigProvider.fromMap(new Map([["DATABASE_URL", databaseUrl]]));
+  const configProvider = ConfigProvider.fromUnknown(
+    Object.fromEntries([["DATABASE_URL", databaseUrl]]),
+  );
   try {
     const databaseContext = await Effect.runPromise(
       buildInScope(
         DatabaseLive.pipe(
           Layer.tap((context) => DatabaseMigrationsLive.pipe(Layer.build, Effect.provide(context))),
-          Layer.provide(NodeContext.layer),
+          Layer.provide(NodeServices.layer),
         ),
         scope,
-      ).pipe(Effect.withConfigProvider(configProvider)),
+      ).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configProvider)),
     );
     const pg = Context.get(databaseContext, PgClient.PgClient);
     const sql = Context.get(databaseContext, SqlClient.SqlClient);
     const queueContext = await Effect.runPromise(
-      buildInScope(QueueLive, scope).pipe(Effect.withConfigProvider(configProvider)),
+      buildInScope(QueueLive, scope).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
+      ),
     );
     const queue = Context.get(queueContext, Queue);
     await Effect.runPromise(initializeQueues.pipe(Effect.provideService(Queue, queue)));

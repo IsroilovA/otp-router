@@ -1,5 +1,5 @@
 import * as PgMigrator from "@effect/sql-pg/PgMigrator";
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Data, Effect, Layer, Schema } from "effect";
 import controls from "./migrations/0002_deployment_controls.js";
 import initial from "./migrations/0001_initial.js";

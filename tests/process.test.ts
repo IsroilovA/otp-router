@@ -1,4 +1,5 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { connect, createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -102,29 +103,51 @@ const stopProcess = async (
 
 const waitFor = async (
   description: string,
-  predicate: () => Promise<boolean>,
+  predicate: (options: { readonly signal: AbortSignal }) => Promise<boolean>,
   timeoutMilliseconds = 30_000,
 ): Promise<void> => {
-  const deadline = Date.now() + timeoutMilliseconds;
-  while (Date.now() < deadline) {
-    if (await predicate()) return;
-    await delay(100);
-  }
-  throw new Error(`Timed out waiting for ${description}`);
+  await expect
+    .poll(predicate, {
+      message: `Waiting for ${description}`,
+      interval: 100,
+      timeout: timeoutMilliseconds,
+    })
+    .toBe(true);
 };
 
-const waitForReady = async (port: number, running: RunningProcess): Promise<void> =>
-  waitFor("process readiness", async () => {
-    if (running.child.exitCode !== null) {
+const waitForReady = async (port: number, running: RunningProcess): Promise<void> => {
+  const controller = new AbortController();
+  const exited = running.exit.then(() => "exited" as const);
+  try {
+    await expect
+      .poll(
+        ({ signal }) =>
+          Promise.race([
+            fetch(`http://127.0.0.1:${String(port)}/health/ready`, {
+              signal: AbortSignal.any([signal, controller.signal]),
+            }).then(
+              async (response) => {
+                await response.body?.cancel();
+                return response.status === 200 ? "ready" : "waiting";
+              },
+              () => "waiting",
+            ),
+            exited,
+          ]),
+        {
+          message: "Waiting for process readiness",
+          interval: 100,
+          timeout: 30_000,
+        },
+      )
+      .not.toBe("waiting");
+    if (running.child.exitCode !== null || running.child.signalCode !== null) {
       throw new Error(`Router exited before readiness: ${running.output()}`);
     }
-    try {
-      const response = await fetch(`http://127.0.0.1:${String(port)}/health/ready`);
-      return response.status === 200;
-    } catch {
-      return false;
-    }
-  });
+  } finally {
+    controller.abort();
+  }
+};
 
 const key = (byte: number): string => Buffer.alloc(32, byte).toString("base64url");
 
@@ -231,10 +254,14 @@ const createChallenge = async (
   return Schema.decodeUnknownSync(Snapshot)(await response.json());
 };
 
-const challengeStatus = async (port: number, challengeId: string): Promise<Snapshot> => {
+const challengeStatus = async (
+  port: number,
+  challengeId: string,
+  signal?: AbortSignal,
+): Promise<Snapshot> => {
   const response = await fetch(
     `http://127.0.0.1:${String(port)}/v1/challenges/${encodeURIComponent(challengeId)}`,
-    { headers: { authorization: `Bearer ${API_KEY}` } },
+    { headers: { authorization: `Bearer ${API_KEY}` }, signal: signal ?? null },
   );
   if (response.status !== 200) throw new Error(`Status failed with ${String(response.status)}`);
   return Schema.decodeUnknownSync(Snapshot)(await response.json());
@@ -334,7 +361,7 @@ afterAll(async () => {
   }
 });
 
-describe.sequential("built process", () => {
+describe("built process", () => {
   it("supports config/schema checks and separate API and worker health", async () => {
     const fixture = requireFixture();
     const baseArgs = ["dist/main.js", "--config", fixture.configurationPath];
@@ -401,8 +428,8 @@ describe.sequential("built process", () => {
     if (entry === undefined) throw new Error("Provider sink omitted the delivery");
     await waitFor(
       "accepted delivery state",
-      async () =>
-        (await challengeStatus(apiPort, created.challengeId)).delivery.state === "accepted",
+      async ({ signal }) =>
+        (await challengeStatus(apiPort, created.challengeId, signal)).delivery.state === "accepted",
     );
 
     const verify = await fetch(
@@ -475,8 +502,9 @@ describe.sequential("built process", () => {
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor(
       "uncertain recovery state",
-      async () =>
-        (await challengeStatus(apiPort, created.challengeId)).delivery.state === "uncertain",
+      async ({ signal }) =>
+        (await challengeStatus(apiPort, created.challengeId, signal)).delivery.state ===
+        "uncertain",
     );
     await delay(750);
     expect(await readSink(fixture.sinkPath)).toHaveLength(before + 1);
@@ -573,8 +601,8 @@ describe.sequential("built process", () => {
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor(
       "the recovered pending delivery",
-      async () =>
-        (await challengeStatus(apiPort, created.challengeId)).delivery.state === "accepted",
+      async ({ signal }) =>
+        (await challengeStatus(apiPort, created.challengeId, signal)).delivery.state === "accepted",
     );
     expect(
       (await readSink(fixture.sinkPath)).filter(
@@ -610,8 +638,9 @@ describe.sequential("built process", () => {
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor(
       "the committed dispatch before external transmission",
-      async () =>
-        (await challengeStatus(apiPort, created.challengeId)).delivery.state === "dispatching",
+      async ({ signal }) =>
+        (await challengeStatus(apiPort, created.challengeId, signal)).delivery.state ===
+        "dispatching",
     );
     workerProcess.child.kill("SIGKILL");
     expect((await workerProcess.exit).signal).toBe("SIGKILL");
@@ -632,8 +661,9 @@ describe.sequential("built process", () => {
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor(
       "uncertain recovery before transmission",
-      async () =>
-        (await challengeStatus(apiPort, created.challengeId)).delivery.state === "uncertain",
+      async ({ signal }) =>
+        (await challengeStatus(apiPort, created.challengeId, signal)).delivery.state ===
+        "uncertain",
     );
     expect(
       (await readSink(fixture.sinkPath)).filter(
@@ -731,8 +761,9 @@ describe.sequential("built process", () => {
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor(
       "uncertain recovery after lost acceptance",
-      async () =>
-        (await challengeStatus(apiPort, created.challengeId)).delivery.state === "uncertain",
+      async ({ signal }) =>
+        (await challengeStatus(apiPort, created.challengeId, signal)).delivery.state ===
+        "uncertain",
     );
     expect(
       (await readSink(fixture.sinkPath)).filter(
@@ -886,10 +917,11 @@ describe.sequential("built process", () => {
       processEnvironment("combined", apiPort, apiInternalPort, true),
     );
     await waitForReady(apiInternalPort, apiProcess);
+    const runId = randomUUID();
     const created = await createChallenge(
       apiPort,
-      "shutdown-create",
-      "shutdown-flow",
+      `shutdown-create-${runId}`,
+      `shutdown-flow-${runId}`,
       "+998901234569",
     );
     await waitFor("blocked shutdown send", async () =>

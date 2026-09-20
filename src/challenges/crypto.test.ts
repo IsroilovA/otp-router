@@ -25,18 +25,18 @@ it.effect("binds encryption to its deployment, challenge and field, preserving l
     const encrypted = encrypt(config, "challenge", "code", "000123");
     expect(yield* decrypt(config, "challenge", "code", encrypted)).toBe("000123");
     expect(encrypt(config, "challenge", "code", "000123").nonce).not.toBe(encrypted.nonce);
-    expect((yield* decrypt(config, "other", "code", encrypted).pipe(Effect.either))._tag).toBe(
-      "Left",
+    expect((yield* decrypt(config, "other", "code", encrypted).pipe(Effect.result))._tag).toBe(
+      "Failure",
     );
-    expect((yield* decrypt(config, "challenge", "phone", encrypted).pipe(Effect.either))._tag).toBe(
-      "Left",
+    expect((yield* decrypt(config, "challenge", "phone", encrypted).pipe(Effect.result))._tag).toBe(
+      "Failure",
     );
     expect(
       (yield* decrypt(config, "challenge", "code", {
         ...encrypted,
         tag: Buffer.alloc(16).toString("base64url"),
-      }).pipe(Effect.either))._tag,
-    ).toBe("Left");
+      }).pipe(Effect.result))._tag,
+    ).toBe("Failure");
   }),
 );
 it.effect("retains old decryption and fingerprint keys during writer rotation", () =>
@@ -59,8 +59,8 @@ it.effect("retains old decryption and fingerprint keys during writer rotation", 
         "c",
         "code",
         encrypted,
-      ).pipe(Effect.either))._tag,
-    ).toBe("Left");
+      ).pipe(Effect.result))._tag,
+    ).toBe("Failure");
     const input = verifierInput(config, { id: "c", purpose: "login", contextId: "flow" }, "000001");
     const expected = createHmac("sha256", Buffer.alloc(32, 2))
       .update('[1,"verifier","test","c","login","flow","000001"]')

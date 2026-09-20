@@ -1,5 +1,5 @@
 import { count } from "../diagnostics/metrics.js";
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect, Layer } from "effect";
 import { RouterConfig } from "../config/config.js";
 import { ingestEvents } from "../delivery/callbacks.js";

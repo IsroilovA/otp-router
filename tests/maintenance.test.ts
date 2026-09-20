@@ -107,7 +107,7 @@ const createInput = {
   policyId: "login",
 };
 
-describe.sequential("database compatibility and maintenance", () => {
+describe("database compatibility and maintenance", () => {
   let database: PostgresFixture | undefined;
   let runtime: IntegrationRuntime | undefined;
 
@@ -143,13 +143,13 @@ describe.sequential("database compatibility and maintenance", () => {
     await create("retained-key-references");
     for (const purpose of ["encryption", "verification", "fingerprint"] as const) {
       const result = await current().run(
-        Effect.either(
+        Effect.result(
           validateStoredKeys(omitRetainedKey(current().configuration.settings, purpose)),
         ),
       );
       expect(result).toMatchObject({
-        _tag: "Left",
-        left: { reason: "retained_key_missing" },
+        _tag: "Failure",
+        failure: { reason: "retained_key_missing" },
       });
     }
   });
@@ -183,23 +183,23 @@ describe.sequential("database compatibility and maintenance", () => {
       crypto: { ...harness.configuration.settings.crypto, recipientKey: key(20) },
     };
 
-    expect(await harness.run(Effect.either(validateDeploymentIdentity(changed)))).toMatchObject({
-      _tag: "Left",
-      left: { reason: "recipient_key_changed_requires_incident_procedure" },
+    expect(await harness.run(Effect.result(validateDeploymentIdentity(changed)))).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: "recipient_key_changed_requires_incident_procedure" },
     });
     expect(
-      await harness.run(Effect.either(validateDeploymentIdentity(changed, true))),
+      await harness.run(Effect.result(validateDeploymentIdentity(changed, true))),
     ).toMatchObject({
-      _tag: "Left",
-      left: { reason: "recipient_key_change_requires_invalidation_and_quota_wait" },
+      _tag: "Failure",
+      failure: { reason: "recipient_key_change_requires_invalidation_and_quota_wait" },
     });
 
     expect(await harness.run(invalidateRestoredChallenges)).toBe(1);
     expect(
-      await harness.run(Effect.either(validateDeploymentIdentity(changed, true))),
+      await harness.run(Effect.result(validateDeploymentIdentity(changed, true))),
     ).toMatchObject({
-      _tag: "Left",
-      left: { reason: "recipient_key_change_requires_invalidation_and_quota_wait" },
+      _tag: "Failure",
+      failure: { reason: "recipient_key_change_requires_invalidation_and_quota_wait" },
     });
     expect(
       await harness.run(

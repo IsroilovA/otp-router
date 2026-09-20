@@ -32,7 +32,7 @@ const run = Effect.scoped(
       routingContext: {},
     });
     if (route._tag !== "Route" || route.providerInstanceIds[0] !== providerId) {
-      return yield* Effect.dieMessage("custom selector did not return its configured route");
+      return yield* Effect.die(new Error("custom selector did not return its configured route"));
     }
     const context = yield* Layer.build(
       TextProvider.make({
@@ -55,7 +55,7 @@ const run = Effect.scoped(
       template: {},
     });
     if (accepted.acceptanceEvidence !== "custom_text_sink") {
-      return yield* Effect.dieMessage("custom provider returned an unexpected result");
+      return yield* Effect.die(new Error("custom provider returned an unexpected result"));
     }
     return { selector: route._tag, provider: accepted.acceptanceEvidence } as const;
   }),

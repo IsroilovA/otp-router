@@ -1,13 +1,11 @@
-import { HttpApiDecodeError } from "@effect/platform/HttpApiError";
 import { logEvent } from "../diagnostics/log.js";
+import { HttpApiBuilder, HttpApiMiddleware } from "effect/unstable/httpapi";
 import {
-  type HttpApi,
-  HttpApiBuilder,
-  type HttpApp,
+  HttpRouter,
   HttpServer,
   HttpServerRequest,
   HttpServerResponse,
-} from "@effect/platform";
+} from "effect/unstable/http";
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { Cause, type Context, Data, Effect, Layer, Redacted, Schema, Stream } from "effect";
 import {
@@ -21,7 +19,7 @@ import {
   VerifyInput as VerifyInputSchema,
   statusForError,
 } from "../challenges/contracts.js";
-import { ApplicationAuth, OtpRouterApi, RequestContext, UnauthorizedError } from "./api.js";
+import { ApplicationAuth, OtpRouterApi, RequestContext, RequestValidation } from "./api.js";
 import { decodeJson } from "./json.js";
 import {
   type WebhookError,
@@ -39,8 +37,8 @@ export interface HttpTransportOptions {
 }
 
 export interface HttpDependencies {
-  readonly router: Context.Tag.Service<typeof Router>;
-  readonly webhooks: Context.Tag.Service<typeof WebhookHandler>;
+  readonly router: Context.Service.Shape<typeof Router>;
+  readonly webhooks: Context.Service.Shape<typeof WebhookHandler>;
 }
 
 class BodyTooLarge extends Data.TaggedError("BodyTooLarge") {}
@@ -59,7 +57,7 @@ const readBody = (
 ): Effect.Effect<Uint8Array, BodyTooLarge | InvalidRequest> =>
   request.stream.pipe(
     Stream.runFoldEffect<BodyState, Uint8Array, BodyTooLarge, never>(
-      initialBodyState,
+      () => initialBodyState,
       (state, chunk) => {
         const size = state.size + chunk.byteLength;
         if (size > limit) return Effect.fail(new BodyTooLarge());
@@ -103,10 +101,10 @@ const decodeUtf8 = (body: Uint8Array): Effect.Effect<string, InvalidRequest> =>
 
 const readApplicationJson = <A, I>(
   request: HttpServerRequest.HttpServerRequest,
-  schema: Schema.Schema<A, I>,
+  schema: Schema.Codec<A, I>,
 ): Effect.Effect<A, BodyTooLarge | InvalidRequest> =>
   validateApplicationHeaders(request).pipe(
-    Effect.zipRight(readBody(request, APPLICATION_BODY_LIMIT)),
+    Effect.andThen(readBody(request, APPLICATION_BODY_LIMIT)),
     Effect.flatMap(decodeUtf8),
     Effect.flatMap(decodeJson(schema)),
     Effect.mapError((error) => (error instanceof BodyTooLarge ? error : new InvalidRequest())),
@@ -162,9 +160,9 @@ const responseHeaders = (replayed: boolean, body: ResponseBody): Record<string, 
 };
 
 const operationResponse = (result: OperationResult) =>
-  Schema.encode(ResponseBodySchema)(result.body).pipe(
+  Schema.encodeEffect(ResponseBodySchema)(result.body).pipe(
     Effect.map((body) =>
-      HttpServerResponse.unsafeJson(body, {
+      HttpServerResponse.jsonUnsafe(body, {
         status: result.status,
         headers: responseHeaders(result.replayed, result.body),
       }),
@@ -173,10 +171,12 @@ const operationResponse = (result: OperationResult) =>
 
 const errorResponse = (code: ErrorCode, requestId: string, retryAt?: string) => {
   const body = makeErrorBody(code, requestId, retryAt);
-  return HttpServerResponse.unsafeJson(body, {
-    status: statusForError(code),
-    headers: responseHeaders(false, body),
-  });
+  return Effect.succeed(
+    HttpServerResponse.jsonUnsafe(body, {
+      status: statusForError(code),
+      headers: responseHeaders(false, body),
+    }),
+  );
 };
 
 const complete = (
@@ -189,15 +189,15 @@ const complete = (
   effect.pipe(
     Effect.flatMap(operationResponse),
     Effect.catchTag("DomainError", (error) => errorResponse(error.code, requestId, error.retryAt)),
-    Effect.catchAllCause((cause) =>
-      Cause.isInterruptedOnly(cause)
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
         ? Effect.interrupt
         : logEvent({
             event: "application_operation",
             outcome: "defect",
             reason: "internal_error",
             requestId,
-          }).pipe(Effect.zipRight(errorResponse("internal_error", requestId))),
+          }).pipe(Effect.andThen(errorResponse("internal_error", requestId))),
     ),
   );
 
@@ -207,7 +207,7 @@ const transportFailure = (error: BodyTooLarge | InvalidRequest, requestId: strin
 const mutationInput = <A, I>(
   request: HttpServerRequest.HttpServerRequest,
   headers: { readonly "idempotency-key": string },
-  schema: Schema.Schema<A, I>,
+  schema: Schema.Codec<A, I>,
 ) =>
   Effect.all({
     key: Effect.succeed(headers["idempotency-key"]),
@@ -232,11 +232,11 @@ const digest = (key: string): Buffer => createHash("sha256").update(key, "utf8")
 const makeAuthLayer = (apiKeys: ReadonlyArray<string>) => {
   const expected = apiKeys.map(digest);
   return Layer.succeed(ApplicationAuth, {
-    bearer: (redacted) =>
+    bearer: (httpEffect, { credential }) =>
       Effect.gen(function* () {
         const request = yield* HttpServerRequest.HttpServerRequest;
         const authorization = request.headers["authorization"] ?? "";
-        const token = Redacted.value(redacted);
+        const token = Redacted.value(credential);
         const supplied = digest(token);
         let matched = false;
         for (const candidate of expected) matched = timingSafeEqual(supplied, candidate) || matched;
@@ -253,7 +253,7 @@ const makeAuthLayer = (apiKeys: ReadonlyArray<string>) => {
               requestId,
             },
           });
-        return { requestId };
+        return yield* Effect.provideService(httpEffect, RequestContext, { requestId });
       }),
   });
 };
@@ -265,55 +265,55 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
         const { requestId } = yield* RequestContext;
         const router = yield* Router;
         const parsed = yield* mutationInput(request, headers, CreateInputSchema).pipe(
-          Effect.catchAll((error) => transportFailure(error, requestId)),
+          Effect.catch((error) => transportFailure(error, requestId)),
         );
-        if (HttpServerResponse.isServerResponse(parsed)) return parsed;
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
         return yield* complete(router.create({ ...parsed, requestId }), requestId);
       }),
     )
-    .handleRaw("getChallengeStatus", ({ path }) =>
+    .handleRaw("getChallengeStatus", ({ params: path }) =>
       Effect.gen(function* () {
         const { requestId } = yield* RequestContext;
         const router = yield* Router;
         return yield* complete(router.status(path.challengeId), requestId);
       }),
     )
-    .handleRaw("verifyChallenge", ({ path, request, headers }) =>
+    .handleRaw("verifyChallenge", ({ params: path, request, headers }) =>
       Effect.gen(function* () {
         const { requestId } = yield* RequestContext;
         const router = yield* Router;
         const parsed = yield* mutationInput(request, headers, VerifyInputSchema).pipe(
-          Effect.catchAll((error) => transportFailure(error, requestId)),
+          Effect.catch((error) => transportFailure(error, requestId)),
         );
-        if (HttpServerResponse.isServerResponse(parsed)) return parsed;
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
         return yield* complete(
           router.verify({ ...parsed, challengeId: path.challengeId, requestId }),
           requestId,
         );
       }),
     )
-    .handleRaw("scheduleDelivery", ({ path, request, headers }) =>
+    .handleRaw("scheduleDelivery", ({ params: path, request, headers }) =>
       Effect.gen(function* () {
         const { requestId } = yield* RequestContext;
         const router = yield* Router;
         const parsed = yield* mutationInput(request, headers, DeliveryInputSchema).pipe(
-          Effect.catchAll((error) => transportFailure(error, requestId)),
+          Effect.catch((error) => transportFailure(error, requestId)),
         );
-        if (HttpServerResponse.isServerResponse(parsed)) return parsed;
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
         return yield* complete(
           router.deliver({ ...parsed, challengeId: path.challengeId, requestId }),
           requestId,
         );
       }),
     )
-    .handleRaw("cancelChallenge", ({ path, request, headers }) =>
+    .handleRaw("cancelChallenge", ({ params: path, request, headers }) =>
       Effect.gen(function* () {
         const { requestId } = yield* RequestContext;
         const router = yield* Router;
         const parsed = yield* mutationInput(request, headers, Schema.Struct({})).pipe(
-          Effect.catchAll((error) => transportFailure(error, requestId)),
+          Effect.catch((error) => transportFailure(error, requestId)),
         );
-        if (HttpServerResponse.isServerResponse(parsed)) return parsed;
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
         return yield* complete(
           router.cancel({ ...parsed, challengeId: path.challengeId, requestId }),
           requestId,
@@ -325,7 +325,7 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
 const makeWebhookHandlers = (bodyLimit: number) =>
   HttpApiBuilder.group(OtpRouterApi, "providerCallbacks", (handlers) =>
     handlers
-      .handleRaw("providerHandshake", ({ path, request }) =>
+      .handleRaw("providerHandshake", ({ params: path, request }) =>
         Effect.gen(function* () {
           const webhooks = yield* WebhookHandler;
           const reply = yield* webhooks
@@ -334,19 +334,19 @@ const makeWebhookHandlers = (bodyLimit: number) =>
               headers: request.headers,
               query: queryFromRequest(request),
             })
-            .pipe(Effect.catchAll(webhookFailureResponse));
-          if (HttpServerResponse.isServerResponse(reply)) return reply;
+            .pipe(Effect.catch(webhookFailureResponse));
+          if (HttpServerResponse.isHttpServerResponse(reply)) return reply;
           return HttpServerResponse.uint8Array(reply.body, {
             status: reply.status,
             contentType: reply.contentType,
           });
         }),
       )
-      .handleRaw("providerCallback", ({ path, request }) =>
+      .handleRaw("providerCallback", ({ params: path, request }) =>
         Effect.gen(function* () {
           const webhooks = yield* WebhookHandler;
           const body = yield* readBody(request, bodyLimit).pipe(
-            Effect.catchAll((error) =>
+            Effect.catch((error) =>
               Effect.succeed(
                 HttpServerResponse.empty({
                   status: error instanceof BodyTooLarge ? 413 : 400,
@@ -354,7 +354,7 @@ const makeWebhookHandlers = (bodyLimit: number) =>
               ),
             ),
           );
-          if (HttpServerResponse.isServerResponse(body)) return body;
+          if (HttpServerResponse.isHttpServerResponse(body)) return body;
           const ingested = yield* webhooks
             .ingest({
               providerInstanceId: path.providerInstanceId,
@@ -362,16 +362,14 @@ const makeWebhookHandlers = (bodyLimit: number) =>
               query: queryFromRequest(request),
               body,
             })
-            .pipe(Effect.as(true), Effect.catchAll(webhookFailureResponse));
-          if (HttpServerResponse.isServerResponse(ingested)) return ingested;
+            .pipe(Effect.as(true), Effect.catch(webhookFailureResponse));
+          if (HttpServerResponse.isHttpServerResponse(ingested)) return ingested;
           return HttpServerResponse.empty({ status: 200 });
         }),
       ),
   );
 
-export const makeHttpApiLayer = (
-  options: HttpTransportOptions,
-): Layer.Layer<HttpApi.Api, never, Router | WebhookHandler> => {
+export const makeHttpApiLayer = (options: HttpTransportOptions) => {
   if (options.apiKeys.length < 1 || options.apiKeys.length > 2) {
     throw new RangeError("apiKeys must contain one or two keys");
   }
@@ -384,42 +382,47 @@ export const makeHttpApiLayer = (
   }
   const auth = makeAuthLayer(options.apiKeys);
   const handlers = Layer.mergeAll(
-    makeApplicationHandlers.pipe(Layer.provide(auth)),
-    makeWebhookHandlers(webhookBodyLimit),
-    auth,
-    HttpApiBuilder.middleware((app) =>
-      app.pipe(
-        Effect.catchAllCause((cause) => {
-          const failureOption = Cause.failureOption(cause);
-          if (failureOption._tag === "None") return Effect.failCause(cause);
-          const failure: unknown = failureOption.value;
-          if (failure instanceof HttpApiDecodeError)
-            return errorResponse("invalid_request", randomUUID());
-          if (Schema.is(UnauthorizedError)(failure))
-            return errorResponse("unauthorized", failure.error.requestId);
-          return Effect.failCause(cause);
-        }),
+    makeApplicationHandlers.pipe(
+      Layer.provide(
+        Layer.merge(
+          auth,
+          HttpApiMiddleware.layerSchemaErrorTransform(RequestValidation, (error) =>
+            errorResponse(
+              error.kind === "Body" || error.kind === "ResponseHeaders"
+                ? "internal_error"
+                : "invalid_request",
+              randomUUID(),
+            ),
+          ),
+        ),
       ),
     ),
+    makeWebhookHandlers(webhookBodyLimit),
+    auth,
   );
-  return HttpApiBuilder.api(OtpRouterApi).pipe(Layer.provide(handlers));
+  return HttpApiBuilder.layer(OtpRouterApi).pipe(
+    Layer.provide(handlers),
+    Layer.provide(HttpRouter.middleware(httpResponseMiddleware).layer),
+  );
 };
 
 export const makeWebHandler = (options: HttpTransportOptions, dependencies: HttpDependencies) => {
   const api = makeHttpApiLayer(options).pipe(
-    Layer.provide(
+    HttpRouter.provideRequest(
       Layer.merge(
         Layer.succeed(Router, dependencies.router),
         Layer.succeed(WebhookHandler, dependencies.webhooks),
       ),
     ),
   );
-  return HttpApiBuilder.toWebHandler(Layer.merge(api, HttpServer.layerContext), {
-    middleware: httpResponseMiddleware,
+  return HttpRouter.toWebHandler(api.pipe(Layer.provide(HttpServer.layerServices)), {
+    disableLogger: true,
   });
 };
 
-export const httpResponseMiddleware = <E, R>(app: HttpApp.Default<E, R>): HttpApp.Default<E, R> =>
+const httpResponseMiddleware = <E, R>(
+  app: Effect.Effect<HttpServerResponse.HttpServerResponse, E, R>,
+) =>
   app.pipe(
     Effect.map((response) => HttpServerResponse.setHeader(response, "cache-control", "no-store")),
   );

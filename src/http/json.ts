@@ -151,9 +151,11 @@ export const parseJson = (source: string): Effect.Effect<unknown, InvalidJson> =
   });
 
 export const decodeJson =
-  <A, I>(schema: Schema.Schema<A, I>) =>
+  <A, I>(schema: Schema.Codec<A, I>) =>
   (source: string): Effect.Effect<A, InvalidJson> =>
     parseJson(source).pipe(
-      Effect.flatMap(Schema.decodeUnknown(schema, { errors: "all", onExcessProperty: "error" })),
+      Effect.flatMap(
+        Schema.decodeUnknownEffect(schema, { errors: "all", onExcessProperty: "error" }),
+      ),
       Effect.mapError(() => new InvalidJson()),
     );

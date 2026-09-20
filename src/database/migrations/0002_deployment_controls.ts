@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;

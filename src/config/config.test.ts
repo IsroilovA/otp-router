@@ -33,7 +33,7 @@ const base: Configuration = {
   },
   providers: [provider],
 };
-it.scoped(
+it.effect(
   "rejects unsupported fallback/retry configuration, invalid bounds and reused secret keys",
   () =>
     Effect.gen(function* () {
@@ -59,12 +59,12 @@ it.scoped(
           },
         },
       ])
-        expect((yield* loadConfiguration({ ...base, settings }).pipe(Effect.either))._tag).toBe(
-          "Left",
+        expect((yield* loadConfiguration({ ...base, settings }).pipe(Effect.result))._tag).toBe(
+          "Failure",
         );
     }),
 );
-it.scoped("validates adapter defaults even when a valid timeout override is supplied", () =>
+it.effect("validates adapter defaults even when a valid timeout override is supplied", () =>
   Effect.gen(function* () {
     const ready = Context.get(yield* Layer.build(provider), ProviderInstance);
     for (const defaultSendTimeoutMs of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
@@ -74,21 +74,21 @@ it.scoped("validates adapter defaults even when a valid timeout override is supp
         sendTimeoutMs: 1000,
       });
       expect(
-        (yield* loadConfiguration({ ...base, providers: [invalid] }).pipe(Effect.either))._tag,
-      ).toBe("Left");
+        (yield* loadConfiguration({ ...base, providers: [invalid] }).pipe(Effect.result))._tag,
+      ).toBe("Failure");
     }
     expect(
-      (yield* loadConfiguration({ ...base, providers: [provider, provider] }).pipe(Effect.either))
+      (yield* loadConfiguration({ ...base, providers: [provider, provider] }).pipe(Effect.result))
         ._tag,
-    ).toBe("Left");
+    ).toBe("Failure");
   }),
 );
-it.scoped(
+it.effect(
   "checks every configured template at startup, including locales not selected by defaults",
   () =>
     Effect.gen(function* () {
       const { MetaProvider } = yield* Effect.promise(() => import("../providers/meta.js"));
-      const configuration = yield* Schema.decodeUnknown(MetaProvider.configSchema)({
+      const configuration = yield* Schema.decodeUnknownEffect(MetaProvider.configSchema)({
         accessToken: "token",
         appSecret: "secret",
         verifyToken: "verify",
@@ -105,11 +105,11 @@ it.scoped(
           uz: { name: "otp", languageCode: "uz", codeButtonIndex: 99 },
         },
       });
-      expect((yield* Layer.build(layer).pipe(Effect.either))._tag).toBe("Left");
+      expect((yield* Layer.build(layer).pipe(Effect.result))._tag).toBe("Failure");
     }),
 );
 
-it.scoped(
+it.effect(
   "rejects a provider whose timeout and delivery minimum cannot fit the policy lifetime",
   () =>
     Effect.gen(function* () {
@@ -118,10 +118,10 @@ it.scoped(
         const result = yield* loadConfiguration({
           ...base,
           providers: [Layer.succeed(ProviderInstance, { ...ready, sendTimeoutMs })],
-        }).pipe(Effect.either);
+        }).pipe(Effect.result);
         expect(result).toMatchObject({
-          _tag: "Left",
-          left: { reason: "incompatible_provider_constraints" },
+          _tag: "Failure",
+          failure: { reason: "incompatible_provider_constraints" },
         });
       }
     }),

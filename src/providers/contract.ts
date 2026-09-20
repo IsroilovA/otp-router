@@ -4,46 +4,46 @@ import type { Effect, Layer } from "effect";
 export const ProviderContractVersion = 1 as const;
 
 export const ProviderInstanceIdSchema = Schema.NonEmptyString.pipe(
-  Schema.pattern(/^[A-Za-z0-9_-]{1,64}$/),
+  Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/)),
   Schema.brand("ProviderInstanceId"),
 );
 export type ProviderInstanceId = typeof ProviderInstanceIdSchema.Type;
 
-export const ChallengeIdSchema = Schema.UUID.pipe(Schema.brand("ChallengeId"));
+export const ChallengeIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand("ChallengeId"),
+);
 export type ChallengeId = typeof ChallengeIdSchema.Type;
 
-export const DeliveryIdSchema = Schema.UUID.pipe(Schema.brand("DeliveryId"));
+export const DeliveryIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand("DeliveryId"),
+);
 export type DeliveryId = typeof DeliveryIdSchema.Type;
 
 export const NormalizedPhoneSchema = Schema.String.pipe(
-  Schema.pattern(/^\+[1-9][0-9]{6,14}$/),
+  Schema.check(Schema.isPattern(/^\+[1-9][0-9]{6,14}$/)),
   Schema.brand("NormalizedPhone"),
 );
 export type NormalizedPhone = typeof NormalizedPhoneSchema.Type;
 
 export const OtpCodeSchema = Schema.String.pipe(
-  Schema.pattern(/^[0-9]{4,8}$/),
+  Schema.check(Schema.isPattern(/^[0-9]{4,8}$/)),
   Schema.brand("OtpCode"),
 );
 export type OtpCode = typeof OtpCodeSchema.Type;
 
 export const IsoDateTimeSchema = Schema.String.pipe(
-  Schema.pattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u),
-  Schema.filter((value) => !Number.isNaN(Date.parse(value)), {
-    message: () => "Expected an ISO date-time string",
-  }),
+  Schema.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u)),
+  Schema.check(
+    Schema.makeFilter((value) => !Number.isNaN(Date.parse(value)), {
+      message: "Expected an ISO date-time string",
+    }),
+  ),
   Schema.brand("IsoDateTime"),
 );
 export type IsoDateTime = typeof IsoDateTimeSchema.Type;
 
-export const LocaleSchema = Schema.NonEmptyString.pipe(Schema.maxLength(64));
+export const LocaleSchema = Schema.NonEmptyString.pipe(Schema.check(Schema.isMaxLength(64)));
 export type Locale = typeof LocaleSchema.Type;
-
-export type JsonValue = null | boolean | number | string | JsonArray | JsonObject;
-export interface JsonArray extends ReadonlyArray<JsonValue> {}
-export interface JsonObject {
-  readonly [key: string]: JsonValue;
-}
 
 export type AcceptanceCertainty = "not_accepted" | "unknown";
 
@@ -111,7 +111,7 @@ export interface ProviderIdempotency {
 
 export interface ResolvedTemplate {
   readonly locale: Locale;
-  readonly template: JsonValue;
+  readonly template: Schema.Json;
 }
 
 export interface ProviderSendInput {
@@ -122,7 +122,7 @@ export interface ProviderSendInput {
   readonly expiresAt: IsoDateTime;
   readonly remainingDeliveryMs: number;
   readonly locale: Locale;
-  readonly template: JsonValue;
+  readonly template: Schema.Json;
   readonly providerIdempotencyKey?: string;
 }
 
@@ -177,10 +177,9 @@ export interface ReadyProvider {
   readonly callback?: (input: CallbackInput) => Effect.Effect<CallbackResult, CallbackError>;
 }
 
-export class ProviderInstance extends Context.Tag("otp-router/ProviderInstance")<
-  ProviderInstance,
-  ReadyProvider
->() {}
+export class ProviderInstance extends Context.Service<ProviderInstance, ReadyProvider>()(
+  "otp-router/ProviderInstance",
+) {}
 
 export interface ProviderMakeOptions<Configuration> {
   readonly instanceId: ProviderInstanceId;
@@ -196,8 +195,8 @@ export interface ProviderDefinition<Configuration, EncodedConfiguration = Config
   readonly version: string;
   readonly contractVersion: typeof ProviderContractVersion;
   readonly channel: string;
-  readonly configSchema: Schema.Schema<Configuration, EncodedConfiguration>;
-  readonly templateSchema: Schema.Schema.AnyNoContext | null;
+  readonly configSchema: Schema.Codec<Configuration, EncodedConfiguration>;
+  readonly templateSchema: Schema.Codec<unknown, unknown> | null;
   readonly constraints: ProviderConstraints;
   readonly defaultSendTimeoutMs: number;
   readonly diagnosticCodes: readonly string[];

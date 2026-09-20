@@ -11,64 +11,69 @@ import {
   type ProviderConfigurationError,
 } from "../providers/contract.js";
 
-const bounded = (min: number, max: number) => Schema.Int.pipe(Schema.between(min, max));
+const bounded = (min: number, max: number) =>
+  Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: min, maximum: max })));
 export const Policy = Schema.Struct({
-  providerInstanceIds: Schema.Array(Identifier).pipe(Schema.minItems(1)),
-  codeLength: Schema.optionalWith(bounded(6, 8), { default: () => 6 }),
-  lifetimeSeconds: Schema.optionalWith(bounded(60, 600), { default: () => 300 }),
-  maxIncorrectGuesses: Schema.optionalWith(bounded(1, 5), { default: () => 5 }),
-  maxSends: Schema.optionalWith(bounded(1, 10), { default: () => 6 }),
-  resendCooldownSeconds: Schema.optionalWith(bounded(30, 300), { default: () => 30 }),
-  manualSelectionEnabled: Schema.optionalWith(Schema.Boolean, { default: () => false }),
+  providerInstanceIds: Schema.Array(Identifier).pipe(Schema.check(Schema.isMinLength(1))),
+  codeLength: bounded(6, 8).pipe(Schema.withDecodingDefaultType(Effect.succeed(6))),
+  lifetimeSeconds: bounded(60, 600).pipe(Schema.withDecodingDefaultType(Effect.succeed(300))),
+  maxIncorrectGuesses: bounded(1, 5).pipe(Schema.withDecodingDefaultType(Effect.succeed(5))),
+  maxSends: bounded(1, 10).pipe(Schema.withDecodingDefaultType(Effect.succeed(6))),
+  resendCooldownSeconds: bounded(30, 300).pipe(Schema.withDecodingDefaultType(Effect.succeed(30))),
+  manualSelectionEnabled: Schema.Boolean.pipe(
+    Schema.withDecodingDefaultType(Effect.succeed(false)),
+  ),
   manualProviderIds: Schema.optional(Schema.Array(Identifier)),
 });
 export type Policy = typeof Policy.Type;
 export const Settings = Schema.Struct({
   crypto: CryptoConfig,
-  apiKeys: Schema.Array(Schema.String.pipe(Schema.minLength(32))).pipe(
-    Schema.minItems(1),
-    Schema.maxItems(2),
+  apiKeys: Schema.Array(Schema.String.pipe(Schema.check(Schema.isMinLength(32)))).pipe(
+    Schema.check(Schema.isMinLength(1)),
+    Schema.check(Schema.isMaxLength(2)),
   ),
   defaultLocale: Locale,
   fallbackLocales: Schema.Array(Locale),
-  policies: Schema.Record({ key: Identifier, value: Policy }),
-  purposes: Schema.Record({
-    key: Identifier,
-    value: Schema.Array(Identifier).pipe(Schema.minItems(1)),
-  }),
-  deploymentSendLimit15m: Schema.Int.pipe(Schema.positive()),
-  deploymentSendLimit24h: Schema.Int.pipe(Schema.positive()),
-  recipientCreateLimit15m: Schema.optionalWith(bounded(1, 5), { default: () => 5 }),
-  recipientSendLimit15m: Schema.optionalWith(bounded(1, 10), { default: () => 10 }),
-  recipientGuessLimit15m: Schema.optionalWith(bounded(1, 10), { default: () => 10 }),
-  providerSendLimits15m: Schema.optionalWith(
-    Schema.Record({ key: Identifier, value: Schema.Int.pipe(Schema.positive()) }),
-    { default: () => ({}) },
+  policies: Schema.Record(Identifier, Policy),
+  purposes: Schema.Record(
+    Identifier,
+    Schema.Array(Identifier).pipe(Schema.check(Schema.isMinLength(1))),
   ),
-  providerLabels: Schema.optionalWith(
-    Schema.Record({ key: Identifier, value: Schema.String.pipe(Schema.maxLength(128)) }),
-    { default: () => ({}) },
+  deploymentSendLimit15m: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+  deploymentSendLimit24h: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+  recipientCreateLimit15m: bounded(1, 5).pipe(Schema.withDecodingDefaultType(Effect.succeed(5))),
+  recipientSendLimit15m: bounded(1, 10).pipe(Schema.withDecodingDefaultType(Effect.succeed(10))),
+  recipientGuessLimit15m: bounded(1, 10).pipe(Schema.withDecodingDefaultType(Effect.succeed(10))),
+  providerSendLimits15m: Schema.Record(
+    Identifier,
+    Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
+  ).pipe(Schema.withDecodingDefaultType(Effect.succeed({}))),
+  providerLabels: Schema.Record(
+    Identifier,
+    Schema.String.pipe(Schema.check(Schema.isMaxLength(128))),
+  ).pipe(Schema.withDecodingDefaultType(Effect.succeed({}))),
+  selectorTimeoutMs: bounded(1, 60000).pipe(Schema.withDecodingDefaultType(Effect.succeed(2000))),
+  role: Schema.Literals(["combined", "api", "worker"]).pipe(
+    Schema.withDecodingDefaultType(Effect.succeed("combined")),
   ),
-  selectorTimeoutMs: Schema.optionalWith(bounded(1, 60000), { default: () => 2000 }),
-  role: Schema.optionalWith(Schema.Literal("combined", "api", "worker"), {
-    default: () => "combined",
-  }),
-  port: Schema.optionalWith(bounded(1, 65535), { default: () => 3000 }),
-  internalPort: Schema.optionalWith(bounded(1, 65535), { default: () => 3001 }),
-  host: Schema.optionalWith(Schema.String, { default: () => "127.0.0.1" }),
-  internalHost: Schema.optionalWith(Schema.String, { default: () => "127.0.0.1" }),
-  workerConcurrency: Schema.optionalWith(bounded(1, 64), { default: () => 4 }),
-  shutdownGraceMs: Schema.optionalWith(bounded(1000, 120000), { default: () => 30000 }),
+  port: bounded(1, 65535).pipe(Schema.withDecodingDefaultType(Effect.succeed(3000))),
+  internalPort: bounded(1, 65535).pipe(Schema.withDecodingDefaultType(Effect.succeed(3001))),
+  host: Schema.String.pipe(Schema.withDecodingDefaultType(Effect.succeed("127.0.0.1"))),
+  internalHost: Schema.String.pipe(Schema.withDecodingDefaultType(Effect.succeed("127.0.0.1"))),
+  workerConcurrency: bounded(1, 64).pipe(Schema.withDecodingDefaultType(Effect.succeed(4))),
+  shutdownGraceMs: bounded(1000, 120000).pipe(
+    Schema.withDecodingDefaultType(Effect.succeed(30000)),
+  ),
 });
 export type Settings = typeof Settings.Type;
 export class SelectorFailure extends Data.TaggedError("SelectorFailure")<{}> {}
-export const SelectorResult = Schema.Union(
+export const SelectorResult = Schema.Union([
   Schema.Struct({ _tag: Schema.Literal("Reject") }),
   Schema.Struct({
     _tag: Schema.Literal("Route"),
-    providerInstanceIds: Schema.Array(Identifier).pipe(Schema.minItems(1)),
+    providerInstanceIds: Schema.Array(Identifier).pipe(Schema.check(Schema.isMinLength(1))),
   }),
-);
+]);
 export type RoutingSelector = (input: {
   readonly recipient: NormalizedPhone;
   readonly purpose: string;
@@ -86,7 +91,7 @@ export interface RuntimeConfiguration {
   readonly providers: ReadonlyMap<string, ReadyProvider>;
   readonly selectors: Readonly<Record<string, RoutingSelector>>;
 }
-export const ConfigurationReason = Schema.Literal(
+export const ConfigurationReason = Schema.Literals([
   "configuration_module_failed",
   "deployment_identity_changed",
   "incompatible_provider_constraints",
@@ -103,14 +108,13 @@ export const ConfigurationReason = Schema.Literal(
   "unknown_provider",
   "unknown_selector_policy",
   "unsupported_snapshot_version",
-);
+]);
 export class ConfigurationError extends Data.TaggedError("ConfigurationError")<{
   readonly reason: typeof ConfigurationReason.Type;
 }> {}
-export class RouterConfig extends Context.Tag("otp-router/Config")<
-  RouterConfig,
-  RuntimeConfiguration
->() {}
+export class RouterConfig extends Context.Service<RouterConfig, RuntimeConfiguration>()(
+  "otp-router/Config",
+) {}
 const invalid = (reason: typeof ConfigurationReason.Type) =>
   Effect.fail(new ConfigurationError({ reason }));
 const validatePolicy = (policy: Policy, providers: ReadonlyMap<string, ReadyProvider>) =>
@@ -127,14 +131,14 @@ const validatePolicy = (policy: Policy, providers: ReadonlyMap<string, ReadyProv
   });
 export const loadConfiguration = (configuration: Configuration) =>
   Effect.gen(function* () {
-    const settings = yield* Schema.decodeUnknown(Settings)(configuration.settings, {
+    const settings = yield* Schema.decodeUnknownEffect(Settings)(configuration.settings, {
       onExcessProperty: "error",
     }).pipe(Effect.mapError(() => new ConfigurationError({ reason: "invalid_settings" })));
     yield* validateCrypto(settings.crypto).pipe(
       Effect.mapError(() => new ConfigurationError({ reason: "invalid_keys" })),
     );
     const providers = yield* buildProviders(configuration);
-    const locales = yield* Schema.decodeUnknown(Schema.Array(LocaleSchema))([
+    const locales = yield* Schema.decodeUnknownEffect(Schema.Array(LocaleSchema))([
       ...new Set([settings.defaultLocale, ...settings.fallbackLocales]),
     ]);
     for (const policy of Object.values(settings.policies)) {

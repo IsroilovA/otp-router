@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows, single } from "../database/query.js";
 import { Challenge, Delivery, Secrets } from "./records.js";
@@ -6,7 +6,7 @@ import { DomainError } from "./contracts.js";
 
 export const findChallenge = (id: string, lock = false) =>
   Effect.gen(function* () {
-    if (!Schema.is(Schema.UUID)(id))
+    if (!Schema.is(Schema.String.check(Schema.isUUID()))(id))
       return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
     const sql = yield* SqlClient.SqlClient;
     const values = yield* rows(

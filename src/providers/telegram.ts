@@ -9,7 +9,6 @@ import {
   UnknownProviderOutcome,
   type CallbackInput,
   type CallbackResult,
-  type JsonValue,
   type NormalizedDeliveryEvent,
   type ProviderDefinition,
   type ProviderSendError,
@@ -31,12 +30,12 @@ import {
 import { fetchTransport, type HttpTransport } from "./transport.js";
 
 const TelegramConfigurationSchema = Schema.Struct({
-  apiToken: Schema.Redacted(Schema.NonEmptyString),
+  apiToken: Schema.RedactedFromValue(Schema.NonEmptyString),
   senderUsername: Schema.optional(Schema.NonEmptyString),
-  callbackUrl: Schema.optional(Schema.String.pipe(Schema.pattern(/^https:\/\//))),
-  callbackMaxAgeSeconds: Schema.optionalWith(Schema.Int.pipe(Schema.between(30, 3_600)), {
-    default: () => 300,
-  }),
+  callbackUrl: Schema.optional(Schema.String.pipe(Schema.check(Schema.isPattern(/^https:\/\//)))),
+  callbackMaxAgeSeconds: Schema.Int.pipe(
+    Schema.check(Schema.isBetween({ minimum: 30, maximum: 3_600 })),
+  ).pipe(Schema.withDecodingDefaultType(Effect.succeed(300))),
 });
 export type TelegramConfiguration = typeof TelegramConfigurationSchema.Type;
 
@@ -48,13 +47,13 @@ const TelegramErrorSchema = Schema.Struct({
   ok: Schema.Literal(false),
   error: Schema.NonEmptyString,
 });
-const TelegramResponseSchema = Schema.Union(TelegramSuccessSchema, TelegramErrorSchema);
+const TelegramResponseSchema = Schema.Union([TelegramSuccessSchema, TelegramErrorSchema]);
 
 const TelegramCallbackSchema = Schema.Struct({
   request_id: Schema.NonEmptyString,
   payload: Schema.optional(Schema.NonEmptyString),
   delivery_status: Schema.Struct({
-    status: Schema.Literal("sent", "delivered", "read", "expired", "revoked"),
+    status: Schema.Literals(["sent", "delivered", "read", "expired", "revoked"]),
     updated_at: Schema.Int,
   }),
 });
@@ -141,7 +140,7 @@ const callbackEvent = (
       try: () => JSON.parse(text) as unknown,
       catch: () => new CallbackFormatError({ diagnosticCode: "invalid_body" }),
     });
-    const report = yield* Schema.decodeUnknown(TelegramCallbackSchema)(json).pipe(
+    const report = yield* Schema.decodeUnknownEffect(TelegramCallbackSchema)(json).pipe(
       Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
     );
     const status = report.delivery_status.status;
@@ -182,7 +181,7 @@ const send = (
       });
     }
     const ttl = Math.min(remainingSeconds, 3_600);
-    const body: Record<string, JsonValue> = {
+    const body: Record<string, Schema.Json> = {
       phone_number: input.recipient,
       code: input.code,
       ttl,
@@ -210,7 +209,7 @@ const send = (
         ),
       );
     const json = yield* parseJson(response.body);
-    const parsed = yield* Schema.decodeUnknown(TelegramResponseSchema)(json).pipe(
+    const parsed = yield* Schema.decodeUnknownEffect(TelegramResponseSchema)(json).pipe(
       Effect.mapError(
         () =>
           new UnknownProviderOutcome({

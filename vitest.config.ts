@@ -7,7 +7,6 @@ export default defineConfig({
     // the tests themselves still exercise concurrent clients, transactions, and processes.
     maxWorkers: 2,
     include: ["src/**/*.test.ts", "tests/**/*.test.ts"],
-    clearMocks: true,
     restoreMocks: true,
     unstubEnvs: true,
     unstubGlobals: true,

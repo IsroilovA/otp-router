@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Effect, Layer, Schema } from "effect";
+import { Cause, Effect, Exit, Layer, Schema } from "effect";
 import {
   Snapshot,
   VerificationResult,
@@ -161,7 +161,7 @@ const providerLayer = (id: string, channel: string, control: ProviderControl) =>
     resolveTemplate: (candidates) => {
       const locale = candidates[0];
       return locale === undefined
-        ? Effect.dieMessage("Integration configuration omitted its locale")
+        ? Effect.die(new Error("Integration configuration omitted its locale"))
         : Effect.succeed({ locale, template: null });
     },
     send: (input) =>
@@ -269,7 +269,7 @@ const dispatchNext = async (
   return job.data;
 };
 
-const query = <A, I>(schema: Schema.Schema<A, I>, text: string): Promise<ReadonlyArray<A>> => {
+const query = <A, I>(schema: Schema.Codec<A, I>, text: string): Promise<ReadonlyArray<A>> => {
   const harness = currentRuntime();
   return harness.run(rows(schema, harness.pg.unsafe(text)));
 };
@@ -334,7 +334,7 @@ const waitForChallengeRowWaiter = async (): Promise<void> => {
       "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE '%FROM otp_router.challenges%FOR UPDATE%'",
     );
     if (waiting[0]?.count !== 0) return;
-    await Effect.runPromise(Effect.yieldNow());
+    await Effect.runPromise(Effect.yieldNow);
   }
   throw new Error("Verification did not reach the challenge row lock");
 };
@@ -396,7 +396,7 @@ beforeEach(async () => {
   await currentRuntime().reset();
 });
 
-describe.sequential("PostgreSQL integration", () => {
+describe("PostgreSQL integration", () => {
   it("runs HTTP create, queued dispatch, and verification end to end", async () => {
     if (web === undefined) throw new Error("HTTP handler is not initialized");
     const createResponse = await web.handler(
@@ -447,7 +447,7 @@ describe.sequential("PostgreSQL integration", () => {
       {
         router: {
           ...harness.router,
-          create: () => Effect.dieMessage("private-provider-payload"),
+          create: () => Effect.die(new Error("private-provider-payload")),
         },
         webhooks: {
           handshake: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
@@ -545,7 +545,7 @@ describe.sequential("PostgreSQL integration", () => {
     expect(await count("idempotency_records")).toBe(1);
 
     const conflict = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         currentRuntime().router.create({
           key: operationKey,
           input: createInput("+998909876543"),
@@ -554,8 +554,8 @@ describe.sequential("PostgreSQL integration", () => {
       ),
     );
     expect(conflict).toMatchObject({
-      _tag: "Left",
-      left: { _tag: "DomainError", code: "idempotency_conflict" },
+      _tag: "Failure",
+      failure: { _tag: "DomainError", code: "idempotency_conflict" },
     });
   });
 
@@ -576,7 +576,7 @@ describe.sequential("PostgreSQL integration", () => {
       currentRuntime().pg.withTransaction(
         currentRuntime().pg`SELECT pg_advisory_xact_lock(hashtextextended(${identity},0))`.pipe(
           Effect.tap(() => Effect.sync(() => acquired.resolve())),
-          Effect.zipRight(Effect.promise(() => release.promise)),
+          Effect.andThen(Effect.promise(() => release.promise)),
         ),
       ),
     );
@@ -624,7 +624,7 @@ describe.sequential("PostgreSQL integration", () => {
         currentRuntime()
           .pg`SELECT id FROM otp_router.challenges WHERE id::text = ${challengeId} FOR UPDATE`.pipe(
           Effect.tap(() => Effect.sync(() => acquired.resolve())),
-          Effect.zipRight(Effect.promise(() => release.promise)),
+          Effect.andThen(Effect.promise(() => release.promise)),
         ),
       ),
     );
@@ -685,7 +685,7 @@ describe.sequential("PostgreSQL integration", () => {
         harness.pg.withTransaction(
           harness.pg`SELECT identity FROM otp_router.quota_keys WHERE identity = ${quotaIdentity} FOR UPDATE`.pipe(
             Effect.tap(() => Effect.sync(() => entered.resolve())),
-            Effect.zipRight(Effect.promise(() => release.promise)),
+            Effect.andThen(Effect.promise(() => release.promise)),
           ),
         ),
       );
@@ -694,11 +694,11 @@ describe.sequential("PostgreSQL integration", () => {
         try {
           switch (operation) {
             case "create":
-              return await Effect.runPromise(Effect.either(harness.router.create(createRequest)));
+              return await Effect.runPromise(Effect.result(harness.router.create(createRequest)));
             case "verify":
-              return await Effect.runPromise(Effect.either(harness.router.verify(verifyRequest)));
+              return await Effect.runPromise(Effect.result(harness.router.verify(verifyRequest)));
             case "dispatch":
-              return await harness.run(Effect.either(dispatch(harness.configuration, job.data)));
+              return await harness.run(Effect.result(dispatch(harness.configuration, job.data)));
           }
         } finally {
           release.resolve();
@@ -707,8 +707,8 @@ describe.sequential("PostgreSQL integration", () => {
       })();
       expect(outcome).toMatchObject(
         operation === "dispatch"
-          ? { _tag: "Left", left: { _tag: "SqlError" } }
-          : { _tag: "Left", left: { code: "temporarily_unavailable" } },
+          ? { _tag: "Failure", failure: { _tag: "SqlError" } }
+          : { _tag: "Failure", failure: { code: "temporarily_unavailable" } },
       );
       expect(primary.sends).toHaveLength(0);
       expect(await count("challenges")).toBe(1);
@@ -764,7 +764,7 @@ describe.sequential("PostgreSQL integration", () => {
     const code = await readCode(challengeId);
     const verify = (keyValue: string) =>
       Effect.runPromise(
-        Effect.either(
+        Effect.result(
           currentRuntime().router.verify({
             key: keyValue,
             challengeId,
@@ -774,9 +774,9 @@ describe.sequential("PostgreSQL integration", () => {
         ),
       );
     const outcomes = await Promise.all([verify("verify-race-a"), verify("verify-race-b")]);
-    expect(outcomes.filter((outcome) => outcome._tag === "Right")).toHaveLength(1);
-    expect(outcomes.filter((outcome) => outcome._tag === "Left")).toMatchObject([
-      { left: { code: "challenge_state_conflict" } },
+    expect(outcomes.filter((outcome) => outcome._tag === "Success")).toHaveLength(1);
+    expect(outcomes.filter((outcome) => outcome._tag === "Failure")).toMatchObject([
+      { failure: { code: "challenge_state_conflict" } },
     ]);
     expect(await count("challenge_secrets")).toBe(0);
     const verificationRows = await query(
@@ -859,7 +859,7 @@ describe.sequential("PostgreSQL integration", () => {
     expect(replayed.replayed).toBe(true);
     expect(replayed.body).toEqual(first.body);
     const changed = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         currentRuntime().router.verify({
           ...request,
           requestId: randomUUID(),
@@ -868,8 +868,8 @@ describe.sequential("PostgreSQL integration", () => {
       ),
     );
     expect(changed).toMatchObject({
-      _tag: "Right",
-      right: { replayed: true, body: first.body },
+      _tag: "Success",
+      success: { replayed: true, body: first.body },
     });
     expect(await count("challenge_secrets")).toBe(0);
   });
@@ -895,7 +895,7 @@ describe.sequential("PostgreSQL integration", () => {
     expect(replayed.replayed).toBe(true);
     expect(
       await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           currentRuntime().router.verify({
             key: "wrong-1",
             challengeId,
@@ -904,7 +904,7 @@ describe.sequential("PostgreSQL integration", () => {
           }),
         ),
       ),
-    ).toMatchObject({ _tag: "Left", left: { code: "idempotency_conflict" } });
+    ).toMatchObject({ _tag: "Failure", failure: { code: "idempotency_conflict" } });
     expect(
       await query(
         Schema.Struct({ incorrect_guesses: Schema.Int }),
@@ -963,8 +963,8 @@ describe.sequential("PostgreSQL integration", () => {
       input: { action: "resend" as const },
     };
     expect(
-      await Effect.runPromise(Effect.either(currentRuntime().router.deliver(request))),
-    ).toMatchObject({ _tag: "Left", left: { code: "cooldown_active" } });
+      await Effect.runPromise(Effect.result(currentRuntime().router.deliver(request))),
+    ).toMatchObject({ _tag: "Failure", failure: { code: "cooldown_active" } });
     const identity = operationIdentity(
       currentRuntime().configuration.settings.crypto.deploymentId,
       "deliver",
@@ -1016,9 +1016,9 @@ describe.sequential("PostgreSQL integration", () => {
       requestId: randomUUID(),
       input: { action: "resend" as const },
     };
-    expect(await harness.run(Effect.either(requestDelivery(config, request)))).toMatchObject({
-      _tag: "Left",
-      left: { code: "rate_limited" },
+    expect(await harness.run(Effect.result(requestDelivery(config, request)))).toMatchObject({
+      _tag: "Failure",
+      failure: { code: "rate_limited" },
     });
     const identity = operationIdentity(
       config.settings.crypto.deploymentId,
@@ -1052,7 +1052,7 @@ describe.sequential("PostgreSQL integration", () => {
     const attempts = await Promise.all(
       ["quota-create-1", "quota-create-2", "quota-create-3"].map((operationKey) =>
         Effect.runPromise(
-          Effect.either(
+          Effect.result(
             currentRuntime().router.create({
               key: operationKey,
               input: createInput(),
@@ -1062,9 +1062,9 @@ describe.sequential("PostgreSQL integration", () => {
         ),
       ),
     );
-    expect(attempts.filter((attempt) => attempt._tag === "Right")).toHaveLength(2);
-    expect(attempts.filter((attempt) => attempt._tag === "Left")).toMatchObject([
-      { left: { _tag: "DomainError", code: "rate_limited" } },
+    expect(attempts.filter((attempt) => attempt._tag === "Success")).toHaveLength(2);
+    expect(attempts.filter((attempt) => attempt._tag === "Failure")).toMatchObject([
+      { failure: { _tag: "DomainError", code: "rate_limited" } },
     ]);
     expect(await count("challenges")).toBe(2);
   });
@@ -1077,7 +1077,7 @@ describe.sequential("PostgreSQL integration", () => {
     );
 
     const result = await currentRuntime().run(
-      Effect.either(
+      Effect.result(
         createChallenge(currentRuntime().configuration, {
           key: "quota-history-3",
           input: createInput(),
@@ -1086,8 +1086,8 @@ describe.sequential("PostgreSQL integration", () => {
       ),
     );
     expect(result).toMatchObject({
-      _tag: "Left",
-      left: { code: "rate_limited" },
+      _tag: "Failure",
+      failure: { code: "rate_limited" },
     });
     expect(await count("challenges")).toBe(0);
     expect(
@@ -1152,6 +1152,65 @@ describe.sequential("PostgreSQL integration", () => {
     ).toEqual([{ send_count: 1 }]);
   });
 
+  it.each(["defect", "interruption"] as const)(
+    "keeps a rejection combined with a finalizer %s uncertain",
+    async (failureKind) => {
+      const harness = currentRuntime();
+      const providers = new Map(harness.configuration.providers);
+      const original = providers.get("fake-primary");
+      if (original === undefined) throw new Error("Expected the primary provider");
+      let invocations = 0;
+      providers.set("fake-primary", {
+        ...original,
+        send: () =>
+          Effect.sync(() => {
+            invocations += 1;
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new RecipientUnavailable({
+                  acceptance: "not_accepted",
+                  diagnosticCode: "integration_fake_rejected",
+                }),
+              ),
+            ),
+            Effect.ensuring(
+              failureKind === "defect"
+                ? Effect.die(new Error("finalizer failed"))
+                : Effect.interrupt,
+            ),
+          ),
+      });
+      const config: RuntimeConfiguration = { ...harness.configuration, providers };
+      await createDirect(config, "mixed-provider-failure");
+      const job = await fetchJob();
+      const exit = await harness.run(dispatch(config, job.data).pipe(Effect.exit));
+      if (Exit.isSuccess(exit)) throw new Error("Expected the provider cause to propagate");
+      expect(Cause.findErrorOption(exit.cause)).toMatchObject({
+        _tag: "Some",
+        value: { _tag: "RecipientUnavailable" },
+      });
+      expect(
+        failureKind === "defect" ? Cause.hasDies(exit.cause) : Cause.hasInterrupts(exit.cause),
+      ).toBe(true);
+      await harness.run(dispatch(config, job.data));
+      expect(invocations).toBe(1);
+      expect(secondary.sends).toHaveLength(0);
+      expect(
+        await query(
+          Schema.Struct({ state: Schema.String, acceptance: Schema.String }),
+          "SELECT state, acceptance FROM otp_router.deliveries",
+        ),
+      ).toEqual([{ state: "uncertain", acceptance: "unknown" }]);
+      expect(
+        await query(
+          Schema.Struct({ send_count: Schema.Int }),
+          "SELECT send_count FROM otp_router.challenges",
+        ),
+      ).toEqual([{ send_count: 1 }]);
+    },
+  );
+
   it("enforces an instance timeout and keeps a never-completing send uncertain", async () => {
     const harness = currentRuntime();
     const providers = new Map(harness.configuration.providers);
@@ -1167,7 +1226,7 @@ describe.sequential("PostgreSQL integration", () => {
         Effect.sync(() => {
           invocations += 1;
           primary.sends.push(input);
-        }).pipe(Effect.zipRight(Effect.never)),
+        }).pipe(Effect.andThen(Effect.never)),
     });
     const config: RuntimeConfiguration = { ...harness.configuration, providers };
     const created = await createDirect(config, "provider-timeout-create");
@@ -1235,7 +1294,7 @@ describe.sequential("PostgreSQL integration", () => {
       harness.pg.withTransaction(
         harness.pg`SELECT pg_advisory_xact_lock(983451)`.pipe(
           Effect.tap(() => Effect.sync(() => entered.resolve())),
-          Effect.zipRight(Effect.promise(() => release.promise)),
+          Effect.andThen(Effect.promise(() => release.promise)),
         ),
       ),
     );
@@ -1250,7 +1309,7 @@ describe.sequential("PostgreSQL integration", () => {
           "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE wait_event = 'advisory' AND query LIKE 'UPDATE otp_router.deliveries%'",
         );
         if ((waiting[0]?.count ?? 0) > 0) break;
-        await Effect.runPromise(Effect.yieldNow());
+        await Effect.runPromise(Effect.yieldNow);
       }
       vi.spyOn(performance, "now").mockImplementation(() => originalNow() + 600000);
       release.resolve();
@@ -1388,7 +1447,7 @@ describe.sequential("PostgreSQL integration", () => {
     expect(primary.sends).toHaveLength(1);
     expect(
       await query(
-        Schema.Struct({ provider_instance_id: Schema.String, retry_at: Schema.DateFromSelf }),
+        Schema.Struct({ provider_instance_id: Schema.String, retry_at: Schema.Date }),
         "SELECT provider_instance_id, retry_at FROM otp_router.provider_restrictions",
       ),
     ).toEqual([
@@ -1418,9 +1477,9 @@ describe.sequential("PostgreSQL integration", () => {
         choice: { type: "provider" as const, providerInstanceId: "fake-primary" },
       },
     };
-    expect(await Effect.runPromise(Effect.either(harness.router.deliver(request)))).toMatchObject({
-      _tag: "Left",
-      left: { code: "delivery_option_not_allowed" },
+    expect(await Effect.runPromise(Effect.result(harness.router.deliver(request)))).toMatchObject({
+      _tag: "Failure",
+      failure: { code: "delivery_option_not_allowed" },
     });
 
     await harness.run(
@@ -1555,7 +1614,7 @@ describe.sequential("PostgreSQL integration", () => {
     ] as const) {
       expect(
         await Effect.runPromise(
-          Effect.either(
+          Effect.result(
             currentRuntime().router.deliver({
               key: operationKey,
               challengeId,
@@ -1564,7 +1623,7 @@ describe.sequential("PostgreSQL integration", () => {
             }),
           ),
         ),
-      ).toMatchObject({ _tag: "Left", left: { code: "delivery_unavailable" } });
+      ).toMatchObject({ _tag: "Failure", failure: { code: "delivery_unavailable" } });
     }
     expect(await count("deliveries")).toBe(1);
     expect(await count("challenge_secrets")).toBe(1);
@@ -1651,7 +1710,7 @@ describe.sequential("PostgreSQL integration", () => {
     });
     expect(
       await Effect.runPromise(
-        Effect.either(
+        Effect.result(
           harness.router.deliver({
             key: "resend-after-stale-invalid-recipient",
             challengeId,
@@ -1660,7 +1719,7 @@ describe.sequential("PostgreSQL integration", () => {
           }),
         ),
       ),
-    ).toMatchObject({ _tag: "Left", left: { code: "delivery_unavailable" } });
+    ).toMatchObject({ _tag: "Failure", failure: { code: "delivery_unavailable" } });
   });
 
   it("reuses the code for explicit resend and erases terminal secrets", async () => {
@@ -1688,7 +1747,7 @@ describe.sequential("PostgreSQL integration", () => {
     );
     expect(wrong.body).toMatchObject({ error: { code: "incorrect_code" } });
     const beforeResend = await query(
-      Schema.Struct({ expires_at: Schema.DateFromSelf, incorrect_guesses: Schema.Int }),
+      Schema.Struct({ expires_at: Schema.Date, incorrect_guesses: Schema.Int }),
       `SELECT expires_at, incorrect_guesses FROM otp_router.challenges WHERE id = '${challengeId}'`,
     );
     expect(beforeResend[0]?.incorrect_guesses).toBe(1);
@@ -1719,7 +1778,7 @@ describe.sequential("PostgreSQL integration", () => {
     expect(resend.body.deliveryId).not.toBe(initialDeliveryId);
     expect(
       await query(
-        Schema.Struct({ expires_at: Schema.DateFromSelf, incorrect_guesses: Schema.Int }),
+        Schema.Struct({ expires_at: Schema.Date, incorrect_guesses: Schema.Int }),
         `SELECT expires_at, incorrect_guesses FROM otp_router.challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual(beforeResend);
@@ -2033,7 +2092,7 @@ describe.sequential("PostgreSQL integration", () => {
 
     expect(
       await harness.run(
-        Effect.either(
+        Effect.result(
           createChallenge(config, {
             key: "same-channel-explicit-create",
             input: {
@@ -2045,7 +2104,7 @@ describe.sequential("PostgreSQL integration", () => {
           }),
         ),
       ),
-    ).toMatchObject({ _tag: "Left", left: { code: "rate_limited" } });
+    ).toMatchObject({ _tag: "Failure", failure: { code: "rate_limited" } });
     expect(await count("challenges")).toBe(1);
 
     await harness.run(
@@ -2073,7 +2132,7 @@ describe.sequential("PostgreSQL integration", () => {
     );
     expect(
       await harness.run(
-        Effect.either(
+        Effect.result(
           requestDelivery(config, {
             key: "same-channel-explicit-primary",
             challengeId,
@@ -2085,7 +2144,7 @@ describe.sequential("PostgreSQL integration", () => {
           }),
         ),
       ),
-    ).toMatchObject({ _tag: "Left", left: { code: "rate_limited" } });
+    ).toMatchObject({ _tag: "Failure", failure: { code: "rate_limited" } });
   });
 
   it("blocks a correct code at the recipient guess cap without extending usage", async () => {
@@ -2105,7 +2164,7 @@ describe.sequential("PostgreSQL integration", () => {
     );
     const attemptCorrect = (operationKey: string) =>
       currentRuntime().run(
-        Effect.either(
+        Effect.result(
           verifyChallenge(limited, {
             key: operationKey,
             challengeId: secondId,
@@ -2115,12 +2174,12 @@ describe.sequential("PostgreSQL integration", () => {
         ),
       );
     expect(await attemptCorrect("guess-cap-blocked-a")).toMatchObject({
-      _tag: "Left",
-      left: { code: "rate_limited" },
+      _tag: "Failure",
+      failure: { code: "rate_limited" },
     });
     expect(await attemptCorrect("guess-cap-blocked-b")).toMatchObject({
-      _tag: "Left",
-      left: { code: "rate_limited" },
+      _tag: "Failure",
+      failure: { code: "rate_limited" },
     });
     expect(
       await query(
@@ -2150,7 +2209,7 @@ describe.sequential("PostgreSQL integration", () => {
         selectors: { default: selector },
       };
       const result = await currentRuntime().run(
-        Effect.either(
+        Effect.result(
           createChallenge(selected, {
             key: operationKey,
             input,
@@ -2158,7 +2217,7 @@ describe.sequential("PostgreSQL integration", () => {
           }),
         ),
       );
-      expect(result).toMatchObject({ _tag: "Left", left: { code: expectedCode } });
+      expect(result).toMatchObject({ _tag: "Failure", failure: { code: expectedCode } });
       expect(await count("challenges")).toBe(0);
     };
     await runFailure("selector-timeout", () => Effect.never, "temporarily_unavailable");
@@ -2289,7 +2348,7 @@ describe.sequential("PostgreSQL integration", () => {
       `UPDATE otp_router.challenges SET expires_at = clock_timestamp() - interval '1 second', next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
     );
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         currentRuntime().router.deliver({
           key: "deliver-after-expiry",
           challengeId,
@@ -2299,8 +2358,8 @@ describe.sequential("PostgreSQL integration", () => {
       ),
     );
     expect(result).toMatchObject({
-      _tag: "Left",
-      left: { code: "challenge_unavailable" },
+      _tag: "Failure",
+      failure: { code: "challenge_unavailable" },
     });
     expect(
       await query(
@@ -2324,7 +2383,7 @@ describe.sequential("PostgreSQL integration", () => {
       `UPDATE otp_router.challenges SET expires_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
     );
     const result = await Effect.runPromise(
-      Effect.either(
+      Effect.result(
         currentRuntime().router.cancel({
           key: "cancel-after-expiry",
           challengeId,
@@ -2334,8 +2393,8 @@ describe.sequential("PostgreSQL integration", () => {
       ),
     );
     expect(result).toMatchObject({
-      _tag: "Left",
-      left: { code: "challenge_state_conflict" },
+      _tag: "Failure",
+      failure: { code: "challenge_state_conflict" },
     });
     expect(
       await query(
@@ -2365,8 +2424,8 @@ describe.sequential("PostgreSQL integration", () => {
           .unsafe("SELECT id FROM otp_router.challenges WHERE id = $1 FOR UPDATE", [challengeId])
           .pipe(
             Effect.tap(() => Effect.sync(() => locked.resolve())),
-            Effect.zipRight(Effect.promise(() => release.promise)),
-            Effect.zipRight(
+            Effect.andThen(Effect.promise(() => release.promise)),
+            Effect.andThen(
               harness.pg.unsafe(
                 "UPDATE otp_router.challenges SET expires_at = clock_timestamp() WHERE id = $1",
                 [challengeId],
@@ -2377,7 +2436,7 @@ describe.sequential("PostgreSQL integration", () => {
     );
     await locked.promise;
     const verification = Effect.runPromise(
-      Effect.either(
+      Effect.result(
         harness.router.verify({
           key: "verify-after-lock-expiry",
           challengeId,
@@ -2393,8 +2452,8 @@ describe.sequential("PostgreSQL integration", () => {
     }
     await holder;
     expect(await verification).toMatchObject({
-      _tag: "Left",
-      left: { code: "challenge_unavailable" },
+      _tag: "Failure",
+      failure: { code: "challenge_unavailable" },
     });
     expect(
       await query(

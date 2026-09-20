@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";
@@ -11,6 +11,7 @@ import {
   NormalizedPhoneSchema,
   OtpCodeSchema,
   type ProviderSendError,
+  type ReadyProvider,
 } from "../providers/contract.js";
 import { logEvent } from "../diagnostics/log.js";
 import { count, duration } from "../diagnostics/metrics.js";
@@ -69,28 +70,28 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         });
         return undefined;
       }
-      const budget = yield* checkQuotas(limits, time).pipe(Effect.either);
-      if (budget._tag === "Left" || challenge.send_count >= challenge.snapshot.maxSends) {
+      const budget = yield* checkQuotas(limits, time).pipe(Effect.result);
+      if (budget._tag === "Failure" || challenge.send_count >= challenge.snapshot.maxSends) {
         yield* count("suppressed", "rate_limited");
         yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id}`;
         return undefined;
       }
       const secrets = yield* findSecrets(challenge.id);
-      const recipient = yield* Schema.decodeUnknown(NormalizedPhoneSchema)(
+      const recipient = yield* Schema.decodeUnknownEffect(NormalizedPhoneSchema)(
         yield* decrypt(config.settings.crypto, challenge.id, "phone", secrets.phone),
       );
-      const code = yield* Schema.decodeUnknown(OtpCodeSchema)(
+      const code = yield* Schema.decodeUnknownEffect(OtpCodeSchema)(
         yield* decrypt(config.settings.crypto, challenge.id, "code", secrets.code),
       );
       const input = {
-        challengeId: yield* Schema.decodeUnknown(ChallengeIdSchema)(challenge.id),
-        deliveryId: yield* Schema.decodeUnknown(DeliveryIdSchema)(delivery.id),
+        challengeId: yield* Schema.decodeUnknownEffect(ChallengeIdSchema)(challenge.id),
+        deliveryId: yield* Schema.decodeUnknownEffect(DeliveryIdSchema)(delivery.id),
         recipient,
         code,
-        expiresAt: yield* Schema.decodeUnknown(IsoDateTimeSchema)(
+        expiresAt: yield* Schema.decodeUnknownEffect(IsoDateTimeSchema)(
           challenge.expires_at.toISOString(),
         ),
-        locale: yield* Schema.decodeUnknown(LocaleSchema)(saved.resolvedLocale),
+        locale: yield* Schema.decodeUnknownEffect(LocaleSchema)(saved.resolvedLocale),
         template: saved.template,
         remainingDeliveryMs: Math.max(
           0,
@@ -112,20 +113,34 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       };
     }),
   );
-const failureOutcome = (failure: ProviderSendError, diagnosticCode: string): Outcome => ({
-  state: failure.acceptance === "not_accepted" ? "failed" : "uncertain",
-  acceptance: failure.acceptance,
-  failureCategory: failure._tag,
-  diagnosticCode,
-  ...(failure.retryAt === undefined ? {} : { retryAt: new Date(failure.retryAt) }),
-  stop: failure._tag === "InvalidRecipient",
-});
+const failureOutcome = (
+  cause: Cause.Cause<ProviderSendError | Cause.TimeoutError>,
+  provider: ReadyProvider,
+): Outcome => {
+  const failure = Cause.findErrorOption(cause);
+  if (
+    Cause.hasDies(cause) ||
+    Cause.hasInterrupts(cause) ||
+    failure._tag === "None" ||
+    failure.value._tag === "TimeoutError"
+  )
+    return { state: "uncertain", acceptance: "unknown", diagnosticCode: "interrupted_or_timeout" };
+  const error = failure.value;
+  return {
+    state: error.acceptance === "not_accepted" ? "failed" : "uncertain",
+    acceptance: error.acceptance,
+    failureCategory: error._tag,
+    diagnosticCode: providerDiagnostic(provider, error.diagnosticCode),
+    ...(error.retryAt === undefined ? {} : { retryAt: new Date(error.retryAt) }),
+    stop: error._tag === "InvalidRecipient",
+  };
+};
 export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
   Effect.gen(function* () {
     const reserved = yield* dispatchGate(config, job);
     if (reserved === undefined) return;
     const provider = config.providers.get(reserved.providerId);
-    if (provider === undefined) return yield* Effect.dieMessage("Reserved provider missing");
+    if (provider === undefined) return yield* Effect.die(new Error("Reserved provider missing"));
     // This is the only send invocation for this durable record. A failed/unknown commit never reaches here.
     yield* count("send", "reserved");
     const started = performance.now();
@@ -159,11 +174,7 @@ export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* recordAccepted(config, job.deliveryId, exit.value);
       return;
     }
-    const failure = Cause.failureOption(exit.cause);
-    const outcome: Outcome =
-      failure._tag === "Some" && failure.value._tag !== "TimeoutException"
-        ? failureOutcome(failure.value, providerDiagnostic(provider, failure.value.diagnosticCode))
-        : { state: "uncertain", acceptance: "unknown", diagnosticCode: "interrupted_or_timeout" };
+    const outcome = failureOutcome(exit.cause, provider);
     yield* count("send", outcome.state);
     yield* logEvent({
       event: "provider_send",
@@ -173,6 +184,6 @@ export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
       elapsedMilliseconds: performance.now() - started,
     });
     yield* recordOutcome(config, job.deliveryId, outcome);
-    if (Cause.isDie(exit.cause) || Cause.isInterrupted(exit.cause))
+    if (Cause.hasDies(exit.cause) || Cause.hasInterrupts(exit.cause))
       return yield* Effect.failCause(exit.cause);
   });

@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { duration } from "../diagnostics/metrics.js";
 import { single } from "./query.js";
@@ -6,7 +6,7 @@ import { single } from "./query.js";
 export const databaseTime = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   return (yield* single(
-    Schema.Struct({ time: Schema.DateFromSelf }),
+    Schema.Struct({ time: Schema.Date }),
     sql`SELECT clock_timestamp() AS time`,
   )).time;
 });

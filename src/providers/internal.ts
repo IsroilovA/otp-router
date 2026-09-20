@@ -7,7 +7,6 @@ import {
   ProviderConfigurationError,
   TemplateResolutionError,
   UnknownProviderOutcome,
-  type JsonValue,
   type Locale,
   type ProviderConstraints,
   type ProviderSendInput,
@@ -17,7 +16,7 @@ import {
 const encoder = new TextEncoder();
 const decoder = new TextDecoder("utf-8", { fatal: true });
 
-export const encodeJson = (value: JsonValue): Uint8Array => encoder.encode(JSON.stringify(value));
+export const encodeJson = (value: Schema.Json): Uint8Array => encoder.encode(JSON.stringify(value));
 
 export const decodeUtf8 = (body: Uint8Array): Effect.Effect<string, UnknownProviderOutcome> =>
   Effect.try({
@@ -83,13 +82,13 @@ export const resolveNoTemplate = (
     : Effect.succeed({ locale, template: null });
 };
 
-export const makeTemplateResolver = <Template extends JsonValue, Encoded>(
-  schema: Schema.Schema<Template, Encoded>,
+export const makeTemplateResolver = <Template extends Schema.Json, Encoded>(
+  schema: Schema.Codec<Template, Encoded>,
   templates: Readonly<Record<string, unknown>>,
 ): ((
   candidates: readonly Locale[],
 ) => Effect.Effect<ResolvedTemplate, TemplateResolutionError>) => {
-  const decode = Schema.decodeUnknown(schema);
+  const decode = Schema.decodeUnknownEffect(schema);
   return (candidates) => {
     const match = candidates.find((candidate) => Object.hasOwn(templates, candidate));
     if (match === undefined) {
@@ -102,11 +101,11 @@ export const makeTemplateResolver = <Template extends JsonValue, Encoded>(
   };
 };
 
-export const validateTemplate = <Template extends JsonValue, Encoded>(
-  schema: Schema.Schema<Template, Encoded>,
-  template: JsonValue,
+export const validateTemplate = <Template extends Schema.Json, Encoded>(
+  schema: Schema.Codec<Template, Encoded>,
+  template: Schema.Json,
 ): Effect.Effect<Template, UnknownProviderOutcome> =>
-  Schema.decodeUnknown(schema)(template).pipe(
+  Schema.decodeUnknownEffect(schema)(template).pipe(
     Effect.mapError(
       () =>
         new UnknownProviderOutcome({
@@ -116,20 +115,20 @@ export const validateTemplate = <Template extends JsonValue, Encoded>(
     ),
   );
 
-export const validateProviderConfiguration = <A, I>(schema: Schema.Schema<A, I>, value: A) =>
-  Schema.validate(schema)(value, { onExcessProperty: "error" }).pipe(
+export const validateProviderConfiguration = <A, I>(schema: Schema.Codec<A, I>, value: A) =>
+  Schema.decodeUnknownEffect(Schema.toType(schema))(value, { onExcessProperty: "error" }).pipe(
     Effect.mapError(
       () => new ProviderConfigurationError({ diagnosticCode: "invalid_configuration" }),
     ),
   );
 export const validateAllTemplates = <A, I>(
-  schema: Schema.Schema<A, I>,
+  schema: Schema.Codec<A, I>,
   templates: Readonly<Record<string, unknown>>,
 ) =>
   Effect.forEach(
     Object.values(templates),
     (value) =>
-      Schema.decodeUnknown(schema)(value, { onExcessProperty: "error" }).pipe(
+      Schema.decodeUnknownEffect(schema)(value, { onExcessProperty: "error" }).pipe(
         Effect.mapError(
           () => new ProviderConfigurationError({ diagnosticCode: "invalid_template" }),
         ),
@@ -161,6 +160,6 @@ export const callbackTimestamp = (seconds: number) =>
     try: () => new Date(seconds * 1000).toISOString(),
     catch: () => new CallbackFormatError({ diagnosticCode: "invalid_body" }),
   }).pipe(
-    Effect.flatMap(Schema.decodeUnknown(IsoDateTimeSchema)),
+    Effect.flatMap(Schema.decodeUnknownEffect(IsoDateTimeSchema)),
     Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
   );

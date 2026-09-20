@@ -66,5 +66,5 @@ export const RouterLive = Layer.effect(
     };
   }),
 );
-import { SqlClient as importSqlClient } from "@effect/sql/SqlClient";
-import type { SqlClient } from "@effect/sql/SqlClient";
+import { SqlClient as importSqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlClient } from "effect/unstable/sql/SqlClient";

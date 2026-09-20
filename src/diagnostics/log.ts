@@ -16,4 +16,4 @@ export const logEvent = (diagnostic: Diagnostic) =>
     process.stdout.write(
       `${JSON.stringify({ timestamp: new Date().toISOString(), level: "info", ...diagnostic })}\n`,
     );
-  }).pipe(Effect.catchAllCause(() => Effect.void));
+  }).pipe(Effect.catchCause(() => Effect.void));

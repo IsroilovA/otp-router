@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { NodeContext } from "@effect/platform-node";
+import { NodeServices } from "@effect/platform-node";
 import {
   ConfigProvider,
   Data,
@@ -13,7 +13,7 @@ import {
 } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { Configuration } from "../src/config/config.js";
-import type { SqlClient } from "@effect/sql/SqlClient";
+import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { PgClient } from "@effect/sql-pg";
 import { DatabaseLive } from "../src/database/client.js";
 import { migrate } from "../src/database/migrations.js";
@@ -110,8 +110,8 @@ describe("transaction-local queue integration", () => {
     const writing = h.run(
       transaction(
         write(randomUUID()).pipe(
-          Effect.zipRight(Deferred.succeed(entered, undefined)),
-          Effect.zipRight(Deferred.await(release)),
+          Effect.andThen(Deferred.succeed(entered, undefined)),
+          Effect.andThen(Deferred.await(release)),
         ),
       ),
     );
@@ -128,24 +128,24 @@ describe("transaction-local queue integration", () => {
     expect(
       (
         await h.run(
-          transaction(write(id).pipe(Effect.zipRight(Effect.fail(new Rollback())))).pipe(
-            Effect.either,
+          transaction(write(id).pipe(Effect.andThen(Effect.fail(new Rollback())))).pipe(
+            Effect.result,
           ),
         )
       )._tag,
-    ).toBe("Left");
+    ).toBe("Failure");
     expect(await state()).toEqual({ rows: [], jobs: 0 });
     expect(
       (
         await h.run(
           transaction(
             write(id).pipe(
-              Effect.zipRight(h.pg`INSERT INTO otp_router.integration_markers(id) VALUES (${id})`),
+              Effect.andThen(h.pg`INSERT INTO otp_router.integration_markers(id) VALUES (${id})`),
             ),
-          ).pipe(Effect.either),
+          ).pipe(Effect.result),
         )
       )._tag,
-    ).toBe("Left");
+    ).toBe("Failure");
     expect(await state()).toEqual({ rows: [], jobs: 0 });
   });
   it("keeps independent concurrent commits and savepoints isolated", async () => {
@@ -155,13 +155,13 @@ describe("transaction-local queue integration", () => {
         h.run(
           transaction(
             write(randomUUID()).pipe(
-              Effect.zipRight(index % 2 === 0 ? Effect.void : Effect.fail(new Rollback())),
+              Effect.andThen(index % 2 === 0 ? Effect.void : Effect.fail(new Rollback())),
             ),
-          ).pipe(Effect.either),
+          ).pipe(Effect.result),
         ),
       ),
     );
-    expect(results.filter((result) => result._tag === "Right")).toHaveLength(6);
+    expect(results.filter((result) => result._tag === "Success")).toHaveLength(6);
     expect((await state()).rows).toHaveLength(6);
     expect((await state()).jobs).toBe(6);
     await h.reset();
@@ -171,8 +171,8 @@ describe("transaction-local queue integration", () => {
         Effect.gen(function* () {
           yield* write(randomUUID());
           yield* transaction(
-            write(randomUUID()).pipe(Effect.zipRight(Effect.fail(new Rollback()))),
-          ).pipe(Effect.either);
+            write(randomUUID()).pipe(Effect.andThen(Effect.fail(new Rollback()))),
+          ).pipe(Effect.result);
         }),
       ),
     );
@@ -186,10 +186,10 @@ describe("transaction-local queue integration", () => {
       Effect.gen(function* () {
         const fiber = yield* transaction(
           write(randomUUID()).pipe(
-            Effect.zipRight(Deferred.succeed(entered, undefined)),
-            Effect.zipRight(Effect.never),
+            Effect.andThen(Deferred.succeed(entered, undefined)),
+            Effect.andThen(Effect.never),
           ),
-        ).pipe(Effect.fork);
+        ).pipe(Effect.forkChild);
         yield* Deferred.await(entered);
         yield* Fiber.interrupt(fiber);
       }),
@@ -212,7 +212,7 @@ describe("transaction-local queue integration", () => {
     await Effect.runPromise(Deferred.await(locked));
     await h.run(
       Effect.gen(function* () {
-        const fiber = yield* transaction(write(randomUUID())).pipe(Effect.fork);
+        const fiber = yield* transaction(write(randomUUID())).pipe(Effect.forkChild);
         const waiting = single(
           Schema.Struct({ count: Schema.Number }),
           h.pg`SELECT count(*)::float8 AS count FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query ILIKE '%insert%pgboss%' AND pid <> pg_backend_pid()`,
@@ -221,7 +221,7 @@ describe("transaction-local queue integration", () => {
           Effect.repeat({ until: (result) => result.count > 0 }),
           Effect.timeout("3 seconds"),
         );
-        const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.fork);
+        const interrupted = yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
         yield* Deferred.succeed(release, undefined);
         yield* Fiber.join(interrupted);
       }).pipe(Effect.ensuring(Deferred.succeed(release, undefined))),
@@ -273,9 +273,10 @@ describe("transaction-local queue integration", () => {
       const database = <A, E>(effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient>) =>
         Effect.runPromise(
           effect.pipe(
-            Effect.provide(DatabaseLive.pipe(Layer.provideMerge(NodeContext.layer))),
-            Effect.withConfigProvider(
-              ConfigProvider.fromMap(new Map([["DATABASE_URL", fresh.databaseUrl]])),
+            Effect.provide(DatabaseLive.pipe(Layer.provideMerge(NodeServices.layer))),
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromUnknown(Object.fromEntries([["DATABASE_URL", fresh.databaseUrl]])),
             ),
           ),
         );
@@ -284,7 +285,7 @@ describe("transaction-local queue integration", () => {
           Effect.gen(function* () {
             const sql = yield* PgClient.PgClient;
             yield* sql`CREATE SCHEMA otp_router`;
-            const failure = yield* migrate.pipe(Effect.provide(NodeContext.layer), Effect.exit);
+            const failure = yield* migrate.pipe(Effect.provide(NodeServices.layer), Effect.exit);
             expect(Exit.isFailure(failure)).toBe(true);
             const history = yield* single(
               Schema.Struct({ name: Schema.NullOr(Schema.String) }),
@@ -326,7 +327,7 @@ describe("transaction-local queue integration", () => {
       h.pg.withTransaction(
         Effect.gen(function* () {
           yield* h.pg`SET LOCAL search_path TO otp_router, public`;
-          yield* migrate.pipe(Effect.provide(NodeContext.layer));
+          yield* migrate.pipe(Effect.provide(NodeServices.layer));
           const history = yield* single(
             Schema.Struct({ shadow: Schema.NullOr(Schema.String), count: Schema.Number }),
             h.pg`SELECT to_regclass('otp_router.effect_sql_migrations')::text AS shadow,
@@ -341,8 +342,8 @@ describe("transaction-local queue integration", () => {
   it("coordinates concurrent migration starts and rejects a future schema", async () => {
     const h = current();
     await Promise.all([
-      h.run(migrate.pipe(Effect.provide(NodeContext.layer))),
-      h.run(migrate.pipe(Effect.provide(NodeContext.layer))),
+      h.run(migrate.pipe(Effect.provide(NodeServices.layer))),
+      h.run(migrate.pipe(Effect.provide(NodeServices.layer))),
     ]);
     expect(
       (
@@ -359,7 +360,7 @@ describe("transaction-local queue integration", () => {
     );
     try {
       expect(
-        Exit.isFailure(await h.run(migrate.pipe(Effect.provide(NodeContext.layer), Effect.exit))),
+        Exit.isFailure(await h.run(migrate.pipe(Effect.provide(NodeServices.layer), Effect.exit))),
       ).toBe(true);
     } finally {
       await h.run(h.pg`DELETE FROM effect_sql_migrations WHERE migration_id = 999`);

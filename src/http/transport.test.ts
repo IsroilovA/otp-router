@@ -343,10 +343,34 @@ describe("HTTP transport", () => {
 
   it("generates strict OpenAPI for operations, security, and status responses", () => {
     const create = openApiDocument.paths["/v1/challenges"]?.post;
-    expect(Object.keys(create?.responses ?? {})).toEqual(
+    if (create === undefined) throw new Error("Missing create endpoint");
+    expect(Object.keys(create.responses)).toEqual(
       expect.arrayContaining(["201", "400", "401", "409", "413", "422", "429", "500", "503"]),
     );
-    expect(create?.security).toBeDefined();
+    expect(create.security).toBeDefined();
+    expect(create.requestBody).toMatchObject({
+      content: {
+        "application/json": {
+          schema: {
+            additionalProperties: false,
+            properties: {
+              locale: { type: "string", pattern: "^[A-Za-z0-9-]{1,64}$" },
+              routingContext: {
+                type: "object",
+                additionalProperties: {
+                  anyOf: [
+                    { type: "string" },
+                    { type: "number" },
+                    { type: "boolean" },
+                    { type: "null" },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
     for (const path of [
       "/v1/challenges",
       "/v1/challenges/{challengeId}/verify",

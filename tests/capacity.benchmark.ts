@@ -220,8 +220,11 @@ const readSink = async (path: string): Promise<ReadonlyArray<SinkEntry>> => {
 };
 
 const MinimalSnapshot = Schema.Struct({
-  challengeId: Schema.UUID,
-  delivery: Schema.Struct({ deliveryId: Schema.UUID, state: Schema.String }),
+  challengeId: Schema.String.check(Schema.isUUID()),
+  delivery: Schema.Struct({
+    deliveryId: Schema.String.check(Schema.isUUID()),
+    state: Schema.String,
+  }),
 });
 type MinimalSnapshot = typeof MinimalSnapshot.Type;
 
@@ -696,7 +699,7 @@ afterAll(async () => {
   }
 });
 
-describe.sequential("local capacity benchmark", () => {
+describe("local capacity benchmark", () => {
   it("measures steady HTTP load, a concurrency ramp, and worker crash recovery", async () => {
     const fixture = requireFixture();
     const args = ["dist/main.js", "--config", fixture.configurationPath];

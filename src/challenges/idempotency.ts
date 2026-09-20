@@ -35,7 +35,7 @@ export const lockOperation = (op: Operation) =>
     // hashtextextended collisions serialize operations, but cannot merge their SHA-256 identities.
     yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${op.identity},0))`.pipe(
       Effect.mapError((error) =>
-        Schema.is(Schema.Struct({ code: Schema.Literal("55P03") }))(error.cause)
+        error.reason._tag === "LockTimeoutError"
           ? new DomainError({ code: "request_in_progress" })
           : error,
       ),

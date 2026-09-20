@@ -1,4 +1,4 @@
-import { SqlClient } from "@effect/sql";
+import { SqlClient } from "effect/unstable/sql";
 import { Data, Effect, Schema } from "effect";
 import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";
@@ -13,8 +13,8 @@ const Inbox = Schema.Struct({
   provider_instance_id: Schema.String,
   deduplication_key: Schema.String,
   reference: Schema.String,
-  status: Schema.Literal("accepted", "delivered", "failed"),
-  received_at: Schema.DateFromSelf,
+  status: Schema.Literals(["accepted", "delivered", "failed"]),
+  received_at: Schema.Date,
   event_at: Schema.NullOr(Schema.String),
   processed: Schema.Boolean,
   diagnostic_code: Schema.NullOr(Schema.String),

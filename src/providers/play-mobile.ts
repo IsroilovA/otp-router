@@ -6,7 +6,6 @@ import {
   ProviderContractVersion,
   ProviderInstance,
   UnknownProviderOutcome,
-  type JsonValue,
   type ProviderDefinition,
   type ProviderSendError,
   type ProviderSendInput,
@@ -28,12 +27,12 @@ import {
 import { fetchTransport, type HttpTransport } from "./transport.js";
 
 const PlayMobileConfigurationSchema = Schema.Struct({
-  username: Schema.Redacted(Schema.NonEmptyString),
-  password: Schema.Redacted(Schema.NonEmptyString),
-  originator: Schema.NonEmptyString.pipe(Schema.maxLength(11)),
-  endpoint: Schema.optionalWith(Schema.String.pipe(Schema.pattern(/^https:\/\//)), {
-    default: () => "https://send.smsxabar.uz/broker-api/send",
-  }),
+  username: Schema.RedactedFromValue(Schema.NonEmptyString),
+  password: Schema.RedactedFromValue(Schema.NonEmptyString),
+  originator: Schema.NonEmptyString.pipe(Schema.check(Schema.isMaxLength(11))),
+  endpoint: Schema.String.pipe(Schema.check(Schema.isPattern(/^https:\/\//))).pipe(
+    Schema.withDecodingDefaultType(Effect.succeed("https://send.smsxabar.uz/broker-api/send")),
+  ),
 });
 export type PlayMobileConfiguration = typeof PlayMobileConfigurationSchema.Type;
 
@@ -48,10 +47,12 @@ const validTextTemplate = (text: string): boolean => {
 
 export const PlayMobileTemplateSchema = Schema.Struct({
   text: Schema.String.pipe(
-    Schema.filter(validTextTemplate, {
-      message: () =>
-        "Expected one {{code}} placeholder and a single SMS segment with an eight-digit code",
-    }),
+    Schema.check(
+      Schema.makeFilter(validTextTemplate, {
+        message:
+          "Expected one {{code}} placeholder and a single SMS segment with an eight-digit code",
+      }),
+    ),
   ),
 });
 export type PlayMobileTemplate = typeof PlayMobileTemplateSchema.Type;
@@ -129,7 +130,7 @@ const send = (
         diagnosticCode: "delivery_window_too_short",
       });
     const requestId = messageId(input.deliveryId);
-    const body: JsonValue = {
+    const body: Schema.Json = {
       messages: [
         {
           recipient: input.recipient.slice(1),
@@ -179,7 +180,7 @@ const send = (
       };
     }
     const json = yield* parseJson(response.body);
-    const parsed = yield* Schema.decodeUnknown(PlayMobileErrorSchema)(json).pipe(
+    const parsed = yield* Schema.decodeUnknownEffect(PlayMobileErrorSchema)(json).pipe(
       Effect.mapError(
         () =>
           new UnknownProviderOutcome({

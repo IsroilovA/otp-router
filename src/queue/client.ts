@@ -1,18 +1,18 @@
-import { Config, Context, Data, Effect, Layer, Redacted, Runtime } from "effect";
+import { Config, Context, Data, Effect, Layer, Redacted } from "effect";
 import { PgBoss } from "pg-boss";
 
 export class QueueLifecycleError extends Data.TaggedError("QueueLifecycleError")<{
   readonly operation: "create" | "start" | "stop";
 }> {}
 
-export class Queue extends Context.Tag("otp-router/Queue")<Queue, PgBoss>() {}
+export class Queue extends Context.Service<Queue, PgBoss>()("otp-router/Queue") {}
 
 const makeQueue = Effect.gen(function* () {
-  const url = yield* Config.redacted("DATABASE_URL");
-  const runtime = yield* Effect.runtime<never>();
+  const url = yield* Config.Redacted("DATABASE_URL");
+  const runtime = yield* Effect.context<never>();
   // EventEmitter callbacks are an external runtime boundary. Never log raw errors.
-  const onError = () => Runtime.runSync(runtime)(Effect.logError("pg-boss background error"));
-  const onWarning = () => Runtime.runSync(runtime)(Effect.logWarning("pg-boss warning"));
+  const onError = () => Effect.runSyncWith(runtime)(Effect.logError("pg-boss background error"));
+  const onWarning = () => Effect.runSyncWith(runtime)(Effect.logWarning("pg-boss warning"));
   const client = yield* Effect.acquireRelease(
     Effect.try({
       try: () => {
@@ -51,4 +51,4 @@ const makeQueue = Effect.gen(function* () {
   return client;
 });
 
-export const QueueLive = Layer.scoped(Queue, makeQueue);
+export const QueueLive = Layer.effect(Queue, makeQueue);

@@ -1,11 +1,11 @@
-import { SqlClient } from "@effect/sql";
-import { Data, Effect, Runtime, Schema } from "effect";
+import { SqlClient } from "effect/unstable/sql";
+import { Data, Effect, Schema } from "effect";
 import { Queue } from "./client.js";
 
 export const DeliveryJob = Schema.Struct({
   version: Schema.Literal(1),
-  deliveryId: Schema.UUID,
-  routingRevision: Schema.Int.pipe(Schema.positive()),
+  deliveryId: Schema.String.check(Schema.isUUID()),
+  routingRevision: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
 });
 export type DeliveryJob = typeof DeliveryJob.Type;
 export const deliveryQueue = "otp-delivery-v1";
@@ -16,7 +16,7 @@ export const enqueueDelivery = (job: DeliveryJob) =>
     const sql = yield* SqlClient.SqlClient;
     const boss = yield* Queue;
     // Capture the current transaction connection here; this adapter never escapes this call.
-    const runtime = yield* Effect.runtime<never>();
+    const runtime = yield* Effect.context<never>();
     yield* Effect.tryPromise({
       try: () =>
         boss.send(deliveryQueue, job, {
@@ -27,7 +27,7 @@ export const enqueueDelivery = (job: DeliveryJob) =>
           db: {
             executeSql: async (text, values) => ({
               rows: Array.from(
-                await Runtime.runPromise(runtime)(
+                await Effect.runPromiseWith(runtime)(
                   sql.unsafe<Record<string, unknown>>(text, values).withoutTransform,
                 ),
               ),

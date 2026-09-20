@@ -11,7 +11,7 @@ import { Data, Effect, Schema } from "effect";
 
 export const KeyRing = Schema.Struct({
   active: Schema.String,
-  keys: Schema.Record({ key: Schema.String, value: Schema.String }),
+  keys: Schema.Record(Schema.String, Schema.String),
 });
 export type KeyRing = typeof KeyRing.Type;
 export const CryptoConfig = Schema.Struct({

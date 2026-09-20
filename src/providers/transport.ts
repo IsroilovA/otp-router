@@ -31,14 +31,13 @@ const toHeaders = (headers: Headers): Readonly<Record<string, string>> => {
 
 export const fetchTransport: HttpTransport = {
   execute: (request) =>
-    Effect.async<HttpResponse, HttpTransportError>((resume) => {
-      const controller = new AbortController();
+    Effect.callback<HttpResponse, HttpTransportError>((resume, signal) => {
       fetch(request.url, {
         method: request.method,
         redirect: "error",
         headers: request.headers,
         body: Uint8Array.from(request.body),
-        signal: controller.signal,
+        signal,
       }).then(
         (response) => {
           response.arrayBuffer().then(
@@ -55,6 +54,5 @@ export const fetchTransport: HttpTransport = {
         },
         () => resume(Effect.fail(new HttpTransportError({ reason: "request_failed" }))),
       );
-      return Effect.sync(() => controller.abort());
     }),
 };
