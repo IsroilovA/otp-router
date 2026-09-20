@@ -24,7 +24,9 @@ Still required: test the adapter's exact error allowlist, callback replay tolera
 
 ## Meta WhatsApp Cloud API
 
-Use approved authentication templates with the router's code. Meta's examples include copy-code and one-tap buttons and an optional `code_expiration_minutes` footer. The example value does not establish the current allowed range. [Meta authentication-template example](https://www.postman.com/meta/whatsapp-business-platform/documentation/3kru5r6/moved-whatsapp-business-management-api?entity=request-13382743-ec0a6c79-4ada-4e4b-920e-9ca00b0944a3).
+Use approved authentication templates with the router's code. Copy-code sends accept codes up to fifteen characters and require the same code in the body and URL-button parameters. The router's six-to-eight-digit numeric codes fit this limit. The optional `code_expiration_minutes` footer accepts 1 to 90 minutes and displays an expiry warning. It does not set the router's verification deadline. [Meta copy-code authentication templates](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/authentication-templates/copy-code-button-authentication-templates).
+
+Configure provider delivery TTL with `message_send_ttl_seconds` when creating or updating the remote template. Authentication templates accept 30 to 900 seconds in one-second increments, with a default of 600 seconds. Templates created before October 23, 2024 default to thirty days; explicitly check existing templates. Meta also permits `-1` for thirty days, which is unsuitable for OTP delivery. These are template settings. The documented copy-code send payload does not establish a per-send TTL override. The adapter sends an existing template and does not manage its remote TTL. [Meta message time-to-live](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/time-to-live).
 
 Under D078, omit an optional relative-expiry footer unless it remains accurate on resend. A fixed five-minute message sent near the original deadline would misstate validity. Keep the actual expiry in application status. Adapter-specific templates and explicit locale fallback follow [the template contract](plugins.md#templates-and-localization); this does not settle unverified provider API constraints.
 
@@ -32,7 +34,7 @@ The operator supplies a business portfolio, WhatsApp Business Account, registere
 
 Webhook setup verification and POST authentication are separate. The GET challenge uses the configured verify token; validate POST `X-Hub-Signature-256` over the raw body using the app secret. A setup verify token alone does not authenticate delivery reports. [Meta's official examples](https://github.com/fbsamples/whatsapp-api-examples).
 
-Still unresolved: current caller-code limits, `message_send_ttl_seconds` limits and whether it can vary per send, template eligibility, a stable error mapping, callback retry horizons, and the current `biz_opaque_callback_data` contract. The current [authentication-template page](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/authentication-templates) and [error reference](https://developers.facebook.com/docs/whatsapp/cloud-api/support/error-codes) could not be retrieved in this research pass. Do not substitute Twilio behavior or third-party TTL ranges. General send idempotency remains unavailable until verified.
+Still unresolved: a per-send TTL override, a stable error mapping, callback retry horizons, and the current `biz_opaque_callback_data` contract. Account access and approval of the configured template require operator verification. The [authentication-template guide](https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/authentication-templates/authentication-templates) and the linked copy-code and TTL references were retrieved through a browser after direct fetch returned HTTP 429. General send idempotency remains unavailable until verified.
 
 ## Play Mobile SMS
 
@@ -52,12 +54,12 @@ Before production: confirm authorized sender and destination ranges, TTL bounds 
 
 ## Remaining provider evidence
 
-The 2026-09-20 recheck used Telegram, Play Mobile, and Meta-owned Postman documentation. Meta's template reference remained inaccessible. No live calls or timing measurements were made.
+The 2026-09-20 recheck used Telegram, Play Mobile, Meta-owned Postman documentation, and Meta's current authentication-template and TTL references. No live provider sends or timing measurements were made.
 
 | Provider | Evidence needed before claiming the integration complete | Safe behavior until verified |
 | --- | --- | --- |
 | Telegram | Fixtures and live tests for code/TTL boundaries, callback timestamp tolerance and retries, caller-reference correlation, rejection allowlist, and adapter timeout default. | Direct send only; unknown failures uncertain; no paid preflight, polling, or automatic retry. |
-| Meta | Approved copy-code template matching the adapter schema; current code constraints, TTL location and range, correlation support, status/error mapping, callback behavior, and adapter timeout default. | Never infer per-send TTL support from a template-creation field; do not invent a provider idempotency guarantee. Unverified options are disabled and block a production-ready adapter claim when required for correct sending. |
+| Meta | Account-approved copy-code template matching the adapter schema and its configured delivery TTL; correlation support, status/error mapping, callback behavior, and adapter timeout default. | Never infer per-send TTL support from a template-creation field; do not invent a provider idempotency guarantee. Unverified options are disabled and block a production-ready adapter claim when required for correct sending. |
 | Play Mobile | Account-confirmed sender/destinations, TTL serialization/bounds, error allowlist, message-ID limit, SMS encoding, callback authentication if offered, and adapter timeout default. | Short IDs, one recipient per send, no receipt ingestion without authentication, no polling, and no send retry. |
 
 Live tests require configured accounts and a designated recipient. Core implementation may proceed; adapters need this evidence before a production-ready claim.
