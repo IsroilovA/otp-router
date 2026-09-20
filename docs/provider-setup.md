@@ -4,6 +4,8 @@ The [built-in configuration example](../examples/config/builtins.config.ts) regi
 
 Copy the example into your deployment and remove providers you do not use from both registration and policy order. Instance IDs identify accounts. Use a new ID for a different account. Change `settingsFingerprint` when non-secret delivery settings change and follow the [drain procedure](operations.md#configuration-changes). Keep credentials outside the image.
 
+Start a real deployment with its own database, deployment ID, and secrets. The fake example already binds its database to `local-demo`; selecting this file with a new deployment ID against that database will fail. See [database identity](configuration.md#database-identity).
+
 | Provider | Required environment | Operator setup |
 | --- | --- | --- |
 | Telegram Gateway | `TELEGRAM_GATEWAY_TOKEN`, `TELEGRAM_CALLBACK_URL` | Obtain and fund a Gateway account. Point the HTTPS callback URL at `/webhooks/telegram-main`. The adapter sends the router's code directly and authenticates callback bytes with the token-derived signature. |

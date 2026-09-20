@@ -10,6 +10,8 @@ Every role validates configuration, coordinates router migrations, initializes p
 
 Readiness requires reachable PostgreSQL and initialized role resources, including worker processing where applicable. Liveness requires a responsive process. Neither health check contacts messaging providers.
 
+The internal listener defaults to `127.0.0.1:3001`: `GET /health/live` returns 200, `GET /health/ready` returns 200 or 503, and `GET /metrics` exposes Prometheus text. Before startup finishes, the listener may not yet accept connections. Compose probes readiness inside the container. API-only readiness does not establish that a separate worker is running; monitor each role.
+
 Shutdown marks the process unready, stops new requests and job claims, then allows in-flight operations to finish within the grace period. On expiry, close connections and interrupt cooperative work. Unresolved dispatched sends retain their reservation and uncertainty. Configure the container shutdown allowance longer than the application grace period.
 
 ## Configuration changes
@@ -52,6 +54,31 @@ Keep health and Prometheus metrics on the internal listener. Restrict access thr
 
 Cleanup enforces bounded retention and erases terminal secrets. Request paths enforce expiry independently of cleanup. Quota usage must survive challenge-history deletion.
 
-Tune connection pools, worker concurrency, query deadlines, and queue recovery against the deployment's workload. Run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts`; historical measurements are in the [research archive](research/benchmark.md).
+Set `workerConcurrency` in the entry file for the deployment's workload. Each process currently has fixed pool limits of 10 application connections and 6 queue connections, including API-only processes; budget PostgreSQL capacity across replicas. Application transactions use a 2-second lock timeout and a 5-second statement timeout. Pool limits, transaction deadlines, retention, and queue recovery timings are implementation settings, not environment-variable knobs. Run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts`; historical measurements are in the [research archive](research/benchmark.md).
+
+## Deployment checklist
+
+- Use a dedicated PostgreSQL database and durable storage. PostgreSQL 17 is the repository's development and test baseline. The runtime account must create schemas, tables, and indexes and run both router and pg-boss migrations; a DML-only account cannot start the service.
+- Back up the complete database, including router, queue, and migration state, and keep the corresponding cryptographic keys in a separate secret store. Exercise restoration with traffic stopped using the procedure above.
+- Route backend traffic privately or through TLS. Publish only the selected `/webhooks/<instanceId>` paths for provider callbacks, preserving raw request bodies, query strings, and signature headers. Keep application Bearer keys on the backend and health/metrics private.
+- Run at least one worker or combined process. API-only deployments can accept creation requests while deliveries and cleanup wait for a worker.
+- Build and pin the deployment image and configuration together. The supplied Compose database password is for local use; changing its environment after database initialization does not change the stored PostgreSQL password.
+
+## Troubleshooting
+
+Start with `docker compose ps` and `docker compose logs --tail=100 router`. Startup logs intentionally contain safe categories rather than raw exception details or credentials. Use the selected entry path with `--check-config` first, then `--check-schema` when database changes are intended.
+
+| Symptom or log reason | Check |
+| --- | --- |
+| `configuration_module_failed` | Entry path, readability by the container's `node` user, missing required environment variables, and installed imports. |
+| `invalid_settings`, `invalid_keys` | Required settings, API-key length, canonical 32-byte keys, and independence of every key. |
+| `deployment_identity_changed` | Wrong database or changed deployment ID; restore the original configuration or use a separate database. |
+| `retained_key_missing` | Restore the retained key IDs and original bytes; do not generate replacements under old IDs. |
+| `recipient_key_changed_requires_incident_procedure` | Restore the original recipient key or follow the incident procedure. |
+| `SqlError`, `QueueLifecycleError`, `SchemaCompatibilityError` | Database reachability, credentials, migration privileges, and compatible schema/artifact versions. |
+| `pending` deliveries persist | Worker availability, worker readiness/logs, and the same database/configuration across roles. |
+| Fake delivery stays `accepted` | Expected: the fake provider neither delivers a message nor generates a delivery receipt. |
+| 429 `cooldown_active` or `rate_limited` | Respect `Retry-After`, inspect current action forecasts, and wait; new idempotency keys do not bypass limits. |
+| 409 `idempotency_conflict` | Retry with the original validated body or use a fresh key only for an intended new action. |
 
 Distribution is private. Pin deployment artifacts and preserve exact dependency versions in the lockfile. Verify real provider accounts with explicit authorization and designated recipients before enabling traffic.
