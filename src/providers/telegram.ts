@@ -3,7 +3,6 @@ import { Effect, Layer, Redacted, Schema } from "effect";
 import {
   CallbackAuthenticationError,
   CallbackFormatError,
-  IsoDateTimeSchema,
   ProviderConfigurationRejected,
   ProviderContractVersion,
   ProviderInstance,
@@ -19,6 +18,8 @@ import {
   type SendAccepted,
 } from "./contract.js";
 import {
+  callbackTimestamp,
+  readyMetadata,
   decodeUtf8,
   encodeJson,
   parseJson,
@@ -144,10 +145,7 @@ const callbackEvent = (
       Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
     );
     const status = report.delivery_status.status;
-    const eventTimeText = new Date(report.delivery_status.updated_at * 1_000).toISOString();
-    const providerEventTime = yield* Schema.decodeUnknown(IsoDateTimeSchema)(eventTimeText).pipe(
-      Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
-    );
+    const providerEventTime = yield* callbackTimestamp(report.delivery_status.updated_at);
     const event: NormalizedDeliveryEvent = {
       deduplicationKey: `${report.request_id}:${status}:${String(report.delivery_status.updated_at)}`,
       correlationReference: report.payload ?? report.request_id,
@@ -228,36 +226,42 @@ const send = (
     };
   });
 
-export const makeTelegramDefinition = (
-  transport: HttpTransport = fetchTransport,
-): ProviderDefinition<TelegramConfiguration, typeof TelegramConfigurationSchema.Encoded> => ({
+const metadata = {
   id: "telegram-gateway",
   version: "1.0.0",
   contractVersion: ProviderContractVersion,
   channel: "telegram",
-  configSchema: TelegramConfigurationSchema,
-  templateSchema: null,
   constraints,
   defaultSendTimeoutMs: 10_000,
+  diagnosticCodes: [
+    "access_token_invalid",
+    "delivery_window_too_short",
+    "expired",
+    "invalid_provider_response",
+    "telegram_rejected_unknown",
+    "transport_failure",
+    "unsupported_code_length",
+  ],
   idempotency: { supported: false },
+} as const;
+
+export const makeTelegramDefinition = (
+  transport: HttpTransport = fetchTransport,
+): ProviderDefinition<TelegramConfiguration, typeof TelegramConfigurationSchema.Encoded> => ({
+  ...metadata,
+  configSchema: TelegramConfigurationSchema,
+  templateSchema: null,
   make: (options) =>
     Layer.effect(
       ProviderInstance,
       Effect.gen(function* () {
         yield* validateProviderConfiguration(TelegramConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(options.sendTimeoutMs, 10_000);
+        const sendTimeoutMs = yield* validateTimeout(
+          options.sendTimeoutMs,
+          metadata.defaultSendTimeoutMs,
+        );
         const ready: ReadyProvider = {
-          instanceId: options.instanceId,
-          pluginId: "telegram-gateway",
-          version: "1.0.0",
-          contractVersion: ProviderContractVersion,
-          channel: "telegram",
-          enabled: options.enabled,
-          settingsFingerprint: options.settingsFingerprint,
-          constraints,
-          sendTimeoutMs,
-          defaultSendTimeoutMs: 10_000,
-          idempotency: { supported: false },
+          ...readyMetadata(metadata, options, sendTimeoutMs),
           resolveTemplate: resolveNoTemplate,
           send: (input) => send(transport, options.config, input),
           callback: (input) => callbackEvent(input, options.config),

@@ -148,6 +148,7 @@ const provider = {
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   defaultSendTimeoutMs: 1000,
   sendTimeoutMs: 60000,
+  diagnosticCodes: [],
   idempotency: { supported: false },
   resolveTemplate: (locales) => Effect.succeed({ locale: locales[0] ?? "en", template: null }),
   send: (input) => Effect.promise(async () => {
@@ -343,7 +344,20 @@ describe.sequential("built process", () => {
     );
     const configExit = await checkConfig.exit;
     expect(configExit.code).toBe(0);
-    expect(checkConfig.output()).toContain("configuration_valid");
+    const logLines = checkConfig.output().trim().split("\n");
+    expect(logLines).toHaveLength(1);
+    expect(
+      Schema.decodeUnknownSync(Schema.Struct({ message: Schema.String }))(
+        JSON.parse(logLines[0] ?? ""),
+      ).message,
+    ).toBe("configuration_valid");
+    const missing = startProcess(
+      ["dist/main.js", "--check-config", "--config", `${fixture.configurationPath}.missing`],
+      processEnvironment("api", apiPort, apiInternalPort),
+    );
+    expect((await missing.exit).code).toBe(1);
+    expect(missing.output()).toContain("configuration_module_failed");
+    expect(missing.output()).not.toContain(fixture.configurationPath);
 
     const checkSchema = startProcess(
       [...baseArgs, "--check-schema"],

@@ -71,6 +71,7 @@ export const Delivery = Schema.Struct({
   reserved_at: Schema.NullOr(Schema.DateFromSelf),
   completed_at: Schema.NullOr(Schema.DateFromSelf),
   acceptance: Schema.NullOr(Schema.Literal("accepted", "not_accepted", "unknown")),
+  failure_category: Schema.NullOr(Schema.String),
   diagnostic_code: Schema.NullOr(Schema.String),
   provider_request_id: Schema.NullOr(Schema.String),
   retry_at: Schema.NullOr(Schema.DateFromSelf),

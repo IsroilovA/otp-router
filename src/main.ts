@@ -24,9 +24,26 @@ import { QueueLive } from "./queue/client.js";
 import { initializeQueues } from "./queue/jobs.js";
 import { openApiDocument } from "./http/api.js";
 import { makeHttpApiLayer, httpResponseMiddleware } from "./http/transport.js";
-import { WebhooksLive } from "./worker/webhooks.js";
+import { WebhooksLive } from "./http/webhook-service.js";
 import { prometheus } from "./diagnostics/metrics.js";
 import { startWorkers } from "./worker/run.js";
+
+const startupFailureReason = (cause: Cause.Cause<unknown>): string => {
+  const failure: unknown = Cause.squash(cause);
+  if (failure instanceof ConfigurationError) return failure.reason;
+  const known = Schema.Struct({
+    _tag: Schema.Literal(
+      "ProviderConfigurationError",
+      "TemplateResolutionError",
+      "SchemaCompatibilityError",
+      "SqlError",
+      "QueueLifecycleError",
+      "QueueOperationError",
+      "ParseError",
+    ),
+  });
+  return Schema.is(known)(failure) ? failure._tag : "internal_error";
+};
 
 const ConfigModule = Schema.Struct({
   default: Schema.declare(
@@ -177,6 +194,7 @@ const serve = Effect.gen(function* () {
     Cause.isInterruptedOnly(cause)
       ? Effect.void
       : Effect.logError("router_startup_or_runtime_failure").pipe(
+          Effect.annotateLogs("reason", startupFailureReason(cause)),
           Effect.zipRight(
             Effect.sync(() => {
               process.exitCode = 1;
@@ -185,4 +203,4 @@ const serve = Effect.gen(function* () {
         ),
   ),
 );
-NodeRuntime.runMain(serve, { disableErrorReporting: true });
+NodeRuntime.runMain(serve, { disableErrorReporting: true, disablePrettyLogger: true });

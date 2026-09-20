@@ -1,3 +1,4 @@
+import { HttpApiDecodeError } from "@effect/platform/HttpApiError";
 import { logEvent } from "../diagnostics/log.js";
 import {
   type HttpApi,
@@ -14,14 +15,13 @@ import {
   DeliveryInput as DeliveryInputSchema,
   type ErrorCode,
   type OperationResult,
-  Opaque,
   type ErrorBody as ErrorBodySchema,
   ResponseBody as ResponseBodySchema,
   Router,
   VerifyInput as VerifyInputSchema,
   statusForError,
 } from "../challenges/contracts.js";
-import { ApplicationAuth, OtpRouterApi, RequestContext } from "./api.js";
+import { ApplicationAuth, OtpRouterApi, RequestContext, UnauthorizedError } from "./api.js";
 import { decodeJson } from "./json.js";
 import {
   type WebhookError,
@@ -201,23 +201,16 @@ const complete = (
     ),
   );
 
-const requireIdempotencyKey = (
-  request: HttpServerRequest.HttpServerRequest,
-): Effect.Effect<string, InvalidRequest> => {
-  const key = request.headers["idempotency-key"];
-  if (key === undefined) return Effect.fail(new InvalidRequest());
-  return Schema.decodeUnknown(Opaque)(key).pipe(Effect.mapError(() => new InvalidRequest()));
-};
-
 const transportFailure = (error: BodyTooLarge | InvalidRequest, requestId: string) =>
   errorResponse(error instanceof BodyTooLarge ? "request_too_large" : "invalid_request", requestId);
 
 const mutationInput = <A, I>(
   request: HttpServerRequest.HttpServerRequest,
+  headers: { readonly "idempotency-key": string },
   schema: Schema.Schema<A, I>,
 ) =>
   Effect.all({
-    key: requireIdempotencyKey(request),
+    key: Effect.succeed(headers["idempotency-key"]),
     input: readApplicationJson(request, schema),
   });
 
@@ -247,25 +240,31 @@ const makeAuthLayer = (apiKeys: ReadonlyArray<string>) => {
         const supplied = digest(token);
         let matched = false;
         for (const candidate of expected) matched = timingSafeEqual(supplied, candidate) || matched;
-        return {
-          authorized:
-            authorization.startsWith("Bearer ") &&
-            authorization.length === token.length + 7 &&
-            matched,
-          requestId: randomUUID(),
-        };
+        const requestId = randomUUID();
+        if (
+          !authorization.startsWith("Bearer ") ||
+          authorization.length !== token.length + 7 ||
+          !matched
+        )
+          return yield* Effect.fail({
+            error: {
+              code: "unauthorized" as const,
+              message: errorMessages.unauthorized,
+              requestId,
+            },
+          });
+        return { requestId };
       }),
   });
 };
 
 const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application", (handlers) =>
   handlers
-    .handleRaw("createChallenge", ({ request }) =>
+    .handleRaw("createChallenge", ({ request, headers }) =>
       Effect.gen(function* () {
-        const { authorized, requestId } = yield* RequestContext;
-        if (!authorized) return errorResponse("unauthorized", requestId);
+        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, CreateInputSchema).pipe(
+        const parsed = yield* mutationInput(request, headers, CreateInputSchema).pipe(
           Effect.catchAll((error) => transportFailure(error, requestId)),
         );
         if (HttpServerResponse.isServerResponse(parsed)) return parsed;
@@ -274,18 +273,16 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     )
     .handleRaw("getChallengeStatus", ({ path }) =>
       Effect.gen(function* () {
-        const { authorized, requestId } = yield* RequestContext;
-        if (!authorized) return errorResponse("unauthorized", requestId);
+        const { requestId } = yield* RequestContext;
         const router = yield* Router;
         return yield* complete(router.status(path.challengeId), requestId);
       }),
     )
-    .handleRaw("verifyChallenge", ({ path, request }) =>
+    .handleRaw("verifyChallenge", ({ path, request, headers }) =>
       Effect.gen(function* () {
-        const { authorized, requestId } = yield* RequestContext;
-        if (!authorized) return errorResponse("unauthorized", requestId);
+        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, VerifyInputSchema).pipe(
+        const parsed = yield* mutationInput(request, headers, VerifyInputSchema).pipe(
           Effect.catchAll((error) => transportFailure(error, requestId)),
         );
         if (HttpServerResponse.isServerResponse(parsed)) return parsed;
@@ -295,12 +292,11 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
         );
       }),
     )
-    .handleRaw("scheduleDelivery", ({ path, request }) =>
+    .handleRaw("scheduleDelivery", ({ path, request, headers }) =>
       Effect.gen(function* () {
-        const { authorized, requestId } = yield* RequestContext;
-        if (!authorized) return errorResponse("unauthorized", requestId);
+        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, DeliveryInputSchema).pipe(
+        const parsed = yield* mutationInput(request, headers, DeliveryInputSchema).pipe(
           Effect.catchAll((error) => transportFailure(error, requestId)),
         );
         if (HttpServerResponse.isServerResponse(parsed)) return parsed;
@@ -310,12 +306,11 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
         );
       }),
     )
-    .handleRaw("cancelChallenge", ({ path, request }) =>
+    .handleRaw("cancelChallenge", ({ path, request, headers }) =>
       Effect.gen(function* () {
-        const { authorized, requestId } = yield* RequestContext;
-        if (!authorized) return errorResponse("unauthorized", requestId);
+        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, Schema.Struct({})).pipe(
+        const parsed = yield* mutationInput(request, headers, Schema.Struct({})).pipe(
           Effect.catchAll((error) => transportFailure(error, requestId)),
         );
         if (HttpServerResponse.isServerResponse(parsed)) return parsed;
@@ -341,9 +336,9 @@ const makeWebhookHandlers = (bodyLimit: number) =>
             })
             .pipe(Effect.catchAll(webhookFailureResponse));
           if (HttpServerResponse.isServerResponse(reply)) return reply;
-          return HttpServerResponse.text(reply.body, {
-            status: 200,
-            contentType: reply.contentType ?? "text/plain; charset=utf-8",
+          return HttpServerResponse.uint8Array(reply.body, {
+            status: reply.status,
+            contentType: reply.contentType,
           });
         }),
       )
@@ -392,6 +387,20 @@ export const makeHttpApiLayer = (
     makeApplicationHandlers.pipe(Layer.provide(auth)),
     makeWebhookHandlers(webhookBodyLimit),
     auth,
+    HttpApiBuilder.middleware((app) =>
+      app.pipe(
+        Effect.catchAllCause((cause) => {
+          const failureOption = Cause.failureOption(cause);
+          if (failureOption._tag === "None") return Effect.failCause(cause);
+          const failure: unknown = failureOption.value;
+          if (failure instanceof HttpApiDecodeError)
+            return errorResponse("invalid_request", randomUUID());
+          if (Schema.is(UnauthorizedError)(failure))
+            return errorResponse("unauthorized", failure.error.requestId);
+          return Effect.failCause(cause);
+        }),
+      ),
+    ),
   );
   return HttpApiBuilder.api(OtpRouterApi).pipe(Layer.provide(handlers));
 };

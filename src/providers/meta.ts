@@ -3,7 +3,6 @@ import { Effect, Layer, Redacted, Schema } from "effect";
 import {
   CallbackAuthenticationError,
   CallbackFormatError,
-  IsoDateTimeSchema,
   ProviderContractVersion,
   ProviderInstance,
   UnknownProviderOutcome,
@@ -18,6 +17,8 @@ import {
   type SendAccepted,
 } from "./contract.js";
 import {
+  callbackTimestamp,
+  readyMetadata,
   decodeUtf8,
   encodeJson,
   makeTemplateResolver,
@@ -159,9 +160,7 @@ const decodeMetaEvents = (
       if (!Number.isSafeInteger(seconds)) {
         return yield* new CallbackFormatError({ diagnosticCode: "invalid_body" });
       }
-      const providerEventTime = yield* Schema.decodeUnknown(IsoDateTimeSchema)(
-        new Date(seconds * 1_000).toISOString(),
-      ).pipe(Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })));
+      const providerEventTime = yield* callbackTimestamp(seconds);
       events.push({
         deduplicationKey: `${status.id}:${status.status}:${status.timestamp}`,
         correlationReference: status.id,
@@ -272,37 +271,42 @@ const send = (
     };
   });
 
-export const makeMetaDefinition = (
-  transport: HttpTransport = fetchTransport,
-): ProviderDefinition<MetaConfiguration, typeof MetaConfigurationSchema.Encoded> => ({
+const metadata = {
   id: "meta-whatsapp-cloud",
   version: "1.0.0",
   contractVersion: ProviderContractVersion,
   channel: "whatsapp",
-  configSchema: MetaConfigurationSchema,
-  templateSchema: MetaTemplateSchema,
   constraints,
   defaultSendTimeoutMs: 10_000,
+  diagnosticCodes: [
+    "invalid_provider_response",
+    "invalid_template_snapshot",
+    "meta_delivery_failed",
+    "meta_rejected_unknown",
+    "transport_failure",
+    "unsupported_code_length",
+  ],
   idempotency: { supported: false },
+} as const;
+
+export const makeMetaDefinition = (
+  transport: HttpTransport = fetchTransport,
+): ProviderDefinition<MetaConfiguration, typeof MetaConfigurationSchema.Encoded> => ({
+  ...metadata,
+  configSchema: MetaConfigurationSchema,
+  templateSchema: MetaTemplateSchema,
   make: (options) =>
     Layer.effect(
       ProviderInstance,
       Effect.gen(function* () {
         yield* validateProviderConfiguration(MetaConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(options.sendTimeoutMs, 10_000);
+        const sendTimeoutMs = yield* validateTimeout(
+          options.sendTimeoutMs,
+          metadata.defaultSendTimeoutMs,
+        );
         yield* validateAllTemplates(MetaTemplateSchema, options.templates);
         const ready: ReadyProvider = {
-          instanceId: options.instanceId,
-          pluginId: "meta-whatsapp-cloud",
-          version: "1.0.0",
-          contractVersion: ProviderContractVersion,
-          channel: "whatsapp",
-          enabled: options.enabled,
-          settingsFingerprint: options.settingsFingerprint,
-          constraints,
-          sendTimeoutMs,
-          defaultSendTimeoutMs: 10_000,
-          idempotency: { supported: false },
+          ...readyMetadata(metadata, options, sendTimeoutMs),
           resolveTemplate: makeTemplateResolver(MetaTemplateSchema, options.templates),
           send: (input) => send(transport, options.config, input),
           callback: (input) => callback(input, options.config),

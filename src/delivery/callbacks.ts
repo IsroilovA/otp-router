@@ -1,5 +1,6 @@
 import { SqlClient } from "@effect/sql";
 import { Data, Effect, Schema } from "effect";
+import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { rows } from "../database/query.js";
 import { databaseTime, transaction } from "../database/transaction.js";
@@ -16,6 +17,7 @@ const Inbox = Schema.Struct({
   received_at: Schema.DateFromSelf,
   event_at: Schema.NullOr(Schema.String),
   processed: Schema.Boolean,
+  diagnostic_code: Schema.NullOr(Schema.String),
 });
 const reconcile = (config: RuntimeConfiguration, providerId: string, reference: string) =>
   Effect.gen(function* () {
@@ -37,7 +39,7 @@ const reconcile = (config: RuntimeConfiguration, providerId: string, reference: 
       yield* mergeLockedOutcome(config, challenge, delivery, {
         state: event.status,
         acceptance: "accepted",
-        diagnosticCode: "authenticated_callback",
+        ...(event.diagnostic_code === null ? {} : { diagnosticCode: event.diagnostic_code }),
       });
       yield* sql`UPDATE otp_router.callback_inbox SET processed = true WHERE provider_instance_id = ${providerId} AND deduplication_key = ${event.deduplication_key}`;
     }
@@ -55,7 +57,7 @@ export const ingestEvents = (
       for (const event of events) {
         // A provider cancellation report is final failure evidence, never local cancellation or verification.
         const status = event.status === "cancelled" ? "failed" : event.status;
-        yield* sql`INSERT INTO otp_router.callback_inbox(provider_instance_id,deduplication_key,reference,status,received_at,event_at) VALUES (${providerId},${event.deduplicationKey},${event.correlationReference},${status},clock_timestamp(),${event.providerEventTime ?? null}) ON CONFLICT DO NOTHING`;
+        yield* sql`INSERT INTO otp_router.callback_inbox(provider_instance_id,deduplication_key,reference,status,received_at,event_at,diagnostic_code) VALUES (${providerId},${event.deduplicationKey},${event.correlationReference},${status},clock_timestamp(),${event.providerEventTime ?? null},${event.diagnosticCode === undefined ? null : providerDiagnostic(config.providers.get(providerId), event.diagnosticCode)}) ON CONFLICT DO NOTHING`;
       }
       for (const reference of [
         ...new Set(events.map((event) => event.correlationReference)),

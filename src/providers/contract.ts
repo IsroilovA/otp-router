@@ -168,6 +168,7 @@ export interface ReadyProvider {
   readonly constraints: ProviderConstraints;
   readonly sendTimeoutMs: number;
   readonly defaultSendTimeoutMs: number;
+  readonly diagnosticCodes: readonly string[];
   readonly idempotency: ProviderIdempotency;
   readonly resolveTemplate: (
     localeCandidates: readonly Locale[],
@@ -199,6 +200,7 @@ export interface ProviderDefinition<Configuration, EncodedConfiguration = Config
   readonly templateSchema: Schema.Schema.AnyNoContext | null;
   readonly constraints: ProviderConstraints;
   readonly defaultSendTimeoutMs: number;
+  readonly diagnosticCodes: readonly string[];
   readonly idempotency: ProviderIdempotency;
   readonly make: (
     options: ProviderMakeOptions<Configuration>,

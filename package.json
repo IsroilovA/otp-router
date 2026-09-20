@@ -10,7 +10,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc --project tsconfig.build.json",
+    "build": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.build.json",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "format": "biome format --write .",
     "format:check": "biome format .",

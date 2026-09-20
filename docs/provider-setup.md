@@ -28,4 +28,4 @@ Set Meta's `message_send_ttl_seconds` on the approved authentication template. I
 
 Keep authentication templates free of fixed relative validity claims. Resend uses the original expiry, so "valid for five minutes" would become inaccurate. The example SMS contains only the code. Add locale entries to each provider's templates and change the global fallback order as needed; the core saves each provider's resolved template at creation.
 
-Before production use, perform the authorized smoke procedure in the [release checklist](release-checklist.md#provider-gates), record the account's API version and approved template configuration, and confirm actual receipt, resend, verification, and authenticated callback correlation where supported. No live provider sends were performed during implementation.
+Before enabling real traffic, authorize a smoke test with a designated recipient. Check acceptance, receipt correlation where supported, resend, and verification using the account's configured API version and templates.

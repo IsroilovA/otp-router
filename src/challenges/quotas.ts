@@ -15,31 +15,35 @@ export const recipientLimit = (token: string, kind: Limit["kind"], maximum: numb
   maximum,
   windowMs: 900000,
 });
+export const commonSendLimits = (settings: Settings, token: string): readonly Limit[] => [
+  recipientLimit(token, "send", settings.recipientSendLimit15m),
+  {
+    identity: "deployment",
+    kind: "send",
+    maximum: settings.deploymentSendLimit15m,
+    windowMs: 900000,
+  },
+  {
+    identity: "deployment",
+    kind: "send",
+    maximum: settings.deploymentSendLimit24h,
+    windowMs: 86400000,
+  },
+];
+export const providerSendLimits = (settings: Settings, providerId: string): readonly Limit[] => {
+  const maximum = settings.providerSendLimits15m[providerId];
+  return maximum === undefined
+    ? []
+    : [{ identity: `provider:${providerId}`, kind: "send", maximum, windowMs: 900000 }];
+};
 export const sendLimits = (
   settings: Settings,
   token: string,
   providerId: string,
-): readonly Limit[] => {
-  const limits: Limit[] = [
-    recipientLimit(token, "send", settings.recipientSendLimit15m),
-    {
-      identity: "deployment",
-      kind: "send",
-      maximum: settings.deploymentSendLimit15m,
-      windowMs: 900000,
-    },
-    {
-      identity: "deployment",
-      kind: "send",
-      maximum: settings.deploymentSendLimit24h,
-      windowMs: 86400000,
-    },
-  ];
-  const maximum = settings.providerSendLimits15m[providerId];
-  if (maximum !== undefined)
-    limits.push({ identity: `provider:${providerId}`, kind: "send", maximum, windowMs: 900000 });
-  return limits;
-};
+): readonly Limit[] => [
+  ...commonSendLimits(settings, token),
+  ...providerSendLimits(settings, providerId),
+];
 export const lockQuotas = (limits: readonly Limit[]) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

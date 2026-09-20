@@ -1,10 +1,10 @@
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { eligibleProviders } from "../delivery/eligibility.js";
+import { availableProviders } from "../delivery/eligibility.js";
 import type { Snapshot } from "./contracts.js";
 import type { Challenge, Delivery, SavedProvider } from "./records.js";
 import { findDelivery, invalidRecipient } from "./store.js";
-import { quotaRetryAt, recipientLimit, sendLimits } from "./quotas.js";
+import { quotaRetryAt, recipientLimit } from "./quotas.js";
 
 type Action = Snapshot["actions"]["resend"];
 const deny = (reason: NonNullable<Action["reason"]>, availableAt?: string): Action => ({
@@ -35,16 +35,11 @@ interface Option {
 }
 const optionsFor = (config: RuntimeConfiguration, challenge: Challenge, time: Date) =>
   Effect.gen(function* () {
-    const eligible = yield* eligibleProviders(config, challenge, time);
-    return yield* Effect.forEach(eligible, (provider) =>
-      Effect.gen(function* () {
-        const retryAt = yield* quotaRetryAt(
-          sendLimits(config.settings, challenge.recipient_token, provider.providerInstanceId),
-          time,
-        );
-        return { provider, action: sendAction(challenge, time, retryAt) };
-      }),
-    );
+    const available = yield* availableProviders(config, challenge, time);
+    return available.map(({ provider, retryAt }) => ({
+      provider,
+      action: sendAction(challenge, time, retryAt),
+    }));
   });
 const selectAction = (challenge: Challenge, options: readonly Option[]): Action => {
   if (!challenge.snapshot.manualSelectionEnabled) return deny("manual_selection_disabled");

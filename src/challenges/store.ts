@@ -6,12 +6,14 @@ import { DomainError } from "./contracts.js";
 
 export const findChallenge = (id: string, lock = false) =>
   Effect.gen(function* () {
+    if (!Schema.is(Schema.UUID)(id))
+      return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
     const sql = yield* SqlClient.SqlClient;
     const values = yield* rows(
       Challenge,
       lock
-        ? sql`SELECT * FROM otp_router.challenges WHERE id::text = ${id} FOR UPDATE`
-        : sql`SELECT * FROM otp_router.challenges WHERE id::text = ${id}`,
+        ? sql`SELECT * FROM otp_router.challenges WHERE id = ${id} FOR UPDATE`
+        : sql`SELECT * FROM otp_router.challenges WHERE id = ${id}`,
     );
     const challenge = values[0];
     if (challenge === undefined)
@@ -21,7 +23,7 @@ export const findChallenge = (id: string, lock = false) =>
 export const findDelivery = (id: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    return yield* single(Delivery, sql`SELECT * FROM otp_router.deliveries WHERE id::text = ${id}`);
+    return yield* single(Delivery, sql`SELECT * FROM otp_router.deliveries WHERE id = ${id}`);
   });
 export const findSecrets = (id: string) =>
   Effect.gen(function* () {
@@ -71,6 +73,6 @@ export const invalidRecipient = (id: string) =>
     const sql = yield* SqlClient.SqlClient;
     return (yield* single(
       Schema.Struct({ stopped: Schema.Boolean }),
-      sql`SELECT EXISTS (SELECT 1 FROM otp_router.deliveries WHERE challenge_id = ${id} AND diagnostic_code = 'InvalidRecipient') AS stopped`,
+      sql`SELECT EXISTS (SELECT 1 FROM otp_router.deliveries WHERE challenge_id = ${id} AND failure_category = 'InvalidRecipient') AS stopped`,
     )).stopped;
   });

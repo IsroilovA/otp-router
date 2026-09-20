@@ -1,5 +1,9 @@
 import { Effect, Schema } from "effect";
 import {
+  CallbackFormatError,
+  IsoDateTimeSchema,
+  type ProviderDefinition,
+  type ProviderMakeOptions,
   ProviderConfigurationError,
   TemplateResolutionError,
   UnknownProviderOutcome,
@@ -131,4 +135,32 @@ export const validateAllTemplates = <A, I>(
         ),
       ),
     { discard: true },
+  );
+
+export const readyMetadata = <C, I>(
+  definition: Omit<ProviderDefinition<C, I>, "make" | "configSchema" | "templateSchema">,
+  options: Pick<ProviderMakeOptions<C>, "instanceId" | "enabled" | "settingsFingerprint">,
+  sendTimeoutMs: number,
+) => ({
+  instanceId: options.instanceId,
+  pluginId: definition.id,
+  version: definition.version,
+  contractVersion: definition.contractVersion,
+  channel: definition.channel,
+  enabled: options.enabled,
+  settingsFingerprint: options.settingsFingerprint,
+  constraints: definition.constraints,
+  defaultSendTimeoutMs: definition.defaultSendTimeoutMs,
+  sendTimeoutMs,
+  diagnosticCodes: definition.diagnosticCodes,
+  idempotency: definition.idempotency,
+});
+
+export const callbackTimestamp = (seconds: number) =>
+  Effect.try({
+    try: () => new Date(seconds * 1000).toISOString(),
+    catch: () => new CallbackFormatError({ diagnosticCode: "invalid_body" }),
+  }).pipe(
+    Effect.flatMap(Schema.decodeUnknown(IsoDateTimeSchema)),
+    Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
   );

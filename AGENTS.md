@@ -26,7 +26,7 @@
 ## PostgreSQL
 
 - Use `@effect/sql-pg`, parameterized Effect SQL, and `SqlSchema` result validation. Keep queries with their feature and transactions in `SqlClient.withTransaction`. SQL result annotations are not validation.
-- Write migrations explicitly with Effect SQL. Never edit an applied migration; create a new migration for changes or corrections.
+- Write migrations explicitly with Effect SQL. During initial development, update the initial schema directly. Do not add backfills or compatibility migrations.
 - Require an explicit predicate for application updates and deletes. Any intentional whole-table operation needs a narrow explanation and review. The current linter does not inspect SQL strings.
 - Follow [database rules](src/database/AGENTS.md) when changing connections, queries, or migrations.
 
@@ -39,6 +39,6 @@
 ## Verification
 
 - Use pnpm and preserve exact versions in the lockfile. `pnpm check` runs TypeScript, Effect diagnostics, typed linting, and formatting checks. `pnpm build` checks emitted output.
-- For tests, read [write-tests](.agents/skills/write-tests/SKILL.md). Use `pnpm test -- <file>` for focused runs and `pnpm test` for the suite. Do not present an empty suite as passing coverage.
+- For tests, read [write-tests](.agents/skills/write-tests/SKILL.md). Use `pnpm exec vitest run <file>` for focused runs and `pnpm test` for the suite. Do not present an empty suite as passing coverage.
 - Run checks and relevant tests after changes. Report what ran and any unverified behavior. Do not add tests for empty modules or merely to increase coverage.
 - Keep agent instructions and docs concise; apply [unslop](.agents/skills/unslop/SKILL.md) when editing prose.

@@ -35,6 +35,7 @@ const provider: ReadyProvider = {
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   sendTimeoutMs: 1_000,
   defaultSendTimeoutMs: 1_000,
+  diagnosticCodes: [],
   idempotency: { supported: false },
   resolveTemplate: (locales) => {
     const locale = locales[0];

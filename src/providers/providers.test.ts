@@ -286,6 +286,28 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
       _tag: "Events",
       events: [{ correlationReference: "delivery-1", status: "delivered" }],
     });
+    const invalidBody = encoder.encode(
+      JSON.stringify({
+        request_id: "invalid-time",
+        delivery_status: { status: "delivered", updated_at: 8640000000001 },
+      }),
+    );
+    const invalidSignature = createHmac("sha256", key)
+      .update(timestamp)
+      .update("\n")
+      .update(invalidBody)
+      .digest("hex");
+    const invalid = yield* callback({
+      body: invalidBody,
+      method: "POST",
+      path: "/callbacks/telegram",
+      query: {},
+      headers: { "x-request-timestamp": timestamp, "x-request-signature": invalidSignature },
+    }).pipe(Effect.either);
+    expect(invalid).toMatchObject({
+      _tag: "Left",
+      left: { _tag: "CallbackFormatError", diagnosticCode: "invalid_body" },
+    });
   }),
 );
 

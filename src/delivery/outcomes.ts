@@ -1,5 +1,6 @@
 import { SqlClient } from "@effect/sql";
 import { Effect } from "effect";
+import type { ProviderSendError } from "../providers/contract.js";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime, transaction } from "../database/transaction.js";
 import { expire, findChallenge, findDelivery } from "../challenges/store.js";
@@ -10,6 +11,7 @@ import { schedule } from "./schedule.js";
 export interface Outcome {
   readonly state: "accepted" | "delivered" | "failed" | "uncertain";
   readonly acceptance: "accepted" | "not_accepted" | "unknown";
+  readonly failureCategory?: ProviderSendError["_tag"];
   readonly diagnosticCode?: string;
   readonly providerRequestId?: string;
   readonly retryAt?: Date;
@@ -84,6 +86,6 @@ const persistOutcome = (
       yield* sql`UPDATE otp_router.deliveries SET provider_request_id = COALESCE(${outcome.providerRequestId ?? null},provider_request_id) WHERE id = ${delivery.id}`;
       return false;
     }
-    yield* sql`UPDATE otp_router.deliveries SET state = ${state}, acceptance = ${state === "delivered" ? "accepted" : outcome.acceptance}, diagnostic_code = ${outcome.diagnosticCode ?? null}, completed_at = ${time}, provider_request_id = COALESCE(${outcome.providerRequestId ?? null},provider_request_id), retry_at = COALESCE(${outcome.retryAt ?? null},retry_at) WHERE id = ${delivery.id}`;
+    yield* sql`UPDATE otp_router.deliveries SET state = ${state}, acceptance = ${state === "delivered" ? "accepted" : outcome.acceptance}, failure_category = ${outcome.failureCategory ?? null}, diagnostic_code = ${outcome.diagnosticCode ?? null}, completed_at = ${time}, provider_request_id = COALESCE(${outcome.providerRequestId ?? null},provider_request_id), retry_at = COALESCE(${outcome.retryAt ?? null},retry_at) WHERE id = ${delivery.id}`;
     return true;
   });

@@ -102,7 +102,11 @@ describe("HTTP transport", () => {
   const webhooks = WebhookHandler.of({
     handshake: (input) =>
       input.providerInstanceId === "meta-primary"
-        ? Effect.succeed({ body: input.query["hub.challenge"]?.toString() ?? "" })
+        ? Effect.succeed({
+            status: 202,
+            contentType: "application/octet-stream",
+            body: new TextEncoder().encode(input.query["hub.challenge"]?.toString() ?? ""),
+          })
         : Effect.fail(new WebhookError({ code: "unknown_instance" })),
     ingest: (input) => {
       if (!callbackAvailable) {
@@ -161,6 +165,16 @@ describe("HTTP transport", () => {
       new Request("http://router.test/v1/challenges/challenge_1"),
     );
 
+    const mutation = await server.handler(
+      new Request("http://router.test/v1/challenges", {
+        method: "POST",
+        body: "invalid JSON",
+      }),
+    );
+    expect(mutation.status).toBe(401);
+    expect(Schema.decodeUnknownSync(ErrorBody)(await mutation.json()).error.code).toBe(
+      "unauthorized",
+    );
     expect(first.status).toBe(401);
     expect(second.status).toBe(401);
     expect(first.headers.get("cache-control")).toBe("no-store");
@@ -245,7 +259,10 @@ describe("HTTP transport", () => {
 
   it("rejects duplicate, unknown, compressed, missing-key, and streamed oversized input", async () => {
     const before = createRequests.length;
+    const missingKey = createRequest(validCreate);
+    missingKey.headers.delete("idempotency-key");
     const cases = [
+      missingKey,
       createRequest(
         '{"recipient":{"type":"phone","phoneNumber":"+998901234567"},"purpose":"login","purpose":"other","contextId":"flow_1","policyId":"default"}',
       ),
@@ -254,14 +271,20 @@ describe("HTTP transport", () => {
       ),
       createRequest(validCreate, { "content-encoding": "gzip" }),
       createRequest(validCreate, { "idempotency-key": "" }),
+      createRequest(validCreate, { "idempotency-key": "x".repeat(129) }),
       createRequest(`{"padding":"${"x".repeat(17 * 1024)}"}`),
     ];
     const responses = await Promise.all(cases.map((request) => server.handler(request)));
 
-    expect(responses.map((response) => response.status)).toEqual([400, 400, 400, 400, 413]);
+    expect(responses.map((response) => response.status)).toEqual([
+      400, 400, 400, 400, 400, 400, 413,
+    ]);
     expect(createRequests).toHaveLength(before);
     for (const response of responses) {
       expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(Schema.decodeUnknownSync(ErrorBody)(await response.json()).error.code).toBe(
+        response.status === 413 ? "request_too_large" : "invalid_request",
+      );
     }
   });
 
@@ -285,7 +308,7 @@ describe("HTTP transport", () => {
     const handshake = await server.handler(
       new Request("http://router.test/webhooks/meta-primary?hub.challenge=abc123"),
     );
-    expect(handshake.status).toBe(200);
+    expect(handshake.status).toBe(202);
     expect(await handshake.text()).toBe("abc123");
 
     callbackAvailable = false;
@@ -324,6 +347,22 @@ describe("HTTP transport", () => {
       expect.arrayContaining(["201", "400", "401", "409", "413", "422", "429", "500", "503"]),
     );
     expect(create?.security).toBeDefined();
+    for (const path of [
+      "/v1/challenges",
+      "/v1/challenges/{challengeId}/verify",
+      "/v1/challenges/{challengeId}/deliveries",
+      "/v1/challenges/{challengeId}/cancel",
+    ]) {
+      expect(
+        openApiDocument.paths[path]?.post?.parameters.find(
+          (parameter) => parameter.name === "idempotency-key",
+        ),
+      ).toMatchObject({
+        in: "header",
+        required: true,
+        schema: { pattern: "^[!-~]{1,128}$" },
+      });
+    }
     expect(openApiDocument.paths["/webhooks/{providerInstanceId}"]?.post?.security).toEqual([]);
   });
 });

@@ -1,4 +1,5 @@
 import { Context, Data, Effect, Layer, Schema } from "effect";
+import { deliveryWindowFits } from "../providers/timing.js";
 import { CryptoConfig, validateCrypto } from "../challenges/crypto.js";
 import type { RoutingContext } from "../challenges/contracts.js";
 import { Identifier, Locale } from "../challenges/contracts.js";
@@ -85,14 +86,33 @@ export interface RuntimeConfiguration {
   readonly providers: ReadonlyMap<string, ReadyProvider>;
   readonly selectors: Readonly<Record<string, RoutingSelector>>;
 }
+export const ConfigurationReason = Schema.Literal(
+  "configuration_module_failed",
+  "deployment_identity_changed",
+  "incompatible_provider_constraints",
+  "invalid_keys",
+  "invalid_manual_allowlist",
+  "invalid_policy",
+  "invalid_provider_registration",
+  "invalid_settings",
+  "not_ready",
+  "recipient_key_change_requires_invalidation_and_quota_wait",
+  "recipient_key_changed_requires_incident_procedure",
+  "retained_key_missing",
+  "unknown_policy",
+  "unknown_provider",
+  "unknown_selector_policy",
+  "unsupported_snapshot_version",
+);
 export class ConfigurationError extends Data.TaggedError("ConfigurationError")<{
-  readonly reason: string;
+  readonly reason: typeof ConfigurationReason.Type;
 }> {}
 export class RouterConfig extends Context.Tag("otp-router/Config")<
   RouterConfig,
   RuntimeConfiguration
 >() {}
-const invalid = (reason: string) => Effect.fail(new ConfigurationError({ reason }));
+const invalid = (reason: typeof ConfigurationReason.Type) =>
+  Effect.fail(new ConfigurationError({ reason }));
 const validatePolicy = (policy: Policy, providers: ReadonlyMap<string, ReadyProvider>) =>
   Effect.gen(function* () {
     if (
@@ -140,7 +160,10 @@ const validatePolicyProviders = (policy: Policy, providers: ReadonlyMap<string, 
       if (
         policy.codeLength < provider.constraints.minCodeLength ||
         policy.codeLength > provider.constraints.maxCodeLength ||
-        policy.lifetimeSeconds * 1000 <= provider.constraints.minDeliveryWindowMs
+        !deliveryWindowFits(
+          { ...provider.constraints, sendTimeoutMs: provider.sendTimeoutMs },
+          policy.lifetimeSeconds * 1000,
+        )
       )
         return yield* invalid("incompatible_provider_constraints");
     }

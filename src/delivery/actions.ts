@@ -10,7 +10,6 @@ import {
   type OperationResult,
 } from "../challenges/contracts.js";
 import { lockOperation, operation, replay, saveResult } from "../challenges/idempotency.js";
-import { checkQuotas, lockQuotas, sendLimits, quotaRetryAt } from "../challenges/quotas.js";
 import {
   expire,
   findChallenge,
@@ -19,30 +18,30 @@ import {
   invalidRecipient,
 } from "../challenges/store.js";
 import { snapshot } from "../challenges/snapshot.js";
-import type { Challenge, Delivery, SavedProvider } from "../challenges/records.js";
-import { eligibleProviders, resolveChoice } from "./eligibility.js";
+import type { Challenge, Delivery } from "../challenges/records.js";
+import { availableProviders, resolveChoice, type ProviderAvailability } from "./eligibility.js";
 import { schedule } from "./schedule.js";
 const selectTarget = (
   challenge: Challenge,
   current: Delivery,
   input: DeliveryInput,
-  eligible: readonly SavedProvider[],
+  available: readonly ProviderAvailability[],
 ) => {
   switch (input.action) {
     case "select":
-      return resolveChoice(challenge.snapshot, input.choice, eligible);
+      return resolveChoice(challenge.snapshot, input.choice, available);
     case "resend": {
-      const target = eligible.find(
-        (provider) => provider.providerInstanceId === current.provider_instance_id,
+      const target = available.find(
+        ({ provider }) => provider.providerInstanceId === current.provider_instance_id,
       );
       return target === undefined
         ? Effect.fail(new DomainError({ code: "delivery_unavailable" }))
         : Effect.succeed(target);
     }
     case "next": {
-      const target = challenge.snapshot.providers
-        .slice(current.route_position + 1)
-        .find((provider) => eligible.includes(provider));
+      const target = available.find(
+        ({ provider }) => challenge.snapshot.providers.indexOf(provider) > current.route_position,
+      );
       return target === undefined
         ? Effect.fail(new DomainError({ code: "delivery_unavailable" }))
         : Effect.succeed(target);
@@ -59,12 +58,6 @@ export const requestDelivery = (
       yield* lockOperation(op);
       const previous = yield* replay(config.settings.crypto, op);
       if (previous !== undefined) return previous;
-      const initial = yield* findChallenge(request.challengeId);
-      // Lock every potentially chosen provider quota before locking the challenge.
-      const allLimits = initial.snapshot.providers.flatMap((provider) =>
-        sendLimits(config.settings, initial.recipient_token, provider.providerInstanceId),
-      );
-      yield* lockQuotas(allLimits);
       const locked = yield* findChallenge(request.challengeId, true);
       const time = yield* databaseTime;
       const challenge = yield* expire(locked, time);
@@ -72,13 +65,12 @@ export const requestDelivery = (
       const current = yield* findDelivery(challenge.current_delivery_id);
       if (yield* invalidRecipient(challenge.id))
         return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
-      const target = yield* targetWithQuota(config, {
+      const target = yield* selectTarget(
         challenge,
         current,
-        input: request.input,
-        eligible: yield* eligibleProviders(config, challenge, time),
-        time,
-      });
+        request.input,
+        yield* availableProviders(config, challenge, time),
+      );
       if (time < challenge.next_user_send_at)
         return yield* Effect.fail(
           new DomainError({
@@ -88,17 +80,17 @@ export const requestDelivery = (
         );
       if (challenge.send_count >= challenge.snapshot.maxSends)
         return yield* Effect.fail(new DomainError({ code: "rate_limited" }));
-      yield* checkQuotas(
-        sendLimits(config.settings, challenge.recipient_token, target.providerInstanceId),
-        time,
-      );
+      if (target.retryAt !== undefined)
+        return yield* Effect.fail(
+          new DomainError({ code: "rate_limited", retryAt: target.retryAt }),
+        );
       const sql = yield* SqlClient.SqlClient;
       yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending'`;
       yield* sql`UPDATE otp_router.challenges SET routing_revision = routing_revision + 1, automatic_stopped = false, next_user_send_at = ${new Date(time.getTime() + challenge.snapshot.resendCooldownSeconds * 1000)} WHERE id = ${challenge.id}`;
       const updated = yield* findChallenge(challenge.id);
       const deliveryId = yield* schedule(
         updated,
-        challenge.snapshot.providers.indexOf(target),
+        challenge.snapshot.providers.indexOf(target.provider),
         request.input.action,
         time,
       );
@@ -115,32 +107,3 @@ export const requestDelivery = (
       });
     }),
   );
-
-const targetWithQuota = (
-  config: RuntimeConfiguration,
-  options: {
-    readonly challenge: Challenge;
-    readonly current: Delivery;
-    readonly input: DeliveryInput;
-    readonly eligible: readonly SavedProvider[];
-    readonly time: Date;
-  },
-) =>
-  Effect.gen(function* () {
-    const { challenge, current, input, eligible, time } = options;
-    const first = yield* selectTarget(challenge, current, input, eligible);
-    if (input.action !== "select" || input.choice.type !== "channel") return first;
-    for (const candidate of eligible) {
-      if (
-        candidate.channel !== first.channel ||
-        !challenge.snapshot.manualProviderIds.includes(candidate.providerInstanceId)
-      )
-        continue;
-      const retry = yield* quotaRetryAt(
-        sendLimits(config.settings, challenge.recipient_token, candidate.providerInstanceId),
-        time,
-      );
-      if (retry === undefined) return candidate;
-    }
-    return first;
-  });

@@ -31,7 +31,7 @@ export default Effect.gen(function* () {
     reason text NOT NULL CHECK (reason IN ('initial','fallback','resend','next','select')),
     due_at timestamptz NOT NULL, state text NOT NULL CHECK (state IN ('pending','dispatching','accepted','delivered','failed','uncertain','suppressed')),
     reserved_at timestamptz, completed_at timestamptz, acceptance text CHECK (acceptance IN ('accepted','not_accepted','unknown')),
-    diagnostic_code text, provider_request_id text, retry_at timestamptz,
+    failure_category text, diagnostic_code text, provider_request_id text, retry_at timestamptz,
     CHECK ((state = 'dispatching') IS NOT TRUE OR reserved_at IS NOT NULL)
   )`;
   yield* sql`CREATE UNIQUE INDEX deliveries_advancement ON otp_router.deliveries(challenge_id,routing_revision,route_position) WHERE reason = 'fallback'`;
@@ -45,7 +45,7 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE otp_router.callback_inbox (
     provider_instance_id text NOT NULL, deduplication_key text NOT NULL, reference text NOT NULL,
     status text NOT NULL CHECK (status IN ('accepted','delivered','failed')),
-    received_at timestamptz NOT NULL, event_at text, processed boolean NOT NULL DEFAULT false,
+    received_at timestamptz NOT NULL, event_at text, diagnostic_code text, processed boolean NOT NULL DEFAULT false,
     PRIMARY KEY (provider_instance_id,deduplication_key)
   )`;
   yield* sql`CREATE INDEX inbox_unmatched ON otp_router.callback_inbox(provider_instance_id,reference) WHERE processed = false`;

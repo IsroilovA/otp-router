@@ -68,7 +68,7 @@ The cancellation mask does not make remote delivery atomic. It protects the shor
 
 Use separate bounded pools for application SQL and queue management by default. Cross-pool transaction correctness comes from passing the transaction adapter for enqueue; it does not require every background queue operation to share the application's pool. Account for the combined connection budget.
 
-Keep application migrations separate from pg-boss schema migrations. Select `PgMigrator` for router tables and the pg-boss migration tooling for its schema. The package exposes these facilities, but upgrade behavior has not been exercised by this probe. This experiment did not test migration timing; current [startup migration rules](../operations.md#data-ownership) supersede the original separate-command proposal.
+Keep application migrations separate from pg-boss schema migrations. Select `PgMigrator` for router tables and the pg-boss migration tooling for its schema. The package exposes these facilities, but upgrade behavior has not been exercised by this probe. This experiment did not test migration timing; current [startup migration rules](../operations.md) supersede the original separate-command proposal.
 
 ## Compatibility and maintenance
 

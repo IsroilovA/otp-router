@@ -1,7 +1,6 @@
 import { Effect, Layer, Schema } from "effect";
 import { type RoutingSelector, SelectorFailure } from "otp-router/config";
 import {
-  type NormalizedPhone,
   ProviderContractVersion,
   type ProviderDefinition,
   ProviderInstance,
@@ -13,10 +12,15 @@ import {
 const TextConfigurationSchema = Schema.Struct({ prefix: Schema.String });
 type TextConfiguration = typeof TextConfigurationSchema.Type;
 
-const constraints = {
-  minCodeLength: 6,
-  maxCodeLength: 8,
-  minDeliveryWindowMs: 0,
+const metadata = {
+  id: "example-text-sink",
+  version: "1.0.0",
+  contractVersion: ProviderContractVersion,
+  channel: "text-sink",
+  constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
+  defaultSendTimeoutMs: 1_000,
+  diagnosticCodes: [],
+  idempotency: { supported: false },
 } as const;
 
 const send = (config: TextConfiguration, input: ProviderSendInput): Effect.Effect<SendAccepted> =>
@@ -32,28 +36,17 @@ export const TextProvider: ProviderDefinition<
   TextConfiguration,
   typeof TextConfigurationSchema.Encoded
 > = {
-  id: "example-text-sink",
-  version: "1.0.0",
-  contractVersion: ProviderContractVersion,
-  channel: "text-sink",
+  ...metadata,
   configSchema: TextConfigurationSchema,
   templateSchema: null,
-  constraints,
-  defaultSendTimeoutMs: 1_000,
-  idempotency: { supported: false },
   make: (options) =>
     Layer.succeed(ProviderInstance, {
+      ...metadata,
       instanceId: options.instanceId,
-      pluginId: "example-text-sink",
-      version: "1.0.0",
-      contractVersion: ProviderContractVersion,
-      channel: "text-sink",
+      pluginId: metadata.id,
       enabled: options.enabled,
       settingsFingerprint: options.settingsFingerprint,
-      constraints,
-      sendTimeoutMs: options.sendTimeoutMs ?? 1_000,
-      defaultSendTimeoutMs: 1_000,
-      idempotency: { supported: false },
+      sendTimeoutMs: options.sendTimeoutMs ?? metadata.defaultSendTimeoutMs,
       resolveTemplate: (locales) => {
         const locale = locales[0];
         return locale === undefined
@@ -68,5 +61,3 @@ export const textSelector: RoutingSelector = ({ recipient }) =>
   recipient.startsWith("+")
     ? Effect.succeed({ _tag: "Route", providerInstanceIds: ["text-primary"] })
     : Effect.fail(new SelectorFailure());
-
-export const normalizeForExample = (phone: NormalizedPhone): string => phone;

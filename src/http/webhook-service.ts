@@ -8,7 +8,7 @@ import {
   WebhookHandler,
   type WebhookHandshakeInput,
   type WebhookIngestInput,
-} from "../http/webhooks.js";
+} from "./webhooks.js";
 import { Queue } from "../queue/client.js";
 import type { CallbackInput } from "../providers/contract.js";
 
@@ -55,7 +55,8 @@ export const WebhooksLive = Layer.effect(
           Effect.flatMap((result) =>
             result._tag === "Handshake"
               ? Effect.succeed({
-                  body: new TextDecoder().decode(result.body),
+                  body: result.body,
+                  status: result.status,
                   contentType: result.contentType,
                 })
               : Effect.fail(new WebhookError({ code: "invalid" })),

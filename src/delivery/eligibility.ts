@@ -1,3 +1,5 @@
+import { commonSendLimits, providerSendLimits, quotaRetryAt } from "../challenges/quotas.js";
+import { deliveryWindowFits } from "../providers/timing.js";
 import { SqlClient } from "@effect/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
@@ -28,30 +30,63 @@ export const eligibleProviders = (
     return challenge.snapshot.providers.filter(
       (provider) =>
         providerCompatible(config, provider) &&
-        time.getTime() + provider.minDeliveryWindowMs + provider.sendTimeoutMs <
-          challenge.expires_at.getTime() &&
+        deliveryWindowFits(provider, challenge.expires_at.getTime() - time.getTime()) &&
         !restricted.some((row) => row.provider_instance_id === provider.providerInstanceId),
     );
   });
+export interface ProviderAvailability {
+  readonly provider: SavedProvider;
+  readonly retryAt: string | undefined;
+}
+export const availableProviders = (
+  config: RuntimeConfiguration,
+  challenge: Pick<Challenge, "snapshot" | "expires_at" | "recipient_token">,
+  time: Date,
+) =>
+  Effect.gen(function* () {
+    const eligible = yield* eligibleProviders(config, challenge, time);
+    const commonRetry = yield* quotaRetryAt(
+      commonSendLimits(config.settings, challenge.recipient_token),
+      time,
+    );
+    return yield* Effect.forEach(eligible, (provider) =>
+      Effect.gen(function* () {
+        const providerRetry = yield* quotaRetryAt(
+          providerSendLimits(config.settings, provider.providerInstanceId),
+          time,
+        );
+        const retryAt = [commonRetry, providerRetry]
+          .filter((value) => value !== undefined)
+          .sort()
+          .at(-1);
+        return { provider, retryAt };
+      }),
+    );
+  });
+
 export const resolveChoice = (
-  snapshot: {
-    readonly manualSelectionEnabled: boolean;
-    readonly manualProviderIds: readonly string[];
-    readonly providers: readonly SavedProvider[];
-  },
-  choice: Choice,
-  eligible: readonly SavedProvider[],
+  snapshot: Pick<Challenge["snapshot"], "manualSelectionEnabled" | "manualProviderIds">,
+  choice: Choice | undefined,
+  available: readonly ProviderAvailability[],
 ) => {
-  if (!snapshot.manualSelectionEnabled)
+  if (choice !== undefined && !snapshot.manualSelectionEnabled)
     return Effect.fail(new DomainError({ code: "delivery_option_not_allowed" }));
-  const provider = eligible.find(
-    (item) =>
-      snapshot.manualProviderIds.includes(item.providerInstanceId) &&
-      (choice.type === "channel"
-        ? item.channel === choice.channel
-        : item.providerInstanceId === choice.providerInstanceId),
-  );
-  return provider === undefined
-    ? Effect.fail(new DomainError({ code: "delivery_option_not_allowed" }))
-    : Effect.succeed(provider);
+  const candidates =
+    choice === undefined
+      ? available.slice(0, 1)
+      : available.filter(
+          ({ provider }) =>
+            snapshot.manualProviderIds.includes(provider.providerInstanceId) &&
+            (choice.type === "channel"
+              ? provider.channel === choice.channel
+              : provider.providerInstanceId === choice.providerInstanceId),
+        );
+  const selected = candidates.find((option) => option.retryAt === undefined) ?? candidates[0];
+  return selected === undefined
+    ? Effect.fail(
+        new DomainError({
+          code: choice === undefined ? "delivery_unavailable" : "delivery_option_not_allowed",
+        }),
+      )
+    : Effect.succeed(selected);
 };

@@ -2,7 +2,7 @@
 
 Historical evaluation, 2026-09-19. Effect, HttpApi, Schema, and the Effect-native provider contract were accepted; the later [SQL experiment](sql-pg-research.md) selected `@effect/sql-pg` with pg-boss. No performance benchmark was run.
 
-The alternatives below predate those decisions. D068-D069 later removed timed fallback and automatic provider-send retries. Follow the current [routing contract](../routing.md) and [dependency policy](../dependencies.md).
+The alternatives below predate those decisions. D068-D069 later removed timed fallback and automatic provider-send retries. Follow the current [routing contract](../routing.md) and [architecture guide](../architecture.md).
 
 ## Recommendation
 
@@ -96,7 +96,7 @@ Sources: [Effect registry metadata](https://registry.npmjs.org/effect), [platfor
 
 Effect's official release announcement identifies v4 as a release candidate. It says broad interface changes are no longer planned, while narrowly scoped breaking changes remain possible. The September 18 update reports continuing RC fixes. See the [v4 RC announcement](https://effect.website/blog/releases/effect/40-rc) and [September 18 update](https://effect.website/blog/this-week-in-effect/136).
 
-Historical recommendation on 2026-09-19: use the then-current stable v3 core rather than the v4 release candidate. This snapshot does not govern implementation. Use the latest stable compatible Effect release selected under the current [dependency policy](../dependencies.md#version-policy-and-remaining-checks).
+Historical recommendation on 2026-09-19: use the then-current stable v3 core rather than the v4 release candidate. This snapshot does not govern implementation. Use the latest stable compatible Effect release selected under the current [architecture guide](../architecture.md).
 
 Companion packages have their own versions and compatibility requirements. The registry shows that current v3 platform and SQL packages require particular Effect v3 ranges and additional peer packages. A stable core does not make every companion package stable. Check the selected package set together and pin it; do not combine v3 examples with v4 package paths.
 
@@ -112,7 +112,7 @@ For AI-assisted development, document the selected major version and the approve
 
 ## Framework choices at the time of evaluation
 
-This evaluation proposed comparing Effect Schema, Effect HttpApi, and `@effect/sql-pg` with alternatives. D015 and D039 subsequently selected those packages and pg-boss. Fastify is no longer an open choice. See [dependencies](../dependencies.md) for the current stack.
+This evaluation proposed comparing Effect Schema, Effect HttpApi, and `@effect/sql-pg` with alternatives. D015 and D039 subsequently selected those packages and pg-boss. Fastify is no longer an open choice. See [architecture](../architecture.md) for the current stack.
 
 ## Implementation checks
 

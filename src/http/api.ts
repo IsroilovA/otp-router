@@ -9,6 +9,7 @@ import {
 } from "@effect/platform";
 import { Context, Schema } from "effect";
 import {
+  Opaque,
   CreateInput,
   DeliveryInput,
   DeliveryResult,
@@ -17,25 +18,10 @@ import {
   VerifyInput,
 } from "../challenges/contracts.js";
 
-export class RequestContext extends Context.Tag("otp-router/http/RequestContext")<
-  RequestContext,
-  { readonly authorized: boolean; readonly requestId: string }
->() {}
-
-export class ApplicationAuth extends HttpApiMiddleware.Tag<ApplicationAuth>()(
-  "otp-router/http/ApplicationAuth",
-  {
-    provides: RequestContext,
-    security: { bearer: HttpApiSecurity.bearer },
-  },
-) {}
-
 const MutationHeaders = Schema.Struct({
-  "idempotency-key": Schema.optional(
-    Schema.String.annotations({
-      description: "Printable ASCII operation key, 1 to 128 characters",
-    }),
-  ),
+  "idempotency-key": Opaque.annotations({
+    description: "Operation key reused only when retrying the same request",
+  }),
 });
 
 const ChallengeId = HttpApiSchema.param("challengeId", Schema.String);
@@ -52,7 +38,21 @@ const errorEnvelope = <Codes extends Schema.Schema.All>(identifier: string, code
   }).annotations({ identifier });
 
 const InvalidRequestError = errorEnvelope("InvalidRequestError", Schema.Literal("invalid_request"));
-const UnauthorizedError = errorEnvelope("UnauthorizedError", Schema.Literal("unauthorized"));
+export const UnauthorizedError = errorEnvelope("UnauthorizedError", Schema.Literal("unauthorized"));
+export class RequestContext extends Context.Tag("otp-router/http/RequestContext")<
+  RequestContext,
+  { readonly requestId: string }
+>() {}
+
+export class ApplicationAuth extends HttpApiMiddleware.Tag<ApplicationAuth>()(
+  "otp-router/http/ApplicationAuth",
+  {
+    provides: RequestContext,
+    failure: UnauthorizedError.annotations(HttpApiSchema.annotations({ status: 401 })),
+    security: { bearer: HttpApiSecurity.bearer },
+  },
+) {}
+
 const NotFoundError = errorEnvelope("NotFoundError", Schema.Literal("challenge_not_found"));
 const ConflictError = errorEnvelope(
   "ConflictError",

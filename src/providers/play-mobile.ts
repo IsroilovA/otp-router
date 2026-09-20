@@ -14,6 +14,7 @@ import {
   type SendAccepted,
 } from "./contract.js";
 import {
+  readyMetadata,
   decodeUtf8,
   encodeJson,
   makeTemplateResolver,
@@ -190,37 +191,47 @@ const send = (
     return yield* mapErrorCode(parsed.error_code);
   });
 
-export const makePlayMobileDefinition = (
-  transport: HttpTransport = fetchTransport,
-): ProviderDefinition<PlayMobileConfiguration, typeof PlayMobileConfigurationSchema.Encoded> => ({
+const metadata = {
   id: "play-mobile-http",
   version: "1.0.0",
   contractVersion: ProviderContractVersion,
   channel: "sms",
-  configSchema: PlayMobileConfigurationSchema,
-  templateSchema: PlayMobileTemplateSchema,
   constraints,
   defaultSendTimeoutMs: 10_000,
+  diagnosticCodes: [
+    "account_locked",
+    "delivery_window_too_short",
+    "invalid_provider_response",
+    "invalid_template_snapshot",
+    "message_exceeds_single_segment",
+    "play_mobile_internal_error",
+    "play_mobile_rejected_unknown",
+    "recipient_rejected",
+    "transport_failure",
+    "unknown_provider_error",
+    "unsupported_code_length",
+  ],
   idempotency: { supported: false },
+} as const;
+
+export const makePlayMobileDefinition = (
+  transport: HttpTransport = fetchTransport,
+): ProviderDefinition<PlayMobileConfiguration, typeof PlayMobileConfigurationSchema.Encoded> => ({
+  ...metadata,
+  configSchema: PlayMobileConfigurationSchema,
+  templateSchema: PlayMobileTemplateSchema,
   make: (options) =>
     Layer.effect(
       ProviderInstance,
       Effect.gen(function* () {
         yield* validateProviderConfiguration(PlayMobileConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(options.sendTimeoutMs, 10_000);
+        const sendTimeoutMs = yield* validateTimeout(
+          options.sendTimeoutMs,
+          metadata.defaultSendTimeoutMs,
+        );
         yield* validateAllTemplates(PlayMobileTemplateSchema, options.templates);
         const ready: ReadyProvider = {
-          instanceId: options.instanceId,
-          pluginId: "play-mobile-http",
-          version: "1.0.0",
-          contractVersion: ProviderContractVersion,
-          channel: "sms",
-          enabled: options.enabled,
-          settingsFingerprint: options.settingsFingerprint,
-          constraints,
-          sendTimeoutMs,
-          defaultSendTimeoutMs: 10_000,
-          idempotency: { supported: false },
+          ...readyMetadata(metadata, options, sendTimeoutMs),
           resolveTemplate: makeTemplateResolver(PlayMobileTemplateSchema, options.templates),
           send: (input) => send(transport, options.config, input),
         };

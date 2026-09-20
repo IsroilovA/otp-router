@@ -108,3 +108,21 @@ it.scoped(
       expect((yield* Layer.build(layer).pipe(Effect.either))._tag).toBe("Left");
     }),
 );
+
+it.scoped(
+  "rejects a provider whose timeout and delivery minimum cannot fit the policy lifetime",
+  () =>
+    Effect.gen(function* () {
+      const ready = Context.get(yield* Layer.build(provider), ProviderInstance);
+      for (const sendTimeoutMs of [300000, 300001]) {
+        const result = yield* loadConfiguration({
+          ...base,
+          providers: [Layer.succeed(ProviderInstance, { ...ready, sendTimeoutMs })],
+        }).pipe(Effect.either);
+        expect(result).toMatchObject({
+          _tag: "Left",
+          left: { reason: "incompatible_provider_constraints" },
+        });
+      }
+    }),
+);

@@ -21,6 +21,7 @@ import {
   type SendAccepted,
 } from "./contract.js";
 import {
+  readyMetadata,
   decodeUtf8,
   resolveNoTemplate,
   validateSendInput,
@@ -169,37 +170,44 @@ const decodeCallback = (
 export const signFakeCallback = (secret: string, body: Uint8Array): string =>
   createHmac("sha256", secret).update(body).digest("hex");
 
-export const FakeProvider: ProviderDefinition<
-  FakeConfiguration,
-  typeof FakeConfigurationSchema.Encoded
-> = {
+const metadata = {
   id: "deterministic-fake",
   version: "1.0.0",
   contractVersion: ProviderContractVersion,
   channel: "fake",
-  configSchema: FakeConfigurationSchema,
-  templateSchema: null,
   constraints,
   defaultSendTimeoutMs: 1_000,
+  diagnosticCodes: [
+    "fake_configuration_rejected",
+    "fake_invalid_recipient",
+    "fake_recipient_unavailable",
+    "fake_temporary_rejected",
+    "fake_throttled",
+    "fake_unknown",
+    "invalid_provider_response",
+    "unsupported_code_length",
+  ],
   idempotency: { supported: false },
+} as const;
+
+export const FakeProvider: ProviderDefinition<
+  FakeConfiguration,
+  typeof FakeConfigurationSchema.Encoded
+> = {
+  ...metadata,
+  configSchema: FakeConfigurationSchema,
+  templateSchema: null,
   make: (options) =>
     Layer.effect(
       ProviderInstance,
       Effect.gen(function* () {
         yield* validateProviderConfiguration(FakeConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(options.sendTimeoutMs, 1_000);
+        const sendTimeoutMs = yield* validateTimeout(
+          options.sendTimeoutMs,
+          metadata.defaultSendTimeoutMs,
+        );
         const ready: ReadyProvider = {
-          instanceId: options.instanceId,
-          pluginId: "deterministic-fake",
-          version: "1.0.0",
-          contractVersion: ProviderContractVersion,
-          channel: "fake",
-          enabled: options.enabled,
-          settingsFingerprint: options.settingsFingerprint,
-          constraints,
-          sendTimeoutMs,
-          defaultSendTimeoutMs: 1_000,
-          idempotency: { supported: false },
+          ...readyMetadata(metadata, options, sendTimeoutMs),
           resolveTemplate: resolveNoTemplate,
           send: (input) =>
             validateSendInput(input, constraints).pipe(

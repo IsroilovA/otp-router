@@ -1,5 +1,6 @@
 import { SqlClient } from "@effect/sql";
 import { Cause, Effect, Exit, Schema } from "effect";
+import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime, transaction } from "../database/transaction.js";
 import {
@@ -39,6 +40,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       );
       yield* lockQuotas(limits);
       const locked = yield* findChallenge(original.id, true);
+      const gateMonotonicTime = performance.now();
       const time = yield* databaseTime;
       const challenge = yield* expire(locked, time);
       const delivery = yield* findDelivery(initial.id);
@@ -104,15 +106,17 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       return {
         input,
         providerId: saved.providerInstanceId,
-        gateMonotonicTime: performance.now(),
+        gateMonotonicTime,
+        minDeliveryWindowMs: saved.minDeliveryWindowMs,
         timeoutMs: Math.min(saved.sendTimeoutMs, challenge.expires_at.getTime() - time.getTime()),
       };
     }),
   );
-const failureOutcome = (failure: ProviderSendError): Outcome => ({
+const failureOutcome = (failure: ProviderSendError, diagnosticCode: string): Outcome => ({
   state: failure.acceptance === "not_accepted" ? "failed" : "uncertain",
   acceptance: failure.acceptance,
-  diagnosticCode: failure._tag,
+  failureCategory: failure._tag,
+  diagnosticCode,
   ...(failure.retryAt === undefined ? {} : { retryAt: new Date(failure.retryAt) }),
   stop: failure._tag === "InvalidRecipient",
 });
@@ -125,13 +129,21 @@ export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
     // This is the only send invocation for this durable record. A failed/unknown commit never reaches here.
     yield* count("send", "reserved");
     const started = performance.now();
+    const remainingDeliveryMs =
+      reserved.input.remainingDeliveryMs - (started - reserved.gateMonotonicTime);
+    if (remainingDeliveryMs <= reserved.minDeliveryWindowMs) {
+      // The reservation remains counted after commit, even when local delay prevents transmission.
+      yield* recordOutcome(config, job.deliveryId, {
+        state: "failed",
+        acceptance: "not_accepted",
+        diagnosticCode: "delivery_window_too_short",
+      });
+      return;
+    }
     const exit = yield* provider
       .send({
         ...reserved.input,
-        remainingDeliveryMs: Math.max(
-          0,
-          reserved.input.remainingDeliveryMs - (performance.now() - reserved.gateMonotonicTime),
-        ),
+        remainingDeliveryMs,
       })
       .pipe(Effect.timeout(reserved.timeoutMs), Effect.exit);
     yield* duration("provider", performance.now() - started);
@@ -150,7 +162,7 @@ export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
     const failure = Cause.failureOption(exit.cause);
     const outcome: Outcome =
       failure._tag === "Some" && failure.value._tag !== "TimeoutException"
-        ? failureOutcome(failure.value)
+        ? failureOutcome(failure.value, providerDiagnostic(provider, failure.value.diagnosticCode))
         : { state: "uncertain", acceptance: "unknown", diagnosticCode: "interrupted_or_timeout" };
     yield* count("send", outcome.state);
     yield* logEvent({

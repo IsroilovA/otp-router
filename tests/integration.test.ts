@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Effect, Layer, Schema } from "effect";
 import {
   Snapshot,
@@ -10,14 +10,15 @@ import {
 import { createChallenge } from "../src/challenges/create.js";
 import { decrypt, operationIdentity } from "../src/challenges/crypto.js";
 import { verifyChallenge } from "../src/challenges/verify.js";
-import type { RuntimeConfiguration } from "../src/config/config.js";
+import { RouterConfig, type RuntimeConfiguration } from "../src/config/config.js";
 import { rows, single } from "../src/database/query.js";
 import { ingestEvents } from "../src/delivery/callbacks.js";
 import { requestDelivery } from "../src/delivery/actions.js";
 import { dispatch, dispatchGate } from "../src/delivery/dispatch.js";
 import { recordOutcome } from "../src/delivery/outcomes.js";
 import { makeWebHandler } from "../src/http/transport.js";
-import { WebhookError } from "../src/http/webhooks.js";
+import { WebhookError, WebhookHandler } from "../src/http/webhooks.js";
+import { WebhooksLive } from "../src/http/webhook-service.js";
 import {
   ProviderContractVersion,
   ProviderConfigurationRejected,
@@ -148,6 +149,14 @@ const providerLayer = (id: string, channel: string, control: ProviderControl) =>
     constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
     defaultSendTimeoutMs: 5_000,
     sendTimeoutMs: 5_000,
+    diagnosticCodes: [
+      "integration_fake_rejected",
+      "integration_fake_throttled",
+      "integration_fake_configuration_rejected",
+      "integration_fake_invalid_recipient",
+      "integration_fake_unknown",
+      "callback_failed",
+    ],
     idempotency: { supported: false },
     resolveTemplate: (candidates) => {
       const locale = candidates[0];
@@ -992,6 +1001,9 @@ describe.sequential("PostgreSQL integration", () => {
     const challengeId = challengeIdFrom(created);
     const eventId = randomUUID();
     await harness.run(
+      harness.pg`INSERT INTO otp_router.quota_keys(identity) VALUES ('provider:fake-primary') ON CONFLICT DO NOTHING`,
+    );
+    await harness.run(
       harness.pg`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES ('provider:fake-primary','send',${eventId},clock_timestamp())`,
     );
     await harness.run(
@@ -1209,6 +1221,62 @@ describe.sequential("PostgreSQL integration", () => {
     expect(await count("deliveries")).toBe(1);
   });
 
+  it("does not invoke a provider when the dispatch transaction consumes the remaining budget", async () => {
+    const harness = currentRuntime();
+    const created = await create();
+    const job = await fetchJob();
+    await execute(`CREATE FUNCTION otp_router.hold_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_advisory_xact_lock(983451); RETURN NEW; END $$`);
+    await execute(`CREATE TRIGGER hold_dispatch BEFORE UPDATE ON otp_router.deliveries FOR EACH ROW
+      WHEN (NEW.state = 'dispatching') EXECUTE FUNCTION otp_router.hold_dispatch()`);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const blocker = harness.run(
+      harness.pg.withTransaction(
+        harness.pg`SELECT pg_advisory_xact_lock(983451)`.pipe(
+          Effect.tap(() => Effect.sync(() => entered.resolve())),
+          Effect.zipRight(Effect.promise(() => release.promise)),
+        ),
+      ),
+    );
+    await entered.promise;
+    const sending = harness.run(dispatch(harness.configuration, job.data));
+    const originalNow = performance.now.bind(performance);
+    try {
+      for (let attempt = 0; ; attempt += 1) {
+        if (attempt === 1000) throw new Error("Dispatch did not reach its reservation barrier");
+        const waiting = await query(
+          Counts,
+          "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE wait_event = 'advisory' AND query LIKE 'UPDATE otp_router.deliveries%'",
+        );
+        if ((waiting[0]?.count ?? 0) > 0) break;
+        await Effect.runPromise(Effect.yieldNow());
+      }
+      vi.spyOn(performance, "now").mockImplementation(() => originalNow() + 600000);
+      release.resolve();
+      await sending;
+      expect(primary.sends).toHaveLength(0);
+      expect(
+        await query(
+          Schema.Struct({ state: Schema.String, diagnostic_code: Schema.String }),
+          `SELECT state, diagnostic_code FROM otp_router.deliveries WHERE id = '${job.data.deliveryId}'`,
+        ),
+      ).toEqual([{ state: "failed", diagnostic_code: "delivery_window_too_short" }]);
+      expect(
+        await query(
+          Schema.Struct({ send_count: Schema.Int }),
+          `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeIdFrom(created)}'`,
+        ),
+      ).toEqual([{ send_count: 1 }]);
+    } finally {
+      release.resolve();
+      await Promise.allSettled([blocker, sending]);
+      vi.restoreAllMocks();
+      await execute("DROP TRIGGER hold_dispatch ON otp_router.deliveries");
+      await execute("DROP FUNCTION otp_router.hold_dispatch()");
+    }
+  });
+
   it("marks recovered dispatching work uncertain without invoking the provider", async () => {
     await create();
     const job = await fetchJob();
@@ -1376,19 +1444,22 @@ describe.sequential("PostgreSQL integration", () => {
         Schema.Struct({
           provider_instance_id: Schema.String,
           state: Schema.String,
+          failure_category: Schema.NullOr(Schema.String),
           diagnostic_code: Schema.NullOr(Schema.String),
         }),
-        "SELECT provider_instance_id, state, diagnostic_code FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT provider_instance_id, state, failure_category, diagnostic_code FROM otp_router.deliveries ORDER BY route_position",
       ),
     ).toEqual([
       {
         provider_instance_id: "fake-primary",
         state: "failed",
-        diagnostic_code: "ProviderConfigurationRejected",
+        failure_category: "ProviderConfigurationRejected",
+        diagnostic_code: "integration_fake_configuration_rejected",
       },
       {
         provider_instance_id: "fake-secondary",
         state: "pending",
+        failure_category: null,
         diagnostic_code: null,
       },
     ]);
@@ -1534,7 +1605,8 @@ describe.sequential("PostgreSQL integration", () => {
       recordOutcome(harness.configuration, oldJob.data.deliveryId, {
         state: "failed",
         acceptance: "not_accepted",
-        diagnosticCode: "InvalidRecipient",
+        failureCategory: "InvalidRecipient",
+        diagnosticCode: "integration_fake_invalid_recipient",
         stop: true,
       }),
     );
@@ -1564,7 +1636,7 @@ describe.sequential("PostgreSQL integration", () => {
         "SELECT reason, state, diagnostic_code FROM otp_router.deliveries ORDER BY route_position",
       ),
     ).toEqual([
-      { reason: "initial", state: "failed", diagnostic_code: "InvalidRecipient" },
+      { reason: "initial", state: "failed", diagnostic_code: "integration_fake_invalid_recipient" },
       { reason: "next", state: "suppressed", diagnostic_code: null },
     ]);
     const status = await Effect.runPromise(harness.router.status(challengeId));
@@ -1748,6 +1820,83 @@ describe.sequential("PostgreSQL integration", () => {
         "SELECT processed FROM otp_router.callback_inbox",
       ),
     ).toEqual([{ processed: true }]);
+  });
+
+  it("preserves an adapter handshake status, content type, and raw bytes over HTTP", async () => {
+    const harness = currentRuntime();
+    const provider = harness.configuration.providers.get("fake-primary");
+    if (provider === undefined) throw new Error("Missing fake provider");
+    const bytes = new Uint8Array([0, 255, 128, 65]);
+    const configuration = {
+      ...harness.configuration,
+      providers: new Map([
+        [
+          provider.instanceId,
+          {
+            ...provider,
+            callback: () =>
+              Effect.succeed({
+                _tag: "Handshake" as const,
+                status: 202,
+                contentType: "application/octet-stream",
+                body: bytes,
+              }),
+          },
+        ],
+      ]),
+    };
+    const webhooks = await harness.run(
+      WebhookHandler.pipe(
+        Effect.provide(WebhooksLive),
+        Effect.provideService(RouterConfig, configuration),
+        Effect.scoped,
+      ),
+    );
+    const server = makeWebHandler({ apiKeys: [apiKey] }, { router: harness.router, webhooks });
+    try {
+      const response = await server.handler(
+        new Request("http://router.test/webhooks/fake-primary"),
+      );
+      expect(response.status).toBe(202);
+      expect(response.headers.get("content-type")).toBe("application/octet-stream");
+      expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes);
+    } finally {
+      await server.dispose();
+    }
+  });
+
+  it("persists allowlisted callback diagnostics and redacts arbitrary provider text", async () => {
+    await create();
+    const job = await dispatchNext();
+    const config = currentRuntime().configuration;
+    await currentRuntime().run(
+      ingestEvents(config, "fake-primary", [
+        {
+          ...callbackEvent("diagnostic", `fake-primary:${job.deliveryId}`, "failed"),
+          diagnosticCode: "callback_failed",
+        },
+      ]),
+    );
+    expect(
+      await query(
+        Schema.Struct({ diagnostic_code: Schema.String }),
+        `SELECT diagnostic_code FROM otp_router.deliveries WHERE id = '${job.deliveryId}'`,
+      ),
+    ).toEqual([{ diagnostic_code: "callback_failed" }]);
+    await currentRuntime().run(
+      ingestEvents(config, "fake-primary", [
+        {
+          ...callbackEvent("unsafe-diagnostic", "orphan", "failed"),
+          diagnosticCode: "secret payload 123456",
+        },
+      ]),
+    );
+    expect(
+      await query(
+        Schema.Struct({ diagnostic_code: Schema.String }),
+        "SELECT diagnostic_code FROM otp_router.callback_inbox WHERE deduplication_key = 'unsafe-diagnostic'",
+      ),
+    ).toEqual([{ diagnostic_code: "unclassified" }]);
   });
 
   it("deduplicates delivered callbacks without suppressing a later explicit resend", async () => {

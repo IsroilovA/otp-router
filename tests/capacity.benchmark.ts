@@ -156,6 +156,7 @@ const provider = {
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   defaultSendTimeoutMs: 1000,
   sendTimeoutMs: 1000,
+  diagnosticCodes: [],
   idempotency: { supported: false },
   resolveTemplate: (locales) => Effect.succeed({ locale: locales[0] ?? "en", template: null }),
   send: (input) => Effect.promise(async () => {

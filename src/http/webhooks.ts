@@ -10,8 +10,9 @@ export interface WebhookHandshakeInput {
 }
 
 export interface WebhookHandshakeReply {
-  readonly body: string;
-  readonly contentType?: string;
+  readonly status: number;
+  readonly body: Uint8Array;
+  readonly contentType: string;
 }
 
 export interface WebhookIngestInput {

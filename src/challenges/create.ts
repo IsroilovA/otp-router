@@ -6,19 +6,12 @@ import { parsePhoneNumberFromString } from "libphonenumber-js/max";
 import { SelectorResult, type RuntimeConfiguration } from "../config/config.js";
 import { databaseTime, transaction } from "../database/transaction.js";
 import { LocaleSchema, NormalizedPhoneSchema } from "../providers/contract.js";
-import { resolveChoice, providerCompatible, eligibleProviders } from "../delivery/eligibility.js";
+import { resolveChoice, availableProviders } from "../delivery/eligibility.js";
 import { schedule } from "../delivery/schedule.js";
 import { DomainError, type CreateInput, type Mutation, type OperationResult } from "./contracts.js";
 import { digest, encrypt, generateCode, recipientToken, verifierInput } from "./crypto.js";
 import { lockOperation, operation, replay, saveResult } from "./idempotency.js";
-import {
-  checkQuotas,
-  countQuotas,
-  lockQuotas,
-  recipientLimit,
-  sendLimits,
-  quotaRetryAt,
-} from "./quotas.js";
+import { checkQuotas, countQuotas, lockQuotas, recipientLimit } from "./quotas.js";
 import type { PolicySnapshot } from "./records.js";
 import { findChallenge } from "./store.js";
 import { snapshot } from "./snapshot.js";
@@ -42,7 +35,9 @@ const prepare = (config: RuntimeConfiguration, input: CreateInput) =>
       config.settings.purposes[input.purpose]?.includes(input.policyId) !== true
     )
       return yield* Effect.fail(new DomainError({ code: "policy_not_allowed" }));
-    const recipient = yield* normalizePhone(input.recipient.phoneNumber);
+    const recipient = yield* Schema.decodeUnknown(NormalizedPhoneSchema)(
+      input.recipient.phoneNumber,
+    );
     const locale = input.locale ?? config.settings.defaultLocale;
     const route = yield* selectRoute(config, {
       input,
@@ -87,17 +82,6 @@ const prepare = (config: RuntimeConfiguration, input: CreateInput) =>
       requestedLocale: locale,
       providers,
     };
-    const eligible = providers.filter(
-      (provider) =>
-        providerCompatible(config, provider) &&
-        provider.minDeliveryWindowMs + provider.sendTimeoutMs < policy.lifetimeSeconds * 1000,
-    );
-    const first =
-      input.deliveryChoice === undefined
-        ? eligible[0]
-        : yield* resolveChoice(saved, input.deliveryChoice, eligible);
-    if (first === undefined)
-      return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
     return { saved };
   });
 export const createChallenge = (config: RuntimeConfiguration, request: Mutation<CreateInput>) =>
@@ -120,12 +104,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
         if (existing !== undefined) return existing;
         const token = recipientToken(config.settings.crypto, phone);
         const limits = [recipientLimit(token, "create", config.settings.recipientCreateLimit15m)];
-        yield* lockQuotas([
-          ...limits,
-          ...prepared.saved.providers.flatMap((provider) =>
-            sendLimits(config.settings, token, provider.providerInstanceId),
-          ),
-        ]);
+        yield* lockQuotas(limits);
         const time = yield* databaseTime;
         const position = yield* initialPosition(config, input, prepared.saved, { token, time });
         yield* checkQuotas(limits, time);
@@ -202,36 +181,19 @@ const initialPosition = (
 ) =>
   Effect.gen(function* () {
     const { token, time } = context;
-    const eligible = yield* eligibleProviders(
+    const available = yield* availableProviders(
       config,
       {
         snapshot: saved,
+        recipient_token: token,
         expires_at: new Date(time.getTime() + saved.lifetimeSeconds * 1000),
       },
       time,
     );
-    const first =
-      input.deliveryChoice === undefined
-        ? eligible[0]
-        : yield* resolveChoice(saved, input.deliveryChoice, eligible);
-    if (first === undefined)
-      return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
-    const choice = input.deliveryChoice;
-    const candidates =
-      choice?.type === "channel"
-        ? eligible.filter(
-            (provider) =>
-              provider.channel === choice.channel &&
-              saved.manualProviderIds.includes(provider.providerInstanceId),
-          )
-        : [first];
-    for (const candidate of candidates) {
-      const retryAt = yield* quotaRetryAt(
-        sendLimits(config.settings, token, candidate.providerInstanceId),
-        time,
+    const selected = yield* resolveChoice(saved, input.deliveryChoice, available);
+    if (selected.retryAt !== undefined)
+      return yield* Effect.fail(
+        new DomainError({ code: "rate_limited", retryAt: selected.retryAt }),
       );
-      if (retryAt === undefined) return saved.providers.indexOf(candidate);
-    }
-    yield* checkQuotas(sendLimits(config.settings, token, first.providerInstanceId), time);
-    return saved.providers.indexOf(first);
+    return saved.providers.indexOf(selected.provider);
   });
