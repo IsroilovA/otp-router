@@ -1,3 +1,7 @@
+packages:
+  - apps/*
+  - packages/*
+  - examples/custom-adapter
 allowBuilds:
   '@parcel/watcher': false
   esbuild: true

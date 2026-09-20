@@ -1,26 +1,16 @@
 import { randomUUID } from "node:crypto";
 import { NodeServices } from "@effect/platform-node";
-import {
-  ConfigProvider,
-  Data,
-  Deferred,
-  Effect,
-  Exit,
-  Fiber,
-  Layer,
-  Redacted,
-  Schema,
-} from "effect";
+import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { Configuration } from "../src/config/config.js";
+import type { Configuration } from "../packages/engine/src/config/config.js";
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { PgClient } from "@effect/sql-pg";
-import { DatabaseLive } from "../src/database/client.js";
-import { migrate } from "../src/database/migrations.js";
-import { rows, single } from "../src/database/query.js";
-import { transaction } from "../src/database/transaction.js";
-import { FakeProvider, ProviderInstanceIdSchema } from "../src/providers/index.js";
-import { enqueueDelivery, deliveryQueue } from "../src/queue/jobs.js";
+import { makeDatabaseLayer } from "../packages/engine/src/database/client.js";
+import { migrate } from "../packages/engine/src/database/migrations.js";
+import { rows, single } from "../packages/engine/src/database/query.js";
+import { transaction } from "../packages/engine/src/database/transaction.js";
+import { FakeProvider, ProviderInstanceIdSchema } from "../packages/engine/src/providers/index.js";
+import { enqueueDelivery, deliveryQueue } from "../packages/engine/src/queue/jobs.js";
 import {
   startPostgres,
   startRuntime,
@@ -40,7 +30,6 @@ const configuration: Configuration = {
       fingerprint: keyRing(3),
       recipientKey: Buffer.alloc(32, 4).toString("base64url"),
     },
-    apiKeys: ["queue-tests-api-key-32-characters-long"],
     defaultLocale: "en",
     fallbackLocales: [],
     policies: { login: { providerInstanceIds: ["fake"] } },
@@ -273,10 +262,10 @@ describe("transaction-local queue integration", () => {
       const database = <A, E>(effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient>) =>
         Effect.runPromise(
           effect.pipe(
-            Effect.provide(DatabaseLive.pipe(Layer.provideMerge(NodeServices.layer))),
-            Effect.provideService(
-              ConfigProvider.ConfigProvider,
-              ConfigProvider.fromUnknown(Object.fromEntries([["DATABASE_URL", fresh.databaseUrl]])),
+            Effect.provide(
+              makeDatabaseLayer(Redacted.make(fresh.databaseUrl)).pipe(
+                Layer.provideMerge(NodeServices.layer),
+              ),
             ),
           ),
         );

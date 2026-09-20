@@ -1,7 +1,6 @@
 {
-  "name": "otp-router",
+  "name": "otp-router-workspace",
   "version": "0.1.0",
-  "description": "A self-hosted service for routing phone-number OTP delivery.",
   "license": "MIT",
   "private": true,
   "type": "module",
@@ -10,18 +9,17 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.build.json",
+    "build": "pnpm --filter @otp-router/engine build && pnpm --filter @otp-router/server build",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "format": "biome format --write .",
     "format:check": "biome format .",
     "lint": "oxlint --tsconfig tsconfig.json --deny-warnings --report-unused-disable-directives-severity error .",
-    "typecheck": "tsc --project tsconfig.json && pnpm run lint:effect",
+    "typecheck": "pnpm build && tsc --project tsconfig.json && pnpm run lint:effect",
     "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "db:up": "docker compose up -d --wait postgres",
-    "db:down": "docker compose down",
-    "start": "node dist/main.js"
+    "test": "pnpm build && pnpm --filter otp-router-custom-adapter-example build && pnpm --filter otp-router-custom-adapter-example test && vitest run",
+    "db:up": "docker compose -f apps/server/compose.yaml up -d --wait postgres",
+    "db:down": "docker compose -f apps/server/compose.yaml down",
+    "start": "pnpm --filter @otp-router/server start"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
@@ -32,36 +30,14 @@
     "oxlint": "1.83.0",
     "oxlint-tsgolint": "7.0.2002",
     "typescript": "7.0.2",
-    "vitest": "5.0.1"
-  },
-  "dependencies": {
+    "vitest": "5.0.1",
     "@effect/platform-node": "4.0.0-rc.116",
     "@effect/sql-pg": "4.0.0-rc.116",
     "effect": "4.0.0-rc.116",
     "libphonenumber-js": "1.13.13",
     "pg-boss": "12.33.2",
-    "standardwebhooks": "1.1.1"
-  },
-  "exports": {
-    "./config": {
-      "types": "./dist/config/config.d.ts",
-      "import": "./dist/config/config.js"
-    },
-    "./providers": {
-      "types": "./dist/providers/index.d.ts",
-      "import": "./dist/providers/index.js"
-    }
-  },
-  "files": [
-    "dist",
-    "README.md",
-    "LICENSE",
-    "docs/running.md"
-  ],
-  "bin": {
-    "otp-router": "dist/main.js"
-  },
-  "peerDependencies": {
-    "effect": "4.0.0-rc.116"
+    "standardwebhooks": "1.1.1",
+    "@otp-router/engine": "workspace:*",
+    "@otp-router/server": "workspace:*"
   }
 }

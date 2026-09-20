@@ -1,14 +1,20 @@
 # Architecture
 
-The HTTP API and worker share challenge and delivery operations. PostgreSQL holds challenge state, quotas, idempotent results, and durable queue work through pg-boss. No other external service is required.
+The private `@otp-router/engine` package owns OTP operations and reusable workers. The `@otp-router/server` application consumes its supported exports for the self-hosted HTTP service. PostgreSQL holds challenge state, quotas, idempotent results, and durable queue work through pg-boss. No other external service is required.
 
 ## Responsibilities
 
+Inside `packages/engine/src`:
+
 - `challenges/` owns creation, verification, cancellation, expiry, secret retention, and transactional public snapshots/events.
-- `delivery/` owns provider selection, explicit sends, dispatch, outcome reconciliation, and independent outbound notification delivery.
-- `providers/` translates provider protocols into normalized acceptance and delivery outcomes. Adapters neither verify codes nor choose fallback providers.
-- `http/` authenticates and validates application requests and provider callbacks. `worker/` executes durable jobs.
-- `database/`, `queue/`, and `config/` own their resource lifecycles and startup boundaries.
+- `delivery/` owns provider selection, explicit sends, dispatch, and outcome/callback reconciliation.
+- `notifications/` owns outbound signing, HTTP attempts, leases, bounded retries, recovery, replay, and retention. Its retry semantics are separate from OTP delivery.
+- `providers/` translates provider protocols into normalized outcomes. Adapters neither verify codes nor choose fallback providers.
+- `database/` and `queue/` own PostgreSQL and pg-boss resources. `worker/` registers and processes reusable jobs. `config/` validates engine settings without loading environment variables.
+
+Inside `apps/server`, `src/http/` owns routes, authentication, request decoding, HTTP status/error mapping, and OpenAPI. `application.ts` constructs listeners and selected roles without executing a CLI. `main.ts` owns argument parsing, command output, and process teardown. `config/` loads application settings and checks cross-configuration constraints. Docker and Compose assets live here.
+
+The package boundary is enforced by package exports and lint rules. Server code cannot import engine source paths or SQL helpers. PostgreSQL and pg-boss are concrete dependencies, with no storage abstraction.
 
 Domain operations use the pinned Effect 4 release candidate with explicit expected failures. Layers construct scoped resources; effects run at process, transport, and test boundaries. Features do not import HTTP handlers or worker entry points.
 
@@ -28,6 +34,8 @@ Each deployment serves one application and owns its database namespaces. Separat
 
 A trusted TypeScript entry file constructs provider instances and named policies. A creation-time selector may choose an ordered subset of a policy's providers. The challenge saves its route and non-secret settings; credentials stay in process configuration.
 
-Public extensions are [providers and routing selectors](plugins.md). Storage and domain operations remain internal. Applications in any language integrate over [HTTP](api.md).
+TypeScript applications can consume the supported [engine API](engine.md), including operations, schemas, resource construction, workers, and maintenance. SQL helpers and persisted records remain private. Other applications integrate over [HTTP](api.md).
 
 The image supports combined, API-only, and worker-only roles. Use compatible configuration across roles and follow the [drain procedure](operations.md#configuration-changes) for incompatible changes.
+
+Extraction does not introduce multi-tenancy. One trusted deployment destination serves all outbound notifications, and changing it redirects outstanding notifications. A future SaaS application must design its own isolation before sharing this database contract.

@@ -4,7 +4,6 @@ import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises
 import { cpus, freemem, platform, release, totalmem } from "node:os";
 import { createServer } from "node:net";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { performance } from "node:perf_hooks";
 import { Schema } from "effect";
 import { PgBoss } from "pg-boss";
@@ -137,12 +136,10 @@ const waitForReady = async (port: number, running: RunningProcess): Promise<void
 const key = (byte: number): string => Buffer.alloc(32, byte).toString("base64url");
 
 const configSource = (sinkPath: string): string => {
-  const configUrl = pathToFileURL(resolve(ROOT, "dist/config/config.js")).href;
-  const providersUrl = pathToFileURL(resolve(ROOT, "dist/providers/index.js")).href;
   return `import { appendFile } from "node:fs/promises";
 import { Effect, Layer } from "effect";
-import { defineConfig } from ${JSON.stringify(configUrl)};
-import { ProviderContractVersion, ProviderInstance } from ${JSON.stringify(providersUrl)};
+import { defineConfig } from "@otp-router/server/config";
+import { ProviderContractVersion, ProviderInstance } from "@otp-router/engine/providers";
 
 const sink = ${JSON.stringify(sinkPath)};
 const provider = {
@@ -168,6 +165,7 @@ const provider = {
 };
 
 export default defineConfig({
+  engine: {
   settings: {
     crypto: {
       deploymentId: "benchmark-local",
@@ -176,7 +174,6 @@ export default defineConfig({
       fingerprint: { active: "fingerprint-v1", keys: { "fingerprint-v1": ${JSON.stringify(key(13))} } },
       recipientKey: ${JSON.stringify(key(14))},
     },
-    apiKeys: [${JSON.stringify(API_KEY)}],
     defaultLocale: "en",
     fallbackLocales: [],
     policies: { benchmark: { providerInstanceIds: ["benchmark-fake"], lifetimeSeconds: 600, maxSends: 10, resendCooldownSeconds: 30 } },
@@ -187,6 +184,12 @@ export default defineConfig({
     recipientSendLimit15m: 10,
     recipientGuessLimit15m: 10,
     providerSendLimits15m: { "benchmark-fake": 1000000 },
+  },
+  providers: [Layer.succeed(ProviderInstance, provider)],
+  },
+  settings: {
+    databaseUrl: process.env.DATABASE_URL,
+    apiKeys: [${JSON.stringify(API_KEY)}],
     role: process.env.OTP_BENCHMARK_ROLE,
     port: Number(process.env.OTP_BENCHMARK_PORT),
     internalPort: Number(process.env.OTP_BENCHMARK_INTERNAL_PORT),
@@ -195,7 +198,6 @@ export default defineConfig({
     workerConcurrency: ${String(WORKER_CONCURRENCY)},
     shutdownGraceMs: 30000,
   },
-  providers: [Layer.succeed(ProviderInstance, provider)],
 });
 `;
 };
@@ -672,7 +674,6 @@ beforeAll(async () => {
   if (!Number.isFinite(STEADY_DURATION_MS) || STEADY_DURATION_MS <= 0) {
     throw new Error("OTP_BENCHMARK_STEADY_MS must be a positive number");
   }
-  await command("pnpm", ["build"]);
   postgres = await startPostgres();
   const cacheDirectory = join(ROOT, "node_modules", ".cache", "otp-router");
   await mkdir(cacheDirectory, { recursive: true });
@@ -701,7 +702,7 @@ afterAll(async () => {
 describe("local capacity benchmark", () => {
   it("measures steady HTTP load, a concurrency ramp, and worker crash recovery", async () => {
     const fixture = requireFixture();
-    const args = ["dist/main.js", "--config", fixture.configurationPath];
+    const args = ["apps/server/dist/main.js", "--config", fixture.configurationPath];
     apiProcess = startProcess(args, processEnvironment("api", apiPort, apiInternalPort));
     await waitForReady(apiInternalPort, apiProcess);
     workerProcess = startProcess(

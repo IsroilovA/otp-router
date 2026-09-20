@@ -31,7 +31,7 @@ Deploy old and new API keys to every API process. Switch the backend after all p
 Stop every API and worker before restoring. Run `--invalidate-restored` to cancel restored active challenges, erase secrets and code fingerprints, and suppress pending delivery work. Late callbacks cannot reopen those challenges.
 
 ```sh
-node --env-file=.env dist/main.js --invalidate-restored --config "$PWD/examples/config/router.config.ts"
+node --env-file=.env apps/server/dist/main.js --invalidate-restored --config "$PWD/examples/config/router.config.ts"
 ```
 
 A backup can omit recent sends, guesses, and completed operations. Reconstruct complete quota usage from a trusted surviving source, or keep traffic stopped for a full longest quota window from the stop time, at least twenty-four hours. The adopting backend must abandon affected flows and preserve its own business-action consumption rules.
@@ -43,7 +43,7 @@ Ordinary restarts with an intact database do not require invalidation.
 Replace the stable recipient key only through an incident procedure. Stop all roles, invalidate active challenges, and reconcile quotas or wait the full window as above. Install the replacement key consistently, run `--adopt-recipient-key`, and restart only after adoption succeeds. Ordinary encryption-key rotation and database restore do not require recipient-key adoption.
 
 ```sh
-node --env-file=.env dist/main.js --adopt-recipient-key --config "$PWD/examples/config/router.config.ts"
+node --env-file=.env apps/server/dist/main.js --adopt-recipient-key --config "$PWD/examples/config/router.config.ts"
 ```
 
 Encryption, verification, and fingerprint-key overlap follow the [security guide](security.md#key-rotation).
@@ -56,7 +56,7 @@ Application logs include `operation` and, for infrastructure failures, `failureC
 
 Cleanup enforces bounded retention and erases terminal secrets. Request paths enforce expiry independently of cleanup. Quota usage must survive challenge-history deletion.
 
-Set `workerConcurrency` in the entry file for the deployment's workload. Each process currently has fixed pool limits of 10 application connections and 6 queue connections, including API-only processes; budget PostgreSQL capacity across replicas. Application transactions use a 2-second lock timeout and a 5-second statement timeout. Pool limits, transaction deadlines, retention, and queue recovery timings are implementation settings, not environment-variable knobs. Run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts`; historical measurements are in the [research archive](research/benchmark.md).
+Set `workerConcurrency` in the entry file for the deployment's workload. Each process currently has fixed pool limits of 10 application connections and 6 queue connections, including API-only processes; budget PostgreSQL capacity across replicas. Application transactions use a 2-second lock timeout and a 5-second statement timeout. Pool limits, transaction deadlines, retention, and queue recovery timings are implementation settings, not environment-variable knobs. Build the workspace, then run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts`; historical measurements are in the [research archive](research/benchmark.md).
 
 ## Outbound notifications
 
@@ -74,7 +74,7 @@ Backups include immutable events and their delivery state. Restoring can redeliv
 
 ## Troubleshooting
 
-Start with `docker compose ps` and `docker compose logs --tail=100 router`. Startup logs intentionally contain safe categories rather than raw exception details or credentials. Use the selected entry path with `--check-config` first, then `--check-schema` when database changes are intended.
+Start with `docker compose -f apps/server/compose.yaml ps` and `docker compose -f apps/server/compose.yaml logs --tail=100 router`. Startup logs intentionally contain safe categories rather than raw exception details or credentials. Use the selected entry path with `--check-config` first, then `--check-schema` when database changes are intended.
 
 | Symptom or log reason | Check |
 | --- | --- |

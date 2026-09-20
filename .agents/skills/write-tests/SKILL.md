@@ -38,5 +38,5 @@ Useful: two concurrent dispatches cannot both reserve the last send; replay cann
 
 - Check that a plausible bug would fail the assertion and a harmless refactor would not. Remove assertions that merely repeat fixture inputs, implementation structure, or dependency guarantees.
 - Before deleting coverage, compare nearby tests and production ownership. Similar-looking tests may cover separate implementations or integration risks. Preserve distinct regression protection.
-- Run the smallest affected group, then broaden only for changed dependencies or unresolved risks. Diagnose timeouts, leaks, and flaky setup; do not mask them with retries, skips, or longer timeouts.
+- Build the workspace before focused tests; server/consumer tests resolve emitted engine exports. Run the smallest affected group, then broaden only for changed dependencies or unresolved risks. Diagnose timeouts, leaks, and flaky setup; do not mask them with retries, skips, or longer timeouts.
 - Do not add permanent tests just to prove the tooling is installed. Report meaningful checks and any gaps honestly.

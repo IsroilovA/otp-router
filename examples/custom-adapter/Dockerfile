@@ -1,12 +1,15 @@
-FROM node:24-bookworm-slim AS build
-
-WORKDIR /fixture
+# Build from the workspace root: docker build -f examples/custom-adapter/Dockerfile .
+FROM node:24-bookworm-slim
+WORKDIR /app
 RUN corepack enable && corepack prepare pnpm@12.5.1 --activate
-COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* ./
-COPY artifacts/otp-router-0.1.0.tgz /artifacts/otp-router-0.1.0.tgz
-RUN pnpm install --no-frozen-lockfile --ignore-scripts
-COPY tsconfig.fixture.json ./
-COPY src ./src
-RUN pnpm exec tsc -p tsconfig.fixture.json
-
-CMD ["node", "dist/smoke.js"]
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages/engine/package.json ./packages/engine/package.json
+COPY apps/server/package.json ./apps/server/package.json
+COPY examples/custom-adapter/package.json ./examples/custom-adapter/package.json
+COPY patches ./patches
+RUN pnpm install --frozen-lockfile
+COPY tsconfig.base.json ./
+COPY packages/engine ./packages/engine
+COPY examples/custom-adapter ./examples/custom-adapter
+RUN pnpm --filter @otp-router/engine build && pnpm --filter otp-router-custom-adapter-example build
+CMD ["node", "examples/custom-adapter/dist/smoke.js"]

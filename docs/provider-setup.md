@@ -18,8 +18,8 @@ After supplying the variables, validate locally without sending:
 
 ```sh
 pnpm build
-node --env-file=.env dist/main.js --check-config --config "$PWD/examples/config/builtins.config.ts"
-node --env-file=.env dist/main.js --check-schema --config "$PWD/examples/config/builtins.config.ts"
+node --env-file=.env apps/server/dist/main.js --check-config --config "$PWD/examples/config/builtins.config.ts"
+node --env-file=.env apps/server/dist/main.js --check-schema --config "$PWD/examples/config/builtins.config.ts"
 ```
 
 The first command after the build validates configuration and template structure without contacting providers. Schema checking contacts PostgreSQL and runs startup migrations. Neither command sends a message. Starting the service enables sends when authenticated clients create challenges, so use the fake configuration until real sends have been explicitly authorized.

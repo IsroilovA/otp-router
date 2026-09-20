@@ -8,7 +8,7 @@ import {
   OtpCodeSchema,
   ProviderInstance,
   ProviderInstanceIdSchema,
-} from "otp-router/providers";
+} from "@otp-router/engine/providers";
 import { TextProvider, textSelector } from "./index.js";
 
 const providerId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("text-primary");

@@ -2,7 +2,7 @@ import { Webhook } from "standardwebhooks";
 import { PgClient } from "@effect/sql-pg";
 import { SqlClient, SqlSchema } from "effect/unstable/sql";
 import { Data, Effect, Schema } from "effect";
-import { ChallengeEvent, type Snapshot } from "../../src/challenges/contracts.js";
+import { ChallengeEvent, type Snapshot } from "@otp-router/engine";
 
 export class InvalidWebhook extends Data.TaggedError("InvalidWebhook")<{}> {}
 

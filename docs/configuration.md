@@ -1,8 +1,8 @@
 # Configuration reference
 
-The service loads a trusted TypeScript module with a default `defineConfig(...)` export. Start from the [fake example](../examples/config/router.config.ts) or [built-in providers](../examples/config/builtins.config.ts). The authoritative schemas are [Settings and Policy](../src/config/config.ts); this guide explains the main deployment choices.
+The service loads a trusted TypeScript module with a default `defineConfig(...)` export. Start from the [fake example](../examples/config/router.config.ts) or [built-in providers](../examples/config/builtins.config.ts). The authoritative schemas are [engine Settings and Policy](../packages/engine/src/config/config.ts) and [server Settings](../apps/server/src/config/config.ts); this guide explains the main deployment choices.
 
-Environment variables do not automatically override configuration fields. `DATABASE_URL` is read by the database and queue layers. The supplied entry files explicitly read the `OTP_ROUTER_*` and provider variables documented below; add other settings to the entry file itself.
+Environment variables do not automatically override configuration fields. The supplied entries read `DATABASE_URL` into `settings.databaseUrl`, which the server validates and redacts before passing it to engine resources. The engine never loads environment variables. The supplied entry files explicitly read the `OTP_ROUTER_*` and provider variables documented below; add other settings to the entry file itself.
 
 ## Environment and entry files
 
@@ -21,11 +21,13 @@ Environment variables do not automatically override configuration fields. `DATAB
 
 Provider credentials are listed in [provider setup](provider-setup.md). Node does not load `.env` automatically: use `node --env-file=.env ...` on the host. Compose supplies the environment itself.
 
-Node loads TypeScript through its native type stripping. Keep entries compatible with that runtime and place them where their imports can resolve `otp-router`, `effect`, and any installed adapter packages. The Compose mount at `/app/config` does this for the standard image. The standard image contains only built-in adapters; install custom adapters into a deployment image before importing them.
+Node loads TypeScript through its native type stripping. Keep entries compatible with that runtime and place them where their imports can resolve `@otp-router/server`, `@otp-router/engine`, `effect`, and any installed adapter packages. The Compose mount at `/app/apps/server/config` does this for the standard image. The standard image contains only built-in adapters; install custom adapters into a deployment image before importing them.
 
 ## Settings
 
-`settings` requires `crypto`, `apiKeys`, `defaultLocale`, `fallbackLocales`, `policies`, `purposes`, `deploymentSendLimit15m`, and `deploymentSendLimit24h`. The examples supply all of them. `purposes` maps each allowed purpose to its permitted policy IDs. `providers` registers provider layers; optional `selectors` maps policy IDs to [routing selectors](plugins.md#routing-selectors).
+Import `defineConfig` from `@otp-router/server/config` and provider factories from `@otp-router/engine/providers`.
+
+The entry has `{ settings, engine }`. Server `settings` requires `databaseUrl` and `apiKeys`; it also owns role, listener, concurrency, and shutdown settings. `engine` contains `{ settings, providers, selectors? }`. Its `settings` requires `crypto`, `defaultLocale`, `fallbackLocales`, `policies`, `purposes`, `deploymentSendLimit15m`, and `deploymentSendLimit24h`. The examples supply all of them. `purposes` maps each allowed purpose to its permitted policy IDs. `providers` registers provider layers; optional `selectors` maps policy IDs to [routing selectors](plugins.md#routing-selectors).
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
@@ -34,15 +36,17 @@ Node loads TypeScript through its native type stripping. Keep entries compatible
 | `internalHost`, `internalPort` | `127.0.0.1`, 3001 | Private health and metrics listener. Give separate local processes different ports. |
 | `workerConcurrency` | 4 | Worker concurrency setting, 1–64. |
 | `shutdownGraceMs` | 30000 | Application shutdown allowance, 1000–120000 ms. |
-| `selectorTimeoutMs` | 2000 | Complete selector deadline, 1–60000 ms. |
-| `recipientCreateLimit15m` | 5 | Recipient-wide creations, 1–5 per rolling 15 minutes. |
-| `recipientSendLimit15m`, `recipientGuessLimit15m` | 10 each | Recipient-wide sends and incorrect guesses, each 1–10 per rolling 15 minutes. |
-| `deploymentSendLimit15m`, `deploymentSendLimit24h` | Required | Positive send caps across all recipients and providers. |
-| `providerSendLimits15m` | `{}` | Optional positive send caps keyed by instance ID. |
-| `providerLabels` | `{}` | Display labels saved at creation for accepted providers and manual choices, up to 128 characters each; defaults to channel. |
-| `webhook` | Omitted | `{ url, signingSecret }` enables outbound notifications. HTTPS is required except HTTP on literal loopback hosts for local tests. No URL credentials, fragments, redirects, or extra Bearer token. |
+| `engine.settings.selectorTimeoutMs` | 2000 | Complete selector deadline, 1–60000 ms. |
+| `engine.settings.recipientCreateLimit15m` | 5 | Recipient-wide creations, 1–5 per rolling 15 minutes. |
+| `engine.settings.recipientSendLimit15m`, `recipientGuessLimit15m` | 10 each | Recipient-wide sends and incorrect guesses, each 1–10 per rolling 15 minutes. |
+| `engine.settings.deploymentSendLimit15m`, `deploymentSendLimit24h` | Required | Positive send caps across all recipients and providers. |
+| `engine.settings.providerSendLimits15m` | `{}` | Optional positive send caps keyed by instance ID. |
+| `engine.settings.providerLabels` | `{}` | Display labels saved at creation for accepted providers and manual choices, up to 128 characters each; defaults to channel. |
+| `engine.settings.webhook` | Omitted | `{ url, signingSecret }` enables outbound notifications. HTTPS is required except HTTP on literal loopback hosts for local tests. No URL credentials, fragments, redirects, or extra Bearer token. |
 
-`apiKeys` accepts one or two credentials; use two temporarily for rotation. Cryptographic key rings use `{ active: "v1", keys: { v1: "..." } }`. Follow [key rotation](security.md#key-rotation) when adding or removing keys.
+The trusted server entry selects the webhook destination; the engine validates and uses the supplied notification settings. The engine checks signing/crypto key independence, and the server also rejects API-key/signing-secret reuse.
+
+`settings.apiKeys` accepts one or two credentials; use two temporarily for rotation. Cryptographic key rings use `{ active: "v1", keys: { v1: "..." } }`. Follow [key rotation](security.md#key-rotation) when adding or removing keys.
 
 ## Policies
 

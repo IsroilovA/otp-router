@@ -1,6 +1,6 @@
 # Outbound challenge updates
 
-Configure `settings.webhook = { url, signingSecret }` to send every creation and meaningful public snapshot change to one backend destination. The only event type is `challenge.updated`. Its `challenge` has exactly the same schema as creation and reconciliation GET; it needs no follow-up fetch. Events omit codes, recipients, context/binding data, provider payloads, and attempt history. Successful verification still returns its separate verification ID and purpose/context binding through the authenticated verify endpoint.
+Configure `engine.settings.webhook = { url, signingSecret }` to send every creation and meaningful public snapshot change to one backend destination. The only event type is `challenge.updated`. Its `challenge` has exactly the same schema as creation and reconciliation GET; it needs no follow-up fetch. Events omit codes, recipients, context/binding data, provider payloads, and attempt history. Successful verification still returns its separate verification ID and purpose/context binding through the authenticated verify endpoint.
 
 ```json
 {"eventId":"ea6890d0-c9e9-4dd3-9f6a-800f5cc2bc26","type":"challenge.updated","occurredAt":"2026-09-21T12:00:02.000Z","challenge":{"challengeId":"6bd2b39a-11ac-4fc7-bc02-d928d6929532","revision":3,"state":"accepted","reason":null,"channel":"telegram","provider":{"id":"telegram-main","label":"Telegram"},"expiresAt":"2026-09-21T12:05:00.000Z","serverTime":"2026-09-21T12:00:02.000Z","actions":{"verify":{"allowed":true},"resend":{"allowed":false,"reason":"cooldown_active","availableAt":"2026-09-21T12:00:31.000Z"},"next":{"allowed":false,"reason":"no_next_provider"},"select":{"allowed":false,"reason":"manual_selection_disabled","choices":[]},"cancel":{"allowed":true}}}
@@ -39,7 +39,7 @@ After exhaustion, the event and safe notification diagnostics remain indefinitel
 Inspect `otp_router.notifications` (`state`, `attempts`, `next_attempt_at`, `lease_until`, `last_status`, `last_failure`) joined by `event_id` to `otp_router.challenge_events`. Diagnoses are `http_error`, `transport_error`, or `worker_recovery`; no response bodies or transport errors are retained. Monitor failed rows and overdue pending/leased rows. After fixing the receiver, replay one failed event:
 
 ```sh
-node --env-file=.env dist/main.js --config "$PWD/examples/config/router.config.ts" --replay-webhook EVENT_UUID
+node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/router.config.ts" --replay-webhook EVENT_UUID
 ```
 
 Replay resets its notification attempt budget and requeues its original ID/body. It never changes the challenge or sends an OTP. Run a worker to deliver it. During signing-secret rotation, have the receiver temporarily accept old and new secrets, then update every router role. Retried old events use the current secret. Destination changes also apply to outstanding notifications, so coordinate them across roles.

@@ -3,12 +3,11 @@ import { randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { connect, createServer } from "node:net";
 import { join, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Deferred, Effect, ManagedRuntime, Redacted, Schema } from "effect";
 import { PgClient } from "@effect/sql-pg";
 import { PgBoss } from "pg-boss";
-import { Snapshot, VerificationResult } from "../src/challenges/contracts.js";
+import { Snapshot, VerificationResult } from "../packages/engine/src/challenges/contracts.js";
 import { startPostgres, type PostgresFixture } from "./fixture.js";
 
 const API_KEY = "process-api-key-with-at-least-thirty-two-bytes";
@@ -152,12 +151,10 @@ const waitForReady = async (port: number, running: RunningProcess): Promise<void
 const key = (byte: number): string => Buffer.alloc(32, byte).toString("base64url");
 
 const configSource = (sinkPath: string): string => {
-  const configUrl = pathToFileURL(resolve(ROOT, "dist/config/config.js")).href;
-  const providersUrl = pathToFileURL(resolve(ROOT, "dist/providers/index.js")).href;
   return `import { appendFile } from "node:fs/promises";
 import { Effect, Layer } from "effect";
-import { defineConfig } from ${JSON.stringify(configUrl)};
-import { ProviderContractVersion, ProviderInstance } from ${JSON.stringify(providersUrl)};
+import { defineConfig } from "@otp-router/server/config";
+import { ProviderContractVersion, ProviderInstance } from "@otp-router/engine/providers";
 
 const sink = ${JSON.stringify(sinkPath)};
 const provider = {
@@ -183,6 +180,7 @@ const provider = {
 };
 
 export default defineConfig({
+  engine: {
   settings: {
     crypto: {
       deploymentId: "process-test",
@@ -191,13 +189,18 @@ export default defineConfig({
       fingerprint: { active: "fingerprint-v1", keys: { "fingerprint-v1": ${JSON.stringify(key(3))} } },
       recipientKey: ${JSON.stringify(key(4))},
     },
-    apiKeys: [${JSON.stringify(API_KEY)}],
     defaultLocale: "en",
     fallbackLocales: [],
     policies: { default: { providerInstanceIds: ["process-fake"], lifetimeSeconds: 300, resendCooldownSeconds: 30 } },
     purposes: { login: ["default"] },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1000,
+  },
+  providers: [Layer.succeed(ProviderInstance, provider)],
+  },
+  settings: {
+    databaseUrl: process.env.DATABASE_URL,
+    apiKeys: [${JSON.stringify(API_KEY)}],
     role: process.env.OTP_TEST_ROLE,
     port: Number(process.env.OTP_TEST_PORT),
     internalPort: Number(process.env.OTP_TEST_INTERNAL_PORT),
@@ -206,7 +209,6 @@ export default defineConfig({
     workerConcurrency: 1,
     shutdownGraceMs: 1000,
   },
-  providers: [Layer.succeed(ProviderInstance, provider)],
 });
 `;
 };
@@ -335,7 +337,6 @@ const superviseExpiredDeliveryJobs = async (): Promise<void> => {
 };
 
 beforeAll(async () => {
-  await command("pnpm", ["build"]);
   postgres = await startPostgres();
   const cacheDirectory = join(ROOT, "node_modules", ".cache", "otp-router");
   await mkdir(cacheDirectory, { recursive: true });
@@ -364,7 +365,7 @@ afterAll(async () => {
 describe("built process", () => {
   it("supports config/schema checks and separate API and worker health", async () => {
     const fixture = requireFixture();
-    const baseArgs = ["dist/main.js", "--config", fixture.configurationPath];
+    const baseArgs = ["apps/server/dist/main.js", "--config", fixture.configurationPath];
     const checkConfig = startProcess(
       [...baseArgs, "--check-config"],
       processEnvironment("api", apiPort, apiInternalPort),
@@ -379,7 +380,12 @@ describe("built process", () => {
       ).message,
     ).toBe("configuration_valid");
     const missing = startProcess(
-      ["dist/main.js", "--check-config", "--config", `${fixture.configurationPath}.missing`],
+      [
+        "apps/server/dist/main.js",
+        "--check-config",
+        "--config",
+        `${fixture.configurationPath}.missing`,
+      ],
       processEnvironment("api", apiPort, apiInternalPort),
     );
     expect((await missing.exit).code).toBe(1);
@@ -416,7 +422,7 @@ describe("built process", () => {
     expect(await readSink(fixture.sinkPath)).toHaveLength(0);
 
     workerProcess = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("worker", workerPort, workerInternalPort),
     );
     await waitForReady(workerInternalPort, workerProcess);
@@ -468,7 +474,7 @@ describe("built process", () => {
       `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
     );
     workerProcess = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("worker", workerPort, workerInternalPort, true),
     );
     await waitForReady(workerInternalPort, workerProcess);
@@ -496,7 +502,7 @@ describe("built process", () => {
     ).toContain("retry:0");
 
     workerProcess = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("worker", workerPort, workerInternalPort),
     );
     await waitForReady(workerInternalPort, workerProcess);
@@ -553,7 +559,7 @@ describe("built process", () => {
     try {
       await Effect.runPromise(Deferred.await(locked));
       workerProcess = startProcess(
-        ["dist/main.js", "--config", fixture.configurationPath],
+        ["apps/server/dist/main.js", "--config", fixture.configurationPath],
         processEnvironment("worker", workerPort, workerInternalPort),
       );
       await waitForReady(workerInternalPort, workerProcess);
@@ -591,7 +597,7 @@ describe("built process", () => {
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("worker", workerPort, workerInternalPort),
     );
     await waitForReady(workerInternalPort, workerProcess);
@@ -626,10 +632,13 @@ describe("built process", () => {
     const deliveryId = await psql(
       `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
     );
-    workerProcess = startProcess(["dist/main.js", "--config", fixture.configurationPath], {
-      ...processEnvironment("worker", workerPort, workerInternalPort),
-      OTP_TEST_BEFORE_SEND: "1",
-    });
+    workerProcess = startProcess(
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
+      {
+        ...processEnvironment("worker", workerPort, workerInternalPort),
+        OTP_TEST_BEFORE_SEND: "1",
+      },
+    );
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor(
       "the committed dispatch before external transmission",
@@ -647,7 +656,7 @@ describe("built process", () => {
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("worker", workerPort, workerInternalPort),
     );
     await waitForReady(workerInternalPort, workerProcess);
@@ -706,7 +715,7 @@ describe("built process", () => {
     try {
       await Effect.runPromise(Deferred.await(locked));
       workerProcess = startProcess(
-        ["dist/main.js", "--config", fixture.configurationPath],
+        ["apps/server/dist/main.js", "--config", fixture.configurationPath],
         processEnvironment("worker", workerPort, workerInternalPort),
       );
       await waitForReady(workerInternalPort, workerProcess);
@@ -741,7 +750,7 @@ describe("built process", () => {
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("worker", workerPort, workerInternalPort),
     );
     await waitForReady(workerInternalPort, workerProcess);
@@ -768,7 +777,7 @@ describe("built process", () => {
     const otherPort = await reservePort();
     const otherInternal = await reservePort();
     const other = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("api", otherPort, otherInternal),
     );
     try {
@@ -893,7 +902,7 @@ describe("built process", () => {
     workerProcess = undefined;
     await stopProcess(apiProcess);
     apiProcess = startProcess(
-      ["dist/main.js", "--config", fixture.configurationPath],
+      ["apps/server/dist/main.js", "--config", fixture.configurationPath],
       processEnvironment("combined", apiPort, apiInternalPort, true),
     );
     await waitForReady(apiInternalPort, apiProcess);

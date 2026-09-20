@@ -3,26 +3,31 @@ import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Effect, Redacted, Schema } from "effect";
 import { Webhook } from "standardwebhooks";
-import { ChallengeEvent, Snapshot } from "../src/challenges/contracts.js";
-import { decrypt } from "../src/challenges/crypto.js";
-import { createChallenge } from "../src/challenges/create.js";
-import { challengeTransaction } from "../src/challenges/transaction.js";
-import { cleanup } from "../src/challenges/cleanup.js";
-import { rows, single } from "../src/database/query.js";
-import { dispatchGate } from "../src/delivery/dispatch.js";
-import { recordOutcome } from "../src/delivery/outcomes.js";
-import { ingestEvents, recordAccepted } from "../src/delivery/callbacks.js";
+import { ChallengeEvent, Snapshot } from "../packages/engine/src/challenges/contracts.js";
+import { decrypt } from "../packages/engine/src/challenges/crypto.js";
+import { createChallenge } from "../packages/engine/src/challenges/create.js";
+import { challengeTransaction } from "../packages/engine/src/challenges/transaction.js";
+import { cleanup } from "../packages/engine/src/challenges/cleanup.js";
+import { rows, single } from "../packages/engine/src/database/query.js";
+import { dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
+import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
+import { ingestEvents, recordAccepted } from "../packages/engine/src/delivery/callbacks.js";
 import {
   notifyChallenge,
   recoverNotifications,
   replayNotification,
-} from "../src/delivery/notifications/send.js";
-import { FakeProvider } from "../src/providers/fake.js";
-import { ProviderInstanceIdSchema } from "../src/providers/contract.js";
-import { DeliveryJob, deliveryQueue, notificationQueue } from "../src/queue/jobs.js";
-import { startWorkers } from "../src/worker/run.js";
-import { RouterConfig } from "../src/config/config.js";
-import { findSecrets } from "../src/challenges/store.js";
+} from "../packages/engine/src/notifications/send.js";
+import { FakeProvider } from "../packages/engine/src/providers/fake.js";
+import { ProviderInstanceIdSchema } from "../packages/engine/src/providers/contract.js";
+import {
+  DeliveryJob,
+  deliveryQueue,
+  notificationQueue,
+} from "../packages/engine/src/queue/jobs.js";
+import { startWorkers } from "../packages/engine/src/worker/run.js";
+import { RouterConfig } from "../packages/engine/src/config/runtime.js";
+
+import { findSecrets } from "../packages/engine/src/challenges/store.js";
 import {
   applySnapshot,
   initializeReceiver,
@@ -147,7 +152,6 @@ beforeAll(async () => {
         fingerprint: ring(3),
         recipientKey: Buffer.alloc(32, 4).toString("base64url"),
       },
-      apiKeys: ["public-events-api-key-with-32-bytes"],
       webhook: { url: `http://127.0.0.1:${address.port}`, signingSecret: secret },
       defaultLocale: "en",
       fallbackLocales: [],
@@ -507,7 +511,9 @@ it("runs notification workers independently and retains an expiry job for every 
   notifyAfter = 6;
   await harness.run(
     Effect.gen(function* () {
-      yield* startWorkers.pipe(Effect.provideService(RouterConfig, harness.configuration));
+      yield* startWorkers({ concurrency: 4, shutdownGraceMs: 30000 }).pipe(
+        Effect.provideService(RouterConfig, harness.configuration),
+      );
       for (let index = 0; index < 2; index++)
         yield* createChallenge(harness.configuration, {
           key: randomUUID(),

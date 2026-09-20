@@ -1,6 +1,6 @@
 import { Redacted, Schema } from "effect";
-import { defineConfig } from "otp-router/config";
-import { FakeProvider, ProviderInstanceIdSchema } from "otp-router/providers";
+import { defineConfig } from "@otp-router/server/config";
+import { FakeProvider, ProviderInstanceIdSchema } from "@otp-router/engine/providers";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -21,46 +21,51 @@ const fakeProviderId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-
 const webhookUrl = process.env["OTP_ROUTER_WEBHOOK_URL"];
 
 export default defineConfig({
-  settings: {
-    ...(webhookUrl === undefined
-      ? {}
-      : {
-          webhook: {
-            url: webhookUrl,
-            signingSecret: required("OTP_ROUTER_WEBHOOK_SIGNING_SECRET"),
-          },
-        }),
-    crypto: {
-      deploymentId: "local-demo",
-      encryption: keyRing(encryptionKey),
-      verification: keyRing(verificationKey),
-      fingerprint: keyRing(fingerprintKey),
-      recipientKey,
-    },
-    apiKeys: [apiKey],
-    defaultLocale: "en",
-    fallbackLocales: [],
-    policies: {
-      login: {
-        providerInstanceIds: [fakeProviderId],
+  engine: {
+    settings: {
+      ...(webhookUrl === undefined
+        ? {}
+        : {
+            webhook: {
+              url: webhookUrl,
+              signingSecret: required("OTP_ROUTER_WEBHOOK_SIGNING_SECRET"),
+            },
+          }),
+      crypto: {
+        deploymentId: "local-demo",
+        encryption: keyRing(encryptionKey),
+        verification: keyRing(verificationKey),
+        fingerprint: keyRing(fingerprintKey),
+        recipientKey,
       },
+      defaultLocale: "en",
+      fallbackLocales: [],
+      policies: {
+        login: {
+          providerInstanceIds: [fakeProviderId],
+        },
+      },
+      purposes: { login: ["login"] },
+      deploymentSendLimit15m: 100,
+      deploymentSendLimit24h: 1_000,
     },
-    purposes: { login: ["login"] },
-    deploymentSendLimit15m: 100,
-    deploymentSendLimit24h: 1_000,
+    providers: [
+      FakeProvider.make({
+        instanceId: fakeProviderId,
+        enabled: true,
+        settingsFingerprint: "local-demo-fake-v1",
+        config: {
+          outcome: "accepted",
+          callbackSecret: Redacted.make(callbackSecret),
+        },
+        templates: {},
+      }),
+    ],
+  },
+  settings: {
+    databaseUrl: required("DATABASE_URL"),
+    apiKeys: [apiKey],
     host: process.env["OTP_ROUTER_HOST"] ?? "127.0.0.1",
     internalHost: process.env["OTP_ROUTER_INTERNAL_HOST"] ?? "127.0.0.1",
   },
-  providers: [
-    FakeProvider.make({
-      instanceId: fakeProviderId,
-      enabled: true,
-      settingsFingerprint: "local-demo-fake-v1",
-      config: {
-        outcome: "accepted",
-        callbackSecret: Redacted.make(callbackSecret),
-      },
-      templates: {},
-    }),
-  ],
 });

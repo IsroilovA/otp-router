@@ -1,19 +1,19 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Layer, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { OperationResult } from "../src/challenges/contracts.js";
-import type { Configuration } from "../src/config/config.js";
-import { rows, single } from "../src/database/query.js";
-import { transaction } from "../src/database/transaction.js";
-import { dispatch } from "../src/delivery/dispatch.js";
+import type { OperationResult } from "../packages/engine/src/challenges/contracts.js";
+import type { Configuration } from "../packages/engine/src/config/config.js";
+import { rows, single } from "../packages/engine/src/database/query.js";
+import { transaction } from "../packages/engine/src/database/transaction.js";
+import { dispatch } from "../packages/engine/src/delivery/dispatch.js";
 import {
   ProviderContractVersion,
   ProviderInstance,
   ProviderInstanceIdSchema,
   type ProviderSendInput,
   type ReadyProvider,
-} from "../src/providers/contract.js";
-import { deliveryQueue } from "../src/queue/jobs.js";
+} from "../packages/engine/src/providers/contract.js";
+import { deliveryQueue } from "../packages/engine/src/queue/jobs.js";
 import {
   type IntegrationRuntime,
   type PostgresFixture,
@@ -61,7 +61,6 @@ const configuration: Configuration = {
       fingerprint: { active: "a", keys: { a: key(3) } },
       recipientKey: key(4),
     },
-    apiKeys: ["fault-boundary-api-key-32-characters"],
     defaultLocale: "en",
     fallbackLocales: [],
     policies: { login: { providerInstanceIds: [providerId] } },

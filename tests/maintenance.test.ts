@@ -1,14 +1,24 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { cleanup, invalidateRestoredChallenges } from "../src/challenges/cleanup.js";
-import { createChallenge } from "../src/challenges/create.js";
-import type { KeyRing } from "../src/challenges/crypto.js";
-import { quotaRetryAt, sendLimits } from "../src/challenges/quotas.js";
-import type { Configuration, RuntimeConfiguration, Settings } from "../src/config/config.js";
-import { validateDeploymentIdentity, validateStoredKeys } from "../src/database/compatibility.js";
-import { rows } from "../src/database/query.js";
-import { FakeProvider, ProviderInstanceIdSchema } from "../src/providers/index.js";
+import {
+  cleanup,
+  invalidateRestoredChallenges,
+} from "../packages/engine/src/challenges/cleanup.js";
+import { createChallenge } from "../packages/engine/src/challenges/create.js";
+import type { KeyRing } from "../packages/engine/src/challenges/crypto.js";
+import { quotaRetryAt, sendLimits } from "../packages/engine/src/challenges/quotas.js";
+import type {
+  Configuration,
+  RuntimeConfiguration,
+  Settings,
+} from "../packages/engine/src/config/config.js";
+import {
+  validateDeploymentIdentity,
+  validateStoredKeys,
+} from "../packages/engine/src/database/compatibility.js";
+import { rows } from "../packages/engine/src/database/query.js";
+import { FakeProvider, ProviderInstanceIdSchema } from "../packages/engine/src/providers/index.js";
 import {
   challengeIdFrom,
   type IntegrationRuntime,
@@ -29,7 +39,6 @@ const configuration: Configuration = {
       fingerprint: keyRing("fingerprint-old", 3),
       recipientKey: key(4),
     },
-    apiKeys: ["maintenance-tests-api-key-32-characters-long"],
     defaultLocale: "en",
     fallbackLocales: [],
     policies: { login: { providerInstanceIds: ["fake"] } },

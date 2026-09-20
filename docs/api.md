@@ -8,10 +8,10 @@ Generate the wire reference from the endpoint schemas:
 
 ```sh
 pnpm build
-node dist/main.js --openapi > openapi.json
+node apps/server/dist/main.js --openapi > openapi.json
 ```
 
-Treat this output as generated. Change schemas and handlers together, then verify generation against HTTP behavior. For a Compose-only build, use `docker compose run --rm --no-deps router node dist/main.js --openapi > openapi.json`.
+Treat this output as generated. Change schemas and handlers together, then verify generation against HTTP behavior. For a Compose-only build, use `docker compose -f apps/server/compose.yaml run --rm --no-deps router node apps/server/dist/main.js --openapi > openapi.json`.
 
 | Method and path | JSON body | Success |
 | --- | --- | --- |

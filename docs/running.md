@@ -22,25 +22,25 @@ NODE
 Start PostgreSQL and the combined HTTP API/worker with:
 
 ```sh
-docker compose up --build -d --wait
-docker compose ps
+docker compose --env-file .env -f apps/server/compose.yaml up --build -d --wait
+docker compose --env-file .env -f apps/server/compose.yaml ps
 ```
 
 The API listens at `http://127.0.0.1:3000`. Compose waits for PostgreSQL health before starting the router, then waits for router readiness after migrations and queue initialization. pg-boss runs inside the router and uses the same PostgreSQL database. Its health listener stays inside the application container. Compose allows forty seconds for shutdown, covering the default thirty-second application grace period; increase `stop_grace_period` if you configure a longer grace period.
 
 The default configuration uses the fake provider and sends no real messages. Compose reads secrets from `.env`, mounts `examples/config` read-only, and overrides `DATABASE_URL` with the internal `postgres:5432` address. The database credentials in this file are for local development. For a deployed environment, replace the PostgreSQL password and the matching router connection URL together before initializing its database.
 
-To use real providers, prepare the entry file and credentials described in [provider setup](provider-setup.md). Set `OTP_ROUTER_CONFIG_FILE=builtins.config.ts` in `.env` to select the supplied built-in example. Remove unused providers and adjust policies before starting it. `OTP_ROUTER_CONFIG_DIR` selects a different host configuration directory; it must exist and be readable by the container's `node` user. The entry file must bind the API to `0.0.0.0` inside the container; both supplied examples honor `OTP_ROUTER_HOST` for this. Keep its API and health ports at 3000 and 3001 unless you also update Compose's ports and health check.
+To use real providers, prepare the entry file and credentials described in [provider setup](provider-setup.md). Set `OTP_ROUTER_CONFIG_FILE=builtins.config.ts` in `.env` to select the supplied built-in example. Remove unused providers and adjust policies before starting it. `OTP_ROUTER_CONFIG_DIR` selects a different host configuration directory; relative paths resolve from `apps/server`; it must exist and be readable by the container's `node` user. The entry file must bind the API to `0.0.0.0` inside the container; both supplied examples honor `OTP_ROUTER_HOST` for this. Keep its API and health ports at 3000 and 3001 unless you also update Compose's ports and health check.
 
 Use a separate database and secrets for a real deployment. The demo binds its database to deployment ID `local-demo`; changing to a different `OTP_ROUTER_DEPLOYMENT_ID` against that volume fails startup. Even `--check-schema` initializes this identity. See [configuration and database identity](configuration.md#database-identity).
 
-`OTP_ROUTER_PORT` changes the host API port, and `OTP_ROUTER_POSTGRES_PORT` changes the host database port. Both default to loopback-only bindings. A backend on the host uses `http://127.0.0.1:3000`; a backend attached to this Compose network uses `http://router:3000`. For a backend on another machine, configure private networking or a TLS reverse proxy. Do not publish the internal health listener. `OTP_ROUTER_ENV_FILE` selects another secrets file; also pass that file with `docker compose --env-file <path>` if it contains Compose settings such as the selected configuration filename.
+`OTP_ROUTER_PORT` changes the host API port, and `OTP_ROUTER_POSTGRES_PORT` changes the host database port. Both default to loopback-only bindings. A backend on the host uses `http://127.0.0.1:3000`; a backend attached to this Compose network uses `http://router:3000`. For a backend on another machine, configure private networking or a TLS reverse proxy. Do not publish the internal health listener. `OTP_ROUTER_ENV_FILE` selects another secrets file; also pass that file with `docker compose --env-file <path> -f apps/server/compose.yaml` if it contains Compose settings such as the selected configuration filename.
 
 Check configuration or stop the stack with:
 
 ```sh
-docker compose run --rm --no-deps router node dist/main.js --check-config --config /app/config/router.config.ts
-docker compose down
+docker compose --env-file .env -f apps/server/compose.yaml run --rm --no-deps router node apps/server/dist/main.js --check-config --config /app/apps/server/config/router.config.ts
+docker compose --env-file .env -f apps/server/compose.yaml down
 ```
 
 Use the selected entry filename in the check command. `down` preserves the named database volume; `down --volumes` deletes it. Startup automatically applies migrations, so no separate migration or queue container is required.
@@ -53,10 +53,10 @@ To run Node.js directly while keeping PostgreSQL in Docker, start only the datab
 pnpm install --frozen-lockfile
 pnpm db:up
 pnpm build
-node --env-file=.env dist/main.js --check-config --config "$PWD/examples/config/router.config.ts"
-node --env-file=.env dist/main.js --check-schema --config "$PWD/examples/config/router.config.ts"
-node dist/main.js --openapi > openapi.json
-node --env-file=.env dist/main.js --config "$PWD/examples/config/router.config.ts"
+node --env-file=.env apps/server/dist/main.js --check-config --config "$PWD/examples/config/router.config.ts"
+node --env-file=.env apps/server/dist/main.js --check-schema --config "$PWD/examples/config/router.config.ts"
+node apps/server/dist/main.js --openapi > openapi.json
+node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/router.config.ts"
 ```
 
 The example configuration requires `OTP_ROUTER_API_KEY`, `OTP_ROUTER_FAKE_CALLBACK_SECRET`, and four independent 32-byte base64url keys. See [the example configuration](../examples/config/README.md). The fake provider is deterministic and local. It does not send a real message or require provider credentials.
@@ -91,12 +91,12 @@ Follow the [first local flow](api.md#first-local-flow) to create a challenge, in
 On Docker Desktop, start PostgreSQL with `pnpm db:up`, then build the image and mount a configuration directory containing `router.config.ts`. Stop any router already using ports 3000/3001 first:
 
 ```sh
-docker build -t otp-router:local .
+docker build -f apps/server/Dockerfile -t otp-router:local .
 docker run --rm --stop-timeout 40 --env-file .env \
   -e DATABASE_URL=postgres://otp_router:local-development-only@host.docker.internal:54329/otp_router \
   -e OTP_ROUTER_HOST=0.0.0.0 \
   -e OTP_ROUTER_INTERNAL_HOST=0.0.0.0 \
-  -v "$PWD/examples/config:/app/config:ro" \
+  -v "$PWD/examples/config:/app/apps/server/config:ro" \
   -p 127.0.0.1:3000:3000 -p 127.0.0.1:3001:3001 otp-router:local
 ```
 

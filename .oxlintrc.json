@@ -10,7 +10,7 @@
   "env": {
     "node": true
   },
-  "ignorePatterns": ["dist/**", "coverage/**", "node_modules/**"],
+  "ignorePatterns": ["**/dist/**", "coverage/**", "node_modules/**"],
   "rules": {
     "complexity": [
       "error",
@@ -87,7 +87,29 @@
   },
   "overrides": [
     {
-      "files": ["src/challenges/**/*.ts", "src/delivery/**/*.ts"],
+      "files": ["packages/engine/src/**/*.ts"],
+      "rules": {
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "process",
+            "property": "env",
+            "message": "The application loads environment values and supplies engine settings."
+          },
+          {
+            "object": "process",
+            "property": "argv",
+            "message": "The application owns command-line arguments."
+          }
+        ]
+      }
+    },
+    {
+      "files": [
+        "packages/engine/src/challenges/**/*.ts",
+        "packages/engine/src/delivery/**/*.ts",
+        "packages/engine/src/notifications/**/*.ts"
+      ],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -103,7 +125,7 @@
       }
     },
     {
-      "files": ["src/providers/**/*.ts"],
+      "files": ["packages/engine/src/providers/**/*.ts"],
       "rules": {
         "no-restricted-imports": [
           "error",
@@ -118,9 +140,32 @@
                   "**/http",
                   "**/http/**",
                   "**/worker",
-                  "**/worker/**"
+                  "**/worker/**",
+                  "**/notifications",
+                  "**/notifications/**"
                 ],
                 "message": "Provider adapters translate external outcomes; feature orchestration stays outside providers."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "files": ["apps/server/src/**/*.ts", "examples/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/packages/engine/**",
+                  "**/engine/src/**",
+                  "@otp-router/engine/src/**",
+                  "@otp-router/engine/dist/**"
+                ],
+                "message": "Consumers must use supported engine package exports."
               }
             ]
           }

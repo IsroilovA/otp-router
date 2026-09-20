@@ -1,5 +1,5 @@
 import { Effect, Layer, Schema } from "effect";
-import { type RoutingSelector, SelectorFailure } from "otp-router/config";
+import { type RoutingSelector, SelectorFailure } from "@otp-router/engine/config";
 import {
   ProviderContractVersion,
   type ProviderDefinition,
@@ -7,7 +7,7 @@ import {
   type ProviderSendInput,
   type SendAccepted,
   TemplateResolutionError,
-} from "otp-router/providers";
+} from "@otp-router/engine/providers";
 
 const TextConfigurationSchema = Schema.Struct({ prefix: Schema.String });
 type TextConfiguration = typeof TextConfigurationSchema.Type;

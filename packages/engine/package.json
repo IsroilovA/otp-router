@@ -1,0 +1,37 @@
+{
+  "name": "@otp-router/engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.build.json"
+  },
+  "dependencies": {
+    "@effect/sql-pg": "4.0.0-rc.116",
+    "effect": "4.0.0-rc.116",
+    "libphonenumber-js": "1.13.13",
+    "pg-boss": "12.33.2",
+    "standardwebhooks": "1.1.1"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./config": {
+      "types": "./dist/config/config.d.ts",
+      "import": "./dist/config/config.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT"
+}

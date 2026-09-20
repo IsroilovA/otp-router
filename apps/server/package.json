@@ -1,0 +1,32 @@
+{
+  "name": "@otp-router/server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.build.json",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.116",
+    "@effect/platform-node": "4.0.0-rc.116",
+    "@otp-router/engine": "workspace:*"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/application.d.ts",
+      "import": "./dist/application.js"
+    },
+    "./config": {
+      "types": "./dist/config/config.d.ts",
+      "import": "./dist/config/config.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "license": "MIT"
+}

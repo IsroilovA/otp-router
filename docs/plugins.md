@@ -1,6 +1,6 @@
 # Providers and routing selectors
 
-Extensions are trusted server code installed with the deployment. Import supported contracts from `otp-router/providers` and `otp-router/config`. Applications use HTTP; storage and domain operations are private.
+Extensions are trusted server code installed with the deployment. Import supported contracts from `@otp-router/engine/providers` and `@otp-router/engine/config`. Server configurations use `@otp-router/server/config`. Engine consumers can use the [public operations](engine.md); SQL helpers and internal records stay private.
 
 Use the [custom adapter example](../examples/custom-adapter/README.md) to check package boundaries. Exact signatures live in the exported TypeScript contracts.
 

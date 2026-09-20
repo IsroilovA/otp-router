@@ -1,3 +1,4 @@
+import { ProviderCallbacksLive } from "../packages/engine/src/delivery/provider-callbacks.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Cause, Effect, Exit, Layer, Schema } from "effect";
@@ -6,20 +7,21 @@ import {
   VerificationResult,
   type CreateInput,
   type OperationResult,
-} from "../src/challenges/contracts.js";
-import { challengeStatus } from "../src/challenges/status.js";
-import { createChallenge } from "../src/challenges/create.js";
-import { decrypt, operationIdentity } from "../src/challenges/crypto.js";
-import { verifyChallenge } from "../src/challenges/verify.js";
-import { RouterConfig, type RuntimeConfiguration } from "../src/config/config.js";
-import { rows, single } from "../src/database/query.js";
-import { ingestEvents } from "../src/delivery/callbacks.js";
-import { requestDelivery } from "../src/delivery/actions.js";
-import { dispatch, dispatchGate } from "../src/delivery/dispatch.js";
-import { recordOutcome } from "../src/delivery/outcomes.js";
-import { makeWebHandler } from "../src/http/transport.js";
-import { WebhookError, WebhookHandler } from "../src/http/webhooks.js";
-import { WebhooksLive } from "../src/http/webhook-service.js";
+} from "../packages/engine/src/challenges/contracts.js";
+import { challengeStatus } from "../packages/engine/src/challenges/status.js";
+import { createChallenge } from "../packages/engine/src/challenges/create.js";
+import { decrypt, operationIdentity } from "../packages/engine/src/challenges/crypto.js";
+import { verifyChallenge } from "../packages/engine/src/challenges/verify.js";
+import { RouterConfig } from "../packages/engine/src/config/runtime.js";
+import { type RuntimeConfiguration } from "../packages/engine/src/config/config.js";
+import { rows, single } from "../packages/engine/src/database/query.js";
+import { ingestEvents } from "../packages/engine/src/delivery/callbacks.js";
+import { requestDelivery } from "../packages/engine/src/delivery/actions.js";
+import { dispatch, dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
+import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
+import { makeWebHandler } from "../apps/server/src/http/transport.js";
+import { WebhookError, WebhookHandler } from "../apps/server/src/http/webhooks.js";
+import { WebhooksLive } from "../apps/server/src/http/webhook-service.js";
 import {
   ProviderContractVersion,
   ProviderConfigurationRejected,
@@ -35,12 +37,12 @@ import {
   type NormalizedDeliveryEvent,
   type ReadyProvider,
   type SendAccepted,
-} from "../src/providers/contract.js";
+} from "../packages/engine/src/providers/contract.js";
 import {
   DeliveryJob,
   deliveryQueue,
   type DeliveryJob as DeliveryJobType,
-} from "../src/queue/jobs.js";
+} from "../packages/engine/src/queue/jobs.js";
 import {
   challengeIdFrom,
   startPostgres,
@@ -188,7 +190,6 @@ const configuration = {
       fingerprint: { active: "fingerprint-v1", keys: { "fingerprint-v1": key(3) } },
       recipientKey: key(4),
     },
-    apiKeys: [apiKey],
     defaultLocale: "en",
     fallbackLocales: [],
     policies: {
@@ -435,6 +436,36 @@ beforeEach(async () => {
 });
 
 describe("PostgreSQL integration", () => {
+  it("validates direct engine requests before reserving quotas or persisting work", async () => {
+    const router = currentRuntime().router;
+    const rejected = await Effect.runPromise(
+      router.create({ key: "", requestId: randomUUID(), input: createInput() }).pipe(Effect.result),
+    );
+    expect(rejected).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
+    expect(await count("challenges")).toBe(0);
+    expect(await count("quota_events")).toBe(0);
+    expect(await count("deliveries")).toBe(0);
+    const created = await create();
+    const challengeId = Schema.decodeUnknownSync(Snapshot)(created.body).challengeId;
+    const invalidGuess = await Effect.runPromise(
+      router
+        .verify({
+          challengeId,
+          key: randomUUID(),
+          requestId: randomUUID(),
+          input: { code: "abcdef", purpose: "login", contextId: "session-1" },
+        })
+        .pipe(Effect.result),
+    );
+    expect(invalidGuess).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
+    expect(
+      await query(
+        Schema.Struct({ incorrect_guesses: Schema.Int }),
+        `SELECT incorrect_guesses FROM otp_router.challenges WHERE id = '${challengeId}'`,
+      ),
+    ).toEqual([{ incorrect_guesses: 0 }]);
+  });
+
   it("runs HTTP create, queued dispatch, and verification end to end", async () => {
     if (web === undefined) throw new Error("HTTP handler is not initialized");
     const createResponse = await web.handler(
@@ -790,8 +821,8 @@ describe("PostgreSQL integration", () => {
       const retriedVerify = await Effect.runPromise(
         harness.router.verify({ ...verifyRequest, requestId: randomUUID() }),
       );
-      expect(retriedCreate).toMatchObject({ status: 201, replayed: false });
-      expect(retriedVerify).toMatchObject({ status: 200, replayed: false });
+      expect(retriedCreate).toMatchObject({ outcome: "created", replayed: false });
+      expect(retriedVerify).toMatchObject({ outcome: "completed", replayed: false });
       expect(primary.sends).toHaveLength(1);
     },
   );
@@ -1023,7 +1054,7 @@ describe("PostgreSQL integration", () => {
     const accepted = await Effect.runPromise(
       currentRuntime().router.deliver({ ...request, requestId: randomUUID() }),
     );
-    expect(accepted).toMatchObject({ status: 202, replayed: false });
+    expect(accepted).toMatchObject({ outcome: "delivery_queued", replayed: false });
     expect(
       await query(
         Counts,
@@ -1074,7 +1105,7 @@ describe("PostgreSQL integration", () => {
     const accepted = await harness.run(
       requestDelivery(config, { ...request, requestId: randomUUID() }),
     );
-    expect(accepted).toMatchObject({ status: 202, replayed: false });
+    expect(accepted).toMatchObject({ outcome: "delivery_queued", replayed: false });
     expect(
       await query(
         Counts,
@@ -1491,7 +1522,7 @@ describe("PostgreSQL integration", () => {
     const selected = await Effect.runPromise(
       harness.router.deliver({ ...request, requestId: randomUUID() }),
     );
-    expect(selected).toMatchObject({ status: 202, replayed: false });
+    expect(selected).toMatchObject({ outcome: "delivery_queued", replayed: false });
   });
 
   it("falls through after a definitive provider configuration rejection", async () => {
@@ -1639,7 +1670,7 @@ describe("PostgreSQL integration", () => {
         input: { code, purpose: "login", contextId: "session-1" },
       }),
     );
-    expect(verified.status).toBe(200);
+    expect(verified.outcome).toBe("completed");
     expect(await count("challenge_secrets")).toBe(0);
   });
 
@@ -1764,7 +1795,7 @@ describe("PostgreSQL integration", () => {
       input: { action: "resend" as const },
     };
     const resend = await harness.run(requestDelivery(config, resendRequest));
-    expect(resend.status).toBe(202);
+    expect(resend.outcome).toBe("delivery_queued");
     if (!("deliveryId" in resend.body)) throw new Error("Expected a delivery result");
     const replayed = await harness.run(
       requestDelivery(config, { ...resendRequest, requestId: randomUUID() }),
@@ -1844,7 +1875,7 @@ describe("PostgreSQL integration", () => {
         input: { code, purpose: "login", contextId: "session-1" },
       }),
     );
-    expect(verified.status).toBe(200);
+    expect(verified.outcome).toBe("completed");
     expect(await count("challenge_secrets")).toBe(0);
   });
 
@@ -1909,7 +1940,7 @@ describe("PostgreSQL integration", () => {
     };
     const webhooks = await harness.run(
       WebhookHandler.pipe(
-        Effect.provide(WebhooksLive),
+        Effect.provide(WebhooksLive.pipe(Layer.provide(ProviderCallbacksLive))),
         Effect.provideService(RouterConfig, configuration),
         Effect.scoped,
       ),

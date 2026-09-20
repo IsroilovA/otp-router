@@ -5,10 +5,14 @@
   "packageManager": "pnpm@12.5.1",
   "dependencies": {
     "effect": "4.0.0-rc.116",
-    "otp-router": "file:../../artifacts/otp-router-0.1.0.tgz"
+    "@otp-router/engine": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "24.13.6",
     "typescript": "7.0.2"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.fixture.json",
+    "test": "node dist/smoke.js"
   }
 }

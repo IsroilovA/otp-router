@@ -4,20 +4,20 @@ import { connect } from "node:net";
 import { NodeServices } from "@effect/platform-node";
 import { SqlClient } from "effect/unstable/sql";
 import { PgClient } from "@effect/sql-pg";
-import { ConfigProvider, Context, Effect, Exit, Layer, Scope } from "effect";
+import { Redacted, Context, Effect, Exit, Layer, Scope } from "effect";
 import type { PgBoss } from "pg-boss";
-import { Router, type OperationResult } from "../src/challenges/contracts.js";
-import { RouterLive } from "../src/challenges/service.js";
+import { Router, type OperationResult } from "../packages/engine/src/challenges/contracts.js";
+import { RouterLive } from "../packages/engine/src/challenges/service.js";
+import { RouterConfig } from "../packages/engine/src/config/runtime.js";
 import {
-  RouterConfig,
   loadConfiguration,
   type Configuration,
   type RuntimeConfiguration,
-} from "../src/config/config.js";
-import { DatabaseLive } from "../src/database/client.js";
-import { DatabaseMigrationsLive } from "../src/database/migrations.js";
-import { Queue, QueueLive } from "../src/queue/client.js";
-import { initializeQueues } from "../src/queue/jobs.js";
+} from "../packages/engine/src/config/config.js";
+import { makeDatabaseLayer } from "../packages/engine/src/database/client.js";
+import { DatabaseMigrationsLive } from "../packages/engine/src/database/migrations.js";
+import { Queue, makeQueueLayer } from "../packages/engine/src/queue/client.js";
+import { initializeQueues } from "../packages/engine/src/queue/jobs.js";
 
 interface CommandResult {
   readonly stdout: string;
@@ -159,25 +159,20 @@ export const startRuntime = async (
   configuration: Configuration,
 ): Promise<IntegrationRuntime> => {
   const scope = await Effect.runPromise(Scope.make());
-  const configProvider = ConfigProvider.fromUnknown(
-    Object.fromEntries([["DATABASE_URL", databaseUrl]]),
-  );
   try {
     const databaseContext = await Effect.runPromise(
       buildInScope(
-        DatabaseLive.pipe(
+        makeDatabaseLayer(Redacted.make(databaseUrl)).pipe(
           Layer.tap((context) => DatabaseMigrationsLive.pipe(Layer.build, Effect.provide(context))),
           Layer.provide(NodeServices.layer),
         ),
         scope,
-      ).pipe(Effect.provideService(ConfigProvider.ConfigProvider, configProvider)),
+      ),
     );
     const pg = Context.get(databaseContext, PgClient.PgClient);
     const sql = Context.get(databaseContext, SqlClient.SqlClient);
     const queueContext = await Effect.runPromise(
-      buildInScope(QueueLive, scope).pipe(
-        Effect.provideService(ConfigProvider.ConfigProvider, configProvider),
-      ),
+      buildInScope(makeQueueLayer(Redacted.make(databaseUrl)), scope),
     );
     const queue = Context.get(queueContext, Queue);
     await Effect.runPromise(initializeQueues.pipe(Effect.provideService(Queue, queue)));
