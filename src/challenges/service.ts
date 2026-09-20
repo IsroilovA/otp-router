@@ -1,9 +1,10 @@
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient, type SqlError } from "effect/unstable/sql";
 import { PgClient } from "@effect/sql-pg";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, type Cause, type Schema } from "effect";
 import { RouterConfig } from "../config/config.js";
 import { Queue } from "../queue/client.js";
-import { logEvent } from "../diagnostics/log.js";
+import type { QueueOperationError } from "../queue/jobs.js";
+import { logEvent, type ApplicationOperation, type FailureCategory } from "../diagnostics/log.js";
 import { count } from "../diagnostics/metrics.js";
 import { requestDelivery } from "../delivery/actions.js";
 import { DomainError, Router, type OperationResult } from "./contracts.js";
@@ -11,6 +12,81 @@ import { createChallenge } from "./create.js";
 import { verifyChallenge } from "./verify.js";
 import { cancelChallenge } from "./cancel.js";
 import { challengeStatus } from "./status.js";
+
+type InfrastructureError =
+  | SqlError.SqlError
+  | Schema.SchemaError
+  | Cause.NoSuchElementError
+  | QueueOperationError;
+
+const sqlFailureCategories = {
+  ConnectionError: "database_connection",
+  AuthenticationError: "database_authentication",
+  AuthorizationError: "database_authorization",
+  SqlSyntaxError: "database_syntax",
+  UniqueViolation: "database_unique_violation",
+  ConstraintError: "database_constraint",
+  DeadlockError: "database_deadlock",
+  SerializationError: "database_serialization",
+  LockTimeoutError: "database_lock_timeout",
+  StatementTimeoutError: "database_statement_timeout",
+  UnknownError: "database_unknown",
+} satisfies Record<SqlError.SqlErrorReason["_tag"], FailureCategory>;
+
+const failureCategory = (error: DomainError | InfrastructureError): FailureCategory | undefined => {
+  switch (error._tag) {
+    case "DomainError":
+      return undefined;
+    case "SqlError":
+      return sqlFailureCategories[error.reason._tag];
+    case "QueueOperationError":
+      return "queue_operation";
+    case "SchemaError":
+      return "schema_validation";
+    case "NoSuchElementError":
+      return "missing_data";
+  }
+};
+
+// Observe expected failures before normalizing infrastructure details for callers.
+// tapError/mapError leave defects and interruption in their original Cause channels.
+export const observeOperation = <E extends DomainError, R>(
+  operation: ApplicationOperation,
+  effect: Effect.Effect<OperationResult, E | InfrastructureError, R>,
+  requestId?: string,
+) =>
+  effect.pipe(
+    Effect.tap((result) =>
+      count(operation, "error" in result.body ? result.body.error.code : "completed"),
+    ),
+    Effect.tap((result) =>
+      logEvent({
+        event: "application_operation",
+        operation,
+        outcome: `${operation}:${result.status}`,
+        ...(requestId === undefined ? {} : { requestId }),
+      }),
+    ),
+    Effect.tapError((error) => {
+      const reason = error instanceof DomainError ? error.code : "temporarily_unavailable";
+      const category = failureCategory(error);
+      return count(operation, reason).pipe(
+        Effect.andThen(
+          logEvent({
+            event: "application_operation",
+            operation,
+            outcome: "rejected",
+            reason,
+            ...(category === undefined ? {} : { failureCategory: category }),
+            ...(requestId === undefined ? {} : { requestId }),
+          }),
+        ),
+      );
+    }),
+    Effect.mapError((error) =>
+      error instanceof DomainError ? error : new DomainError({ code: "temporarily_unavailable" }),
+    ),
+  );
 
 export const RouterLive = Layer.effect(
   Router,
@@ -25,48 +101,17 @@ export const RouterLive = Layer.effect(
         Effect.provideService(PgClient.PgClient, pg),
         Effect.provideService(Queue, queue),
         Effect.provideService(SqlClient.SqlClient, pg),
-        Effect.mapError((error) =>
-          error instanceof DomainError
-            ? error
-            : new DomainError({ code: "temporarily_unavailable" }),
-        ),
-      );
-    const observe = (
-      name: "create" | "verify" | "cancel" | "deliver" | "status",
-      effect: Effect.Effect<OperationResult, DomainError>,
-      requestId?: string,
-    ) =>
-      effect.pipe(
-        Effect.tap((result) =>
-          count(name, "error" in result.body ? result.body.error.code : "completed"),
-        ),
-        Effect.tap((result) =>
-          logEvent({
-            event: "application_operation",
-            outcome: `${name}:${result.status}`,
-            ...(requestId === undefined ? {} : { requestId }),
-          }),
-        ),
-        Effect.tapError((error) => count(name, error.code)),
-        Effect.tapError((error) =>
-          logEvent({
-            event: "application_operation",
-            outcome: "rejected",
-            reason: error.code,
-            ...(requestId === undefined ? {} : { requestId }),
-          }),
-        ),
       );
     return {
       create: (request) =>
-        observe("create", provide(createChallenge(config, request)), request.requestId),
-      status: (id) => observe("status", provide(challengeStatus(config, id))),
+        observeOperation("create", provide(createChallenge(config, request)), request.requestId),
+      status: (id) => observeOperation("status", provide(challengeStatus(config, id))),
       verify: (request) =>
-        observe("verify", provide(verifyChallenge(config, request)), request.requestId),
+        observeOperation("verify", provide(verifyChallenge(config, request)), request.requestId),
       cancel: (request) =>
-        observe("cancel", provide(cancelChallenge(config, request)), request.requestId),
+        observeOperation("cancel", provide(cancelChallenge(config, request)), request.requestId),
       deliver: (request) =>
-        observe("deliver", provide(requestDelivery(config, request)), request.requestId),
+        observeOperation("deliver", provide(requestDelivery(config, request)), request.requestId),
     };
   }),
 );

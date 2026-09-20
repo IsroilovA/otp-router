@@ -138,10 +138,40 @@ export const ErrorBody = Schema.Struct({
     verificationState: Schema.optionalKey(Schema.Literals(["active", "locked"])),
   }),
 });
-export class DomainError extends Data.TaggedError("DomainError")<{
-  readonly code: ErrorCode;
+export class DomainError<Code extends ErrorCode = ErrorCode> extends Data.TaggedError(
+  "DomainError",
+)<{
+  readonly code: Code;
   readonly retryAt?: string;
 }> {}
+
+type MutationErrorCode =
+  | "challenge_not_found"
+  | "idempotency_conflict"
+  | "request_in_progress"
+  | "temporarily_unavailable";
+type ActiveChallengeErrorCode = "challenge_state_conflict" | "challenge_unavailable";
+export type CreateChallengeError = DomainError<
+  | MutationErrorCode
+  | "invalid_recipient"
+  | "policy_not_allowed"
+  | "delivery_unavailable"
+  | "delivery_option_not_allowed"
+  | "rate_limited"
+>;
+export type ChallengeStatusError = DomainError<"challenge_not_found" | "temporarily_unavailable">;
+export type VerifyChallengeError = DomainError<
+  MutationErrorCode | ActiveChallengeErrorCode | "invalid_request" | "rate_limited"
+>;
+export type DeliveryActionError = DomainError<
+  | MutationErrorCode
+  | ActiveChallengeErrorCode
+  | "delivery_unavailable"
+  | "delivery_option_not_allowed"
+  | "rate_limited"
+  | "cooldown_active"
+>;
+export type CancelChallengeError = DomainError<MutationErrorCode | "challenge_state_conflict">;
 export const ResponseBody = Schema.Union([Snapshot, VerificationResult, DeliveryResult, ErrorBody]);
 export type ResponseBody = typeof ResponseBody.Type;
 export interface OperationResult {
@@ -162,17 +192,17 @@ export class Router extends Context.Service<
   {
     readonly create: (
       request: Mutation<CreateInput>,
-    ) => Effect.Effect<OperationResult, DomainError>;
-    readonly status: (id: string) => Effect.Effect<OperationResult, DomainError>;
+    ) => Effect.Effect<OperationResult, CreateChallengeError>;
+    readonly status: (id: string) => Effect.Effect<OperationResult, ChallengeStatusError>;
     readonly verify: (
       request: ChallengeMutation<VerifyInput>,
-    ) => Effect.Effect<OperationResult, DomainError>;
+    ) => Effect.Effect<OperationResult, VerifyChallengeError>;
     readonly deliver: (
       request: ChallengeMutation<DeliveryInput>,
-    ) => Effect.Effect<OperationResult, DomainError>;
+    ) => Effect.Effect<OperationResult, DeliveryActionError>;
     readonly cancel: (
       request: ChallengeMutation<Record<string, never>>,
-    ) => Effect.Effect<OperationResult, DomainError>;
+    ) => Effect.Effect<OperationResult, CancelChallengeError>;
   }
 >()("otp-router/Router") {}
 export const statusForError = (code: ErrorCode): number => {

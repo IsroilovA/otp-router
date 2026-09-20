@@ -12,6 +12,8 @@ The HTTP API and worker share challenge and delivery operations. PostgreSQL hold
 
 Domain operations use the pinned Effect 4 release candidate with explicit expected failures. Layers construct scoped resources; effects run at process, transport, and test boundaries. Features do not import HTTP handlers or worker entry points.
 
+`DomainError` preserves its literal error code, and each application operation declares its own error subset. The service boundary records a fixed infrastructure failure category before returning `temporarily_unavailable`; it preserves domain errors, defects, and interruption separately. Committed rejection responses, such as an incorrect guess, remain operation results so idempotent replay does not repeat their effects.
+
 ## Delivery and verification
 
 Delivery state and verification state are independent. A receipt cannot verify a challenge, and an exhausted delivery route does not invalidate its code.

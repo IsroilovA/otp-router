@@ -52,6 +52,8 @@ Encryption, verification, and fingerprint-key overlap follow the [security guide
 
 Keep health and Prometheus metrics on the internal listener. Restrict access through deployment networking. JSON logs report operation outcomes and safe failure categories; never log raw errors or sensitive payloads. Use bounded metric labels, not challenge IDs, recipients, or request paths.
 
+Application logs include `operation` and, for infrastructure failures, `failureCategory`: `database_*` categories distinguish connection, authentication, authorization, syntax, constraint, and concurrency/timeout failures; `queue_operation`, `schema_validation`, and `missing_data` identify other boundaries. Mutation logs include the request ID for correlation. Clients still receive `temporarily_unavailable`; logs omit raw SQL, error messages, causes, and schema input values. Domain rejections carry their normal `reason` without an infrastructure category.
+
 Cleanup enforces bounded retention and erases terminal secrets. Request paths enforce expiry independently of cleanup. Quota usage must survive challenge-history deletion.
 
 Set `workerConcurrency` in the entry file for the deployment's workload. Each process currently has fixed pool limits of 10 application connections and 6 queue connections, including API-only processes; budget PostgreSQL capacity across replicas. Application transactions use a 2-second lock timeout and a 5-second statement timeout. Pool limits, transaction deadlines, retention, and queue recovery timings are implementation settings, not environment-variable knobs. Run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts`; historical measurements are in the [research archive](research/benchmark.md).

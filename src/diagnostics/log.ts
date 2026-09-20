@@ -1,5 +1,21 @@
 import { Effect } from "effect";
 import type { ErrorCode } from "../challenges/contracts.js";
+export type ApplicationOperation = "create" | "verify" | "cancel" | "deliver" | "status";
+export type FailureCategory =
+  | "database_connection"
+  | "database_authentication"
+  | "database_authorization"
+  | "database_syntax"
+  | "database_unique_violation"
+  | "database_constraint"
+  | "database_deadlock"
+  | "database_serialization"
+  | "database_lock_timeout"
+  | "database_statement_timeout"
+  | "database_unknown"
+  | "queue_operation"
+  | "schema_validation"
+  | "missing_data";
 export interface Diagnostic {
   readonly event: "application_operation" | "provider_send" | "callback" | "recovery";
   readonly requestId?: string;
@@ -8,6 +24,8 @@ export interface Diagnostic {
   readonly providerInstanceId?: string;
   readonly outcome: string;
   readonly reason?: ErrorCode;
+  readonly operation?: ApplicationOperation;
+  readonly failureCategory?: FailureCategory;
   readonly elapsedMilliseconds?: number;
 }
 // Only callers with normalized fields cross this boundary. Never accept an error/Cause or request object.

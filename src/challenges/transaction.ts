@@ -9,7 +9,7 @@ export const domainTransaction = <A, E, R>(body: Effect.Effect<A, E, R>) =>
     body.pipe(
       Effect.map((value) => Result.succeed(value)),
       Effect.catch((error) =>
-        error instanceof DomainError ? Effect.succeed(Result.fail(error)) : Effect.fail(error),
+        error instanceof DomainError ? Effect.succeed(Result.fail<E>(error)) : Effect.fail(error),
       ),
     ),
   ).pipe(Effect.flatMap(Effect.fromResult));
