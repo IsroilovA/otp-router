@@ -26,6 +26,12 @@ The packed private tarball had SHA-256 `6a3194c20378c36fe58acb5799fe897fcad12f34
 
 These are local build digests, not registry publications. Rebuilding can change them because container base tags and generated archive metadata can change. The temporary installations, test containers, networks, and verification images were removed after verification.
 
+## Compose follow-up
+
+The 2026-09-20 Compose check built the standard image and started PostgreSQL plus the combined API/worker in an isolated project. HTTP creation reached fake-provider acceptance through the queue, replay returned the original response, and unauthenticated access failed. The application ran as `node`, its configuration mount was read-only, and the health port was not published. After `down` and `up` with the same volume and keys, readiness recovered and delivery state and replay remained intact. The test removed its containers, volume, network, image, and temporary secrets.
+
+This check exposed a restart failure when the database role and application schema both used `otp_router`. Migration startup now explicitly uses `public.effect_sql_migrations`, so PostgreSQL's search path cannot create a second history table. A real PostgreSQL regression test failed before the fix and passed afterward. Applied migration files are unchanged. This startup fix postdates the source and artifact digests above; those remain records of the earlier measurements.
+
 ## Reproduce
 
 From a checkout with Docker running:

@@ -1,4 +1,42 @@
 services:
+  router:
+    build: .
+    env_file: ${OTP_ROUTER_ENV_FILE:-.env}
+    environment:
+      DATABASE_URL: postgres://otp_router:local-development-only@postgres:5432/otp_router
+      OTP_ROUTER_HOST: 0.0.0.0
+      OTP_ROUTER_INTERNAL_HOST: 127.0.0.1
+    command:
+      - node
+      - dist/main.js
+      - --config
+      - /app/config/${OTP_ROUTER_CONFIG_FILE:-router.config.ts}
+    volumes:
+      - type: bind
+        source: ${OTP_ROUTER_CONFIG_DIR:-./examples/config}
+        target: /app/config
+        read_only: true
+        bind:
+          create_host_path: false
+    ports:
+      - "127.0.0.1:${OTP_ROUTER_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          fetch('http://127.0.0.1:3001/health/ready', { signal: AbortSignal.timeout(3000) })
+          .then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))
+      interval: 5s
+      timeout: 4s
+      start_period: 30s
+      retries: 12
+    restart: unless-stopped
+    stop_grace_period: 40s
   postgres:
     image: postgres:17
     environment:
@@ -6,7 +44,7 @@ services:
       POSTGRES_PASSWORD: local-development-only
       POSTGRES_DB: otp_router
     ports:
-      - "127.0.0.1:54329:5432"
+      - "127.0.0.1:${OTP_ROUTER_POSTGRES_PORT:-54329}:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -14,5 +52,6 @@ services:
       interval: 2s
       timeout: 5s
       retries: 15
+    restart: unless-stopped
 volumes:
   postgres-data:

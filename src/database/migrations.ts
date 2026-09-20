@@ -15,8 +15,10 @@ export const migrate = Effect.gen(function* () {
       yield* sql`SELECT pg_advisory_xact_lock(715736294138)`;
       // PgMigrator probes with a failing regclass cast before creating its history table.
       // Precreate the pinned migrator's exact table under our lock so that probe cannot abort this transaction.
-      yield* sql`CREATE TABLE IF NOT EXISTS effect_sql_migrations (migration_id integer PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now(), name text NOT NULL)`;
+      // Pin its schema: creating otp_router changes the default search path for the otp_router role.
+      yield* sql`CREATE TABLE IF NOT EXISTS public.effect_sql_migrations (migration_id integer PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now(), name text NOT NULL)`;
       yield* PgMigrator.run({
+        table: "public.effect_sql_migrations",
         loader: PgMigrator.fromRecord({
           "0001_initial_schema": initial,
           "0002_deployment_controls": controls,
@@ -24,7 +26,7 @@ export const migrate = Effect.gen(function* () {
       });
       const versions = yield* rows(
         Schema.Struct({ migration_id: Schema.Int }),
-        sql`SELECT migration_id FROM effect_sql_migrations ORDER BY migration_id DESC LIMIT 1`,
+        sql`SELECT migration_id FROM public.effect_sql_migrations ORDER BY migration_id DESC LIMIT 1`,
       );
       if (versions[0]?.migration_id !== 2)
         return yield* Effect.fail(new SchemaCompatibilityError());

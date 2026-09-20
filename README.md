@@ -5,7 +5,6 @@ OTP Router is a private self-hosted HTTP service for generating, delivering, and
 Start with [the running guide](docs/running.md). Real-provider configuration is documented in [provider setup](docs/provider-setup.md). The short local path is:
 
 ```sh
-pnpm install --frozen-lockfile
 cp .env.example .env
 chmod 600 .env
 node --input-type=module >> .env <<'NODE'
@@ -18,11 +17,10 @@ process.stdout.write(`OTP_ROUTER_VERIFICATION_KEY=${key()}\n`);
 process.stdout.write(`OTP_ROUTER_FINGERPRINT_KEY=${key()}\n`);
 process.stdout.write(`OTP_ROUTER_RECIPIENT_KEY=${key()}\n`);
 NODE
-pnpm db:up
-pnpm build
-node --env-file=.env dist/main.js --check-config --config "$PWD/examples/config/router.config.ts"
-node --env-file=.env dist/main.js --config "$PWD/examples/config/router.config.ts"
+docker compose up --build -d --wait
 ```
+
+Compose starts PostgreSQL and the combined HTTP API/worker at `http://127.0.0.1:3000`. pg-boss runs inside the router and stores its queue in PostgreSQL. `docker compose down` stops the stack and preserves the database volume. Keep the generated `.env` across restarts. See [Compose configuration](docs/running.md#docker-compose) for real providers, configuration mounts, and backend networking.
 
 The deterministic example provider is local and does not send real messages. Use a designated test recipient and explicit authorization before testing a real provider. Do not put OTPs, credentials, full recipient numbers, context IDs, raw provider payloads, or authorization headers in logs.
 

@@ -320,6 +320,24 @@ describe("transaction-local queue integration", () => {
     });
   });
 
+  it("keeps migration history in public when the application schema leads the search path", async () => {
+    const h = current();
+    await h.run(
+      h.pg.withTransaction(
+        Effect.gen(function* () {
+          yield* h.pg`SET LOCAL search_path TO otp_router, public`;
+          yield* migrate.pipe(Effect.provide(NodeContext.layer));
+          const history = yield* single(
+            Schema.Struct({ shadow: Schema.NullOr(Schema.String), count: Schema.Number }),
+            h.pg`SELECT to_regclass('otp_router.effect_sql_migrations')::text AS shadow,
+              (SELECT count(*)::integer FROM public.effect_sql_migrations) AS count`,
+          );
+          expect(history).toEqual({ shadow: null, count: 2 });
+        }),
+      ),
+    );
+  });
+
   it("coordinates concurrent migration starts and rejects a future schema", async () => {
     const h = current();
     await Promise.all([

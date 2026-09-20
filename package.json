@@ -19,7 +19,7 @@
     "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning",
     "test": "vitest run",
     "test:watch": "vitest",
-    "db:up": "docker compose up -d --wait",
+    "db:up": "docker compose up -d --wait postgres",
     "db:down": "docker compose down",
     "start": "node dist/main.js"
   },
