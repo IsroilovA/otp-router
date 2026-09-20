@@ -12,6 +12,8 @@ export default Effect.gen(function* () {
     expires_at timestamptz NOT NULL, terminal_at timestamptz,
     incorrect_guesses integer NOT NULL DEFAULT 0 CHECK (incorrect_guesses >= 0),
     send_count integer NOT NULL DEFAULT 0 CHECK (send_count >= 0),
+    public_revision integer NOT NULL DEFAULT 0 CHECK (public_revision >= 0),
+    public_snapshot jsonb, processing_started boolean NOT NULL DEFAULT false,
     routing_revision integer NOT NULL DEFAULT 1 CHECK (routing_revision > 0),
     automatic_stopped boolean NOT NULL DEFAULT false, current_delivery_id uuid NOT NULL,
     next_user_send_at timestamptz NOT NULL,
@@ -37,6 +39,21 @@ export default Effect.gen(function* () {
   yield* sql`CREATE UNIQUE INDEX deliveries_advancement ON otp_router.deliveries(challenge_id,routing_revision,route_position) WHERE reason = 'fallback'`;
   yield* sql`CREATE INDEX deliveries_challenge ON otp_router.deliveries(challenge_id)`;
   yield* sql`CREATE INDEX deliveries_pending ON otp_router.deliveries(due_at) WHERE state = 'pending'`;
+  yield* sql`CREATE TABLE otp_router.challenge_events (
+    id uuid PRIMARY KEY, challenge_id uuid NOT NULL, revision integer NOT NULL CHECK (revision > 0),
+    occurred_at timestamptz NOT NULL, body text NOT NULL,
+    UNIQUE(challenge_id,revision)
+  )`;
+  yield* sql`CREATE INDEX challenge_events_retention ON otp_router.challenge_events(occurred_at)`;
+  yield* sql`CREATE TABLE otp_router.notifications (
+    event_id uuid PRIMARY KEY REFERENCES otp_router.challenge_events(id) ON DELETE CASCADE,
+    state text NOT NULL DEFAULT 'pending' CHECK (state IN ('pending','delivering','delivered','failed')),
+    attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    next_attempt_at timestamptz NOT NULL, lease_until timestamptz,
+    last_status integer, last_failure text CHECK (last_failure IN ('http_error','transport_error','worker_recovery')),
+    delivered_at timestamptz
+  )`;
+  yield* sql`CREATE INDEX notifications_due ON otp_router.notifications(next_attempt_at) WHERE state IN ('pending','delivering')`;
   yield* sql`CREATE TABLE otp_router.provider_correlations (
     provider_instance_id text NOT NULL, reference text NOT NULL,
     delivery_id uuid NOT NULL REFERENCES otp_router.deliveries(id) ON DELETE CASCADE,

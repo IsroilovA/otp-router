@@ -1,3 +1,4 @@
+import { changed } from "./changes.js";
 import { domainTransaction } from "./transaction.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
@@ -32,6 +33,7 @@ export const verifyChallenge = (
   request: ChallengeMutation<VerifyInput>,
 ) =>
   domainTransaction(
+    config,
     Effect.gen(function* () {
       const op = {
         ...operation(
@@ -80,6 +82,7 @@ export const verifyChallenge = (
         const verificationId = randomUUID();
         yield* sql`UPDATE otp_router.challenges SET verification_state = 'verified', verification_id = ${verificationId}, verified_at = ${time}, terminal_at = ${time}, routing_revision = routing_revision + 1, automatic_stopped = true WHERE id = ${challenge.id} AND verification_state = 'active'`;
         yield* eraseSecrets(challenge.id);
+        yield* changed(challenge.id);
         const response: OperationResult = {
           status: 200,
           replayed: false,
@@ -100,6 +103,7 @@ export const verifyChallenge = (
       }
       yield* sql`UPDATE otp_router.challenges SET incorrect_guesses = incorrect_guesses + 1 WHERE id = ${challenge.id} AND verification_state = 'active'`;
       yield* countQuotas(limits, randomUUID(), time);
+      yield* changed(challenge.id);
       const active = challenge.incorrect_guesses + 1 < challenge.snapshot.maxIncorrectGuesses;
       if (!active) yield* terminate(challenge, "locked", time);
       const response: OperationResult = {
@@ -110,7 +114,7 @@ export const verifyChallenge = (
             code: "incorrect_code",
             message: "The code is incorrect.",
             requestId: request.requestId,
-            verificationState: active ? "active" : "locked",
+            ...(active ? {} : { reason: "locked" as const }),
           },
         },
       };

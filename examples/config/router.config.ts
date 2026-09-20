@@ -18,8 +18,18 @@ const recipientKey = required("OTP_ROUTER_RECIPIENT_KEY");
 const keyRing = (value: string) => ({ active: "v1", keys: { v1: value } });
 const fakeProviderId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-primary");
 
+const webhookUrl = process.env["OTP_ROUTER_WEBHOOK_URL"];
+
 export default defineConfig({
   settings: {
+    ...(webhookUrl === undefined
+      ? {}
+      : {
+          webhook: {
+            url: webhookUrl,
+            signingSecret: required("OTP_ROUTER_WEBHOOK_SIGNING_SECRET"),
+          },
+        }),
     crypto: {
       deploymentId: "local-demo",
       encryption: keyRing(encryptionKey),

@@ -1,8 +1,10 @@
+import { changed } from "../challenges/changes.js";
+import { challengeTransaction as transaction } from "../challenges/transaction.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { databaseTime, transaction } from "../database/transaction.js";
+import { databaseTime } from "../database/transaction.js";
 import {
   ChallengeIdSchema,
   DeliveryIdSchema,
@@ -37,6 +39,7 @@ const stale = (challenge: Challenge, delivery: Delivery, job: DeliveryJob) =>
   (delivery.reason === "fallback" && challenge.automatic_stopped);
 export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
   transaction(
+    config,
     Effect.gen(function* () {
       const initial = yield* findDelivery(job.deliveryId);
       const original = yield* findChallenge(initial.challenge_id);
@@ -54,6 +57,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* duration("queue", Math.max(0, time.getTime() - delivery.due_at.getTime()));
       const sql = yield* SqlClient.SqlClient;
       if (delivery.state === "dispatching") {
+        if (challenge.verification_state === "active") yield* changed(challenge.id);
         yield* count("recovery", "uncertain");
         yield* sql`UPDATE otp_router.deliveries SET state = 'uncertain', acceptance = 'unknown', diagnostic_code = 'worker_recovery' WHERE id = ${delivery.id} AND state = 'dispatching'`;
         return undefined;
@@ -64,6 +68,8 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE id = ${delivery.id} AND state = 'pending'`;
         return undefined;
       }
+      yield* sql`UPDATE otp_router.challenges SET processing_started = true WHERE id = ${challenge.id}`;
+      yield* changed(challenge.id);
       const sharedBudget = yield* checkQuotas(
         commonSendLimits(config.settings, challenge.recipient_token),
         time,

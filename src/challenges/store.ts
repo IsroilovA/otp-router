@@ -1,3 +1,4 @@
+import { changed } from "./changes.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows, single } from "../database/query.js";
@@ -50,6 +51,7 @@ export const terminate = (
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE otp_router.challenges SET verification_state = ${state}, terminal_at = ${time}, routing_revision = routing_revision + 1, automatic_stopped = true WHERE id = ${challenge.id} AND verification_state = 'active'`;
     yield* eraseSecrets(challenge.id);
+    yield* changed(challenge.id);
     return yield* findChallenge(challenge.id);
   });
 export const expire = (challenge: Challenge, time: Date) =>

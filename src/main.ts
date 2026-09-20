@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { replayNotification } from "./delivery/notifications/send.js";
 import { createServer, type Server } from "node:http";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -126,19 +127,13 @@ const serve = Effect.gen(function* () {
   );
   const database = yield* Layer.build(infrastructure);
   yield* Effect.gen(function* () {
-    if (process.argv.includes("--invalidate-restored")) {
-      let count = yield* invalidateRestoredChallenges;
-      while (count > 0) count = yield* invalidateRestoredChallenges;
-      yield* Effect.logInfo(
-        "restored_challenges_invalidated_keep_traffic_stopped_until_quota_reconciliation",
+    if (!process.argv.includes("--invalidate-restored")) {
+      yield* validateStoredKeys(config.settings);
+      yield* validateDeploymentIdentity(
+        config.settings,
+        process.argv.includes("--adopt-recipient-key"),
       );
-      return;
     }
-    yield* validateStoredKeys(config.settings);
-    yield* validateDeploymentIdentity(
-      config.settings,
-      process.argv.includes("--adopt-recipient-key"),
-    );
     if (process.argv.includes("--adopt-recipient-key")) {
       yield* Effect.logInfo("recipient_key_identity_adopted");
       return;
@@ -146,6 +141,26 @@ const serve = Effect.gen(function* () {
     const queue = yield* Layer.build(QueueLive);
     yield* Effect.gen(function* () {
       yield* initializeQueues;
+      if (process.argv.includes("--invalidate-restored")) {
+        let count = yield* invalidateRestoredChallenges(config);
+        while (count > 0) count = yield* invalidateRestoredChallenges(config);
+        yield* Effect.logInfo(
+          "restored_challenges_invalidated_keep_traffic_stopped_until_quota_reconciliation",
+        );
+        return;
+      }
+
+      const replayIndex = process.argv.indexOf("--replay-webhook");
+      if (replayIndex >= 0) {
+        const eventId = yield* Schema.decodeUnknownEffect(Schema.String.check(Schema.isUUID()))(
+          process.argv[replayIndex + 1],
+        );
+        if (config.settings.webhook === undefined)
+          return yield* Effect.die(new Error("Configure a webhook destination before replay"));
+        const replayed = yield* replayNotification(eventId);
+        yield* Effect.logInfo(replayed ? "webhook_replay_queued" : "failed_webhook_not_found");
+        return;
+      }
       if (process.argv.includes("--check-schema")) {
         yield* Effect.logInfo("schemas_compatible");
         return;

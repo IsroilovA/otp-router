@@ -19,18 +19,13 @@ const API_KEY = "test-api-key-with-at-least-thirty-two-bytes";
 
 const snapshot: Snapshot = {
   challengeId: "challenge_1",
-  purpose: "login",
-  contextId: "flow_1",
-  createdAt: "2026-09-20T10:00:00.000Z",
+  revision: 1,
+  state: "queued",
+  reason: null,
+  channel: null,
+  provider: null,
   expiresAt: "2026-09-20T10:05:00.000Z",
   serverTime: "2026-09-20T10:00:00.000Z",
-  verificationState: "active",
-  delivery: {
-    deliveryId: "delivery_1",
-    channel: "sms",
-    state: "pending",
-    routing: "pending",
-  },
   actions: {
     verify: { allowed: true },
     resend: { allowed: false, reason: "cooldown_active", availableAt: "2026-09-20T10:00:30.000Z" },

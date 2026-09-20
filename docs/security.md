@@ -36,4 +36,6 @@ During encryption, verification, or fingerprint-key rotation, add a new key ID, 
 
 Keep the recipient-lookup key stable. Replacing it changes quota identities. Stop every API and worker, invalidate active challenges, then reconstruct complete usage from a trusted source or wait a full longest quota window from the stop time. Install the replacement consistently across roles and use the incident-only adoption command in the [operations guide](operations.md#recipient-key-replacement).
 
+Outbound webhook authentication uses a dedicated 32-byte signing secret and the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers. It must be independent of API keys, encryption/verification keys, and provider callback secrets. Event bodies omit recipients, codes, context IDs, and raw provider data. Receivers authenticate exact bytes and timestamp before durable ingestion. Retained failed notifications contain only these safe snapshots and persist until diagnosis/replay succeeds. See [webhooks](webhooks.md).
+
 API credentials rotate independently through a brief overlap of two equally privileged keys. Rotation must not change idempotency identities or quotas.

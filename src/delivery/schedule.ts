@@ -1,3 +1,4 @@
+import { changed } from "../challenges/changes.js";
 import { randomUUID } from "node:crypto";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
@@ -24,5 +25,6 @@ export const schedule = (
       deliveryId: id,
       routingRevision: challenge.routing_revision,
     });
+    yield* changed(challenge.id);
     return id;
   });

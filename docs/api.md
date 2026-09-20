@@ -48,7 +48,7 @@ curl --fail-with-body -sS "$OTP_ROUTER_URL/v1/challenges/$CHALLENGE_ID" \
   -H "Authorization: Bearer $OTP_ROUTER_API_KEY"
 ```
 
-Creation returns `verificationState: "active"` and initially `delivery.state: "pending"`. Read status again after the worker runs: the fake provider moves delivery to `accepted`. It never sends a message, exposes the code, or reports `delivered`, so this demo cannot complete successful verification. The [process tests](../tests/process.test.ts) cover the full create/send/verify path with an isolated test sink.
+Creation returns `state: "queued"`, revision 1, and null provider/channel. The fake provider later moves it through `sending` to `accepted`. It never sends a message or exposes the code, so this demo cannot complete successful verification. Configure [outbound webhooks](webhooks.md) to receive those changes without polling. The [process tests](../tests/process.test.ts) cover the full create/send/verify path with an isolated test sink.
 
 Repeat the creation curl with the same `CREATE_BODY` and key, adding `-i` to see `Idempotency-Replayed: true`; this does not send again. Finish the local flow by cancelling it:
 
@@ -66,7 +66,28 @@ With an authorized real-provider test, post the received code and original purpo
 
 Creation accepts an international phone number, purpose, context ID, and policy. Optional locale, routing context, and initial delivery choice remain bounded by deployment configuration. Creation returns after durable work commits; it does not wait for a provider.
 
-Read status to obtain verification state, delivery state, and action forecasts. Status does not contact providers. Use `expiresAt` and `serverTime` for countdowns. An action's availability time or `Retry-After` never extends validity.
+Creation, reconciliation GET, cancellation, delivery-result `challenge`, and webhook `challenge` use the same snapshot schema:
+
+```json
+{"challengeId":"6bd2b39a-11ac-4fc7-bc02-d928d6929532","revision":1,"state":"queued","reason":null,"channel":null,"provider":null,"expiresAt":"2026-09-21T12:05:00.000Z","serverTime":"2026-09-21T12:00:00.000Z","actions":{"verify":{"allowed":true},"resend":{"allowed":false,"reason":"cooldown_active","availableAt":"2026-09-21T12:00:30.000Z"},"next":{"allowed":false,"reason":"no_next_provider"},"select":{"allowed":false,"reason":"manual_selection_disabled","choices":[]},"cancel":{"allowed":true}}}
+```
+
+| State | Meaning |
+| --- | --- |
+| `queued` | Initial durable delivery work awaits processing. |
+| `sending` | Processing has begun, including automatic fallback. Fallback never regresses to `queued`. |
+| `accepted` | At least one provider accepted a send whose acceptance has not been invalidated by confirmed final failure. This does not promise delivery. |
+| `uncertain` | Acceptance remains unknown, with no valid confirmed acceptance. No automatic resend or fallback. |
+| `verified` | The code was verified; final. |
+| `failed` | No automatic attempts remain without acceptance, or the challenge ended without verification. |
+
+Safe reasons are `expired`, `cancelled`, `locked`, `delivery_failed`, `delivery_uncertain`, `invalid_recipient`, `rate_limited`, and `provider_unavailable`; otherwise `reason` is null. Delivery failure alone can leave verification available until expiry. A failed or uncertain resend preserves an earlier still-valid acceptance. Authenticated late evidence can resolve uncertainty or invalidate acceptance. Terminal verification states never reopen.
+
+`provider` is null until confirmed acceptance, then contains the saved instance `id` and configured display `label`; `channel` describes that acceptance. During a new send they can continue identifying the prior acceptance. There is no public attempt history or routing state.
+
+`revision` increases only for meaningful committed snapshot changes. Reads refresh `serverTime` without revision churn; an overdue read can materialize the actual expiry transition once. Use GET for reconciliation, and [challenge.updated](webhooks.md) for normal updates. No follow-up fetch is required to interpret an event.
+
+Action forecasts describe the last published transition. Use `availableAt` as an absolute earliest retry time, and `expiresAt`/`serverTime` for countdowns. A timed denial can be reconsidered once its deadline passes without waiting for a new event. Stop all actions at expiry. A deadline at or after expiry offers no useful retry window. Shared quotas, restrictions, and configuration can change independently, so every submitted action is revalidated. Neither a forecast nor `Retry-After` reserves capacity or extends validity.
 
 Verification checks the supplied purpose and context before comparing the code. A successful response contains a stable verification ID and the stored binding. The adopting backend must consume that result for its intended business action only once.
 
@@ -76,7 +97,7 @@ Delivery actions and cancellation follow the [routing rules](routing.md). Cancel
 
 Every mutation requires an `Idempotency-Key` of one to 128 visible ASCII characters (`!` through `~`, without spaces). Use a random key for each intended action and retain it for retries. Do not embed codes or recipient information in keys.
 
-Keys are scoped to deployment, operation, and target challenge where applicable. A matching replay returns the original status and body with `Idempotency-Replayed: true`. That snapshot may be stale; read status when current state is needed. Changed validated input conflicts with the saved operation.
+Keys are scoped to deployment, operation, and target challenge where applicable. A matching replay returns the original status and body with `Idempotency-Replayed: true`. That snapshot may be stale; apply snapshots only when their revision exceeds the one already stored. Reconcile with GET when needed. A webhook can arrive before the creation response. Changed validated input conflicts with the saved operation.
 
 Verification fingerprints separate the binding from the submitted code. While active, a changed code conflicts. After a terminal transition erases code fingerprints, a syntactically valid changed code can replay the original result if the key and non-code fields match. This creates no new verification.
 
@@ -100,7 +121,7 @@ Application JSON bodies are limited to 16 KiB. Common client decisions are:
 | 409 `idempotency_conflict` | The key was used with different validated input; recover the original request. |
 | 409 `request_in_progress` | Retry the same key and payload after a bounded delay. |
 | 409 `challenge_state_conflict` | Read current status and reconcile the flow; do not blindly resubmit. |
-| 422 `incorrect_code` | Inspect `error.verificationState`; `locked` ends further guesses. |
+| 422 `incorrect_code` | `error.reason: "locked"` ends further guesses; otherwise the code was incorrect while still active. |
 | 429 `cooldown_active` or `rate_limited` | Respect `Retry-After` and optional `error.retryAt`; expiry stays fixed. |
 | Lost response, 500, or 503 | Retry with bounded backoff using the same key and payload; the outcome may have committed. |
 

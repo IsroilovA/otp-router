@@ -221,17 +221,16 @@ const readSink = async (path: string): Promise<ReadonlyArray<SinkEntry>> => {
 
 const MinimalSnapshot = Schema.Struct({
   challengeId: Schema.String.check(Schema.isUUID()),
-  delivery: Schema.Struct({
-    deliveryId: Schema.String.check(Schema.isUUID()),
-    state: Schema.String,
-  }),
+  state: Schema.String,
 });
 type MinimalSnapshot = typeof MinimalSnapshot.Type;
 
-const deliveryIdFrom = (observation: HttpObservation): string => {
-  const deliveryId = observation.snapshot?.delivery.deliveryId;
-  if (deliveryId === undefined) throw new Error("Challenge response omitted its delivery ID");
-  return deliveryId;
+const deliveryIdFrom = async (observation: HttpObservation): Promise<string> => {
+  const id = observation.snapshot?.challengeId;
+  if (id === undefined) throw new Error("Challenge response omitted its challenge ID");
+  return psql(
+    `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${id}' AND reason = 'initial'`,
+  );
 };
 
 interface HttpObservation {
@@ -781,7 +780,7 @@ describe("local capacity benchmark", () => {
     await stopProcess(workerProcess);
     workerProcess = undefined;
     const crash = await createChallenge("recovery-crash", true);
-    const crashDeliveryId = deliveryIdFrom(crash);
+    const crashDeliveryId = await deliveryIdFrom(crash);
     workerProcess = startProcess(
       args,
       processEnvironment("worker", workerPort, workerInternalPort, true),

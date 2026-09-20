@@ -37,22 +37,6 @@ export const DeliveryInput = Schema.Union([
   Schema.Struct({ action: Schema.Literal("select"), choice: Choice }),
 ]);
 export type DeliveryInput = typeof DeliveryInput.Type;
-export const VerificationState = Schema.Literals([
-  "active",
-  "verified",
-  "locked",
-  "expired",
-  "cancelled",
-]);
-export const DeliveryState = Schema.Literals([
-  "pending",
-  "dispatching",
-  "accepted",
-  "delivered",
-  "failed",
-  "uncertain",
-  "suppressed",
-]);
 export const DeniedReason = Schema.Literals([
   "challenge_unavailable",
   "already_verified",
@@ -70,19 +54,24 @@ export const Action = Schema.Struct({
 });
 export const Snapshot = Schema.Struct({
   challengeId: Schema.String,
-  purpose: Identifier,
-  contextId: Opaque,
-  createdAt: Schema.String,
+  revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  state: Schema.Literals(["queued", "sending", "accepted", "uncertain", "verified", "failed"]),
+  reason: Schema.NullOr(
+    Schema.Literals([
+      "expired",
+      "cancelled",
+      "locked",
+      "delivery_failed",
+      "delivery_uncertain",
+      "invalid_recipient",
+      "rate_limited",
+      "provider_unavailable",
+    ]),
+  ),
+  channel: Schema.NullOr(Identifier),
+  provider: Schema.NullOr(Schema.Struct({ id: Identifier, label: Schema.String })),
   expiresAt: Schema.String,
   serverTime: Schema.String,
-  verificationState: VerificationState,
-  verifiedAt: Schema.optionalKey(Schema.String),
-  delivery: Schema.Struct({
-    deliveryId: Schema.String,
-    channel: Identifier,
-    state: DeliveryState,
-    routing: Schema.Literals(["pending", "waiting", "exhausted", "blocked"]),
-  }),
   actions: Schema.Struct({
     verify: Action,
     resend: Action,
@@ -101,6 +90,13 @@ export const Snapshot = Schema.Struct({
   }),
 });
 export type Snapshot = typeof Snapshot.Type;
+export const ChallengeEvent = Schema.Struct({
+  eventId: Schema.String.check(Schema.isUUID()),
+  type: Schema.Literal("challenge.updated"),
+  occurredAt: Schema.String,
+  challenge: Snapshot,
+});
+export type ChallengeEvent = typeof ChallengeEvent.Type;
 export const VerificationResult = Schema.Struct({
   verificationId: Schema.String,
   challengeId: Schema.String,
@@ -135,7 +131,7 @@ export const ErrorBody = Schema.Struct({
     message: Schema.String,
     requestId: Schema.String,
     retryAt: Schema.optionalKey(Schema.String),
-    verificationState: Schema.optionalKey(Schema.Literals(["active", "locked"])),
+    reason: Schema.optionalKey(Schema.Literal("locked")),
   }),
 });
 export class DomainError<Code extends ErrorCode = ErrorCode> extends Data.TaggedError(

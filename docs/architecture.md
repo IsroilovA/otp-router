@@ -4,8 +4,8 @@ The HTTP API and worker share challenge and delivery operations. PostgreSQL hold
 
 ## Responsibilities
 
-- `challenges/` owns creation, verification, cancellation, expiry, and secret retention.
-- `delivery/` owns provider selection, explicit sends, dispatch, and outcome reconciliation.
+- `challenges/` owns creation, verification, cancellation, expiry, secret retention, and transactional public snapshots/events.
+- `delivery/` owns provider selection, explicit sends, dispatch, outcome reconciliation, and independent outbound notification delivery.
 - `providers/` translates provider protocols into normalized acceptance and delivery outcomes. Adapters neither verify codes nor choose fallback providers.
 - `http/` authenticates and validates application requests and provider callbacks. `worker/` executes durable jobs.
 - `database/`, `queue/`, and `config/` own their resource lifecycles and startup boundaries.
@@ -16,7 +16,7 @@ Domain operations use the pinned Effect 4 release candidate with explicit expect
 
 ## Delivery and verification
 
-Delivery state and verification state are independent. A receipt cannot verify a challenge, and an exhausted delivery route does not invalidate its code.
+Internal delivery state and verification state are independent. One revisioned public state summarizes their observable result. A receipt cannot verify a challenge, and an exhausted delivery route does not invalidate its code.
 
 Each delivery record permits at most one provider invocation. The worker commits eligibility and quota reservation before contacting the provider. It stores the outcome in a separate transaction. Queue retries resume durable state and cannot authorize another invocation of a dispatched record.
 

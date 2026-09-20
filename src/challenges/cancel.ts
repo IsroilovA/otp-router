@@ -5,12 +5,13 @@ import { databaseTime } from "../database/transaction.js";
 import { DomainError, type ChallengeMutation, type OperationResult } from "./contracts.js";
 import { lockOperation, operation, replay, saveResult } from "./idempotency.js";
 import { expire, findChallenge, terminate } from "./store.js";
-import { snapshot } from "./snapshot.js";
+import { snapshot } from "./publication.js";
 export const cancelChallenge = (
   config: RuntimeConfiguration,
   request: ChallengeMutation<Record<string, never>>,
 ) =>
   domainTransaction(
+    config,
     Effect.gen(function* () {
       const op = operation(config.settings.crypto, request, "cancel");
       yield* lockOperation(op);

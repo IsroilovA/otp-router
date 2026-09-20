@@ -28,6 +28,28 @@ export const Policy = Schema.Struct({
 export type Policy = typeof Policy.Type;
 export const Settings = Schema.Struct({
   crypto: CryptoConfig,
+  webhook: Schema.optionalKey(
+    Schema.Struct({
+      url: Schema.String.check(
+        Schema.makeFilter((value) => {
+          try {
+            const url = new URL(value);
+            return (
+              url.username === "" &&
+              url.password === "" &&
+              url.hash === "" &&
+              (url.protocol === "https:" ||
+                (url.protocol === "http:" &&
+                  ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)))
+            );
+          } catch {
+            return false;
+          }
+        }),
+      ),
+      signingSecret: Schema.String.check(Schema.isPattern(/^whsec_[A-Za-z0-9+/]{43}=$/)),
+    }),
+  ),
   apiKeys: Schema.Array(Schema.String.pipe(Schema.check(Schema.isMinLength(32)))).pipe(
     Schema.check(Schema.isMinLength(1)),
     Schema.check(Schema.isMaxLength(2)),
@@ -137,6 +159,22 @@ export const loadConfiguration = (configuration: Configuration) =>
     yield* validateCrypto(settings.crypto).pipe(
       Effect.mapError(() => new ConfigurationError({ reason: "invalid_keys" })),
     );
+    if (settings.webhook !== undefined) {
+      const secret = Buffer.from(settings.webhook.signingSecret.slice(6), "base64");
+      const cryptoKeys = [
+        settings.crypto.recipientKey,
+        ...Object.values(settings.crypto.encryption.keys),
+        ...Object.values(settings.crypto.verification.keys),
+        ...Object.values(settings.crypto.fingerprint.keys),
+      ];
+      if (
+        cryptoKeys.some((key) => secret.equals(Buffer.from(key, "base64url"))) ||
+        settings.apiKeys.some(
+          (key) => key === settings.webhook?.signingSecret || key === secret.toString("base64"),
+        )
+      )
+        return yield* invalid("invalid_keys");
+    }
     const providers = yield* buildProviders(configuration);
     const locales = yield* Schema.decodeUnknownEffect(Schema.Array(LocaleSchema))([
       ...new Set([settings.defaultLocale, ...settings.fallbackLocales]),

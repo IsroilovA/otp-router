@@ -79,11 +79,6 @@ const createInput = {
   policyId: "login",
 };
 
-const deliveryIdFrom = (result: OperationResult): string => {
-  if (!("delivery" in result.body)) throw new Error("Expected a challenge snapshot");
-  return result.body.delivery.deliveryId;
-};
-
 const challengeIdFrom = (result: OperationResult): string => {
   if (!("challengeId" in result.body)) throw new Error("Expected a challenge result");
   return result.body.challengeId;
@@ -123,6 +118,19 @@ describe("PostgreSQL fault boundaries", () => {
   const observer = (): IntegrationRuntime => {
     if (control === undefined) throw new Error("Control runtime is not initialized");
     return control;
+  };
+
+  const deliveryIdFrom = async (result: OperationResult): Promise<string> => {
+    const id = challengeIdFrom(result);
+    const harness = observer();
+    return (
+      await harness.run(
+        single(
+          Schema.Struct({ id: Schema.String }),
+          harness.pg`SELECT id FROM otp_router.deliveries WHERE challenge_id = ${id} AND reason = 'initial'`,
+        ),
+      )
+    ).id;
   };
 
   const create = (operationKey: string) =>
@@ -384,7 +392,7 @@ describe("PostgreSQL fault boundaries", () => {
     await app().run(
       dispatch(app().configuration, {
         version: 1,
-        deliveryId: deliveryIdFrom(recovered),
+        deliveryId: await deliveryIdFrom(recovered),
         routingRevision: 1,
       }),
     );

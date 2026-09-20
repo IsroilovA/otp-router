@@ -58,6 +58,12 @@ Cleanup enforces bounded retention and erases terminal secrets. Request paths en
 
 Set `workerConcurrency` in the entry file for the deployment's workload. Each process currently has fixed pool limits of 10 application connections and 6 queue connections, including API-only processes; budget PostgreSQL capacity across replicas. Application transactions use a 2-second lock timeout and a 5-second statement timeout. Pool limits, transaction deadlines, retention, and queue recovery timings are implementation settings, not environment-variable knobs. Run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts`; historical measurements are in the [research archive](research/benchmark.md).
 
+## Outbound notifications
+
+Configure the destination and independent signing secret as described in [webhooks](webhooks.md). Monitor pending age, expired leases, and failed rows in `otp_router.notifications`. Non-2xx responses and transport failures receive bounded retries; exhausted notifications and their exact event bodies remain for diagnosis. `--replay-webhook <eventId>` queues a failed notification again without any OTP send. Delivered events retain seven days; failed/pending notifications survive challenge deletion.
+
+Backups include immutable events and their delivery state. Restoring can redeliver events the receiver already knows, or roll back a challenge revision relative to the receiver. Event-ID deduplication and highest-revision application remain mandatory; abandon restored authentication flows using the restore procedure. Coordinate webhook destination and signing-secret changes across all roles.
+
 ## Deployment checklist
 
 - Use a dedicated PostgreSQL database and durable storage. PostgreSQL 17 is the repository's development and test baseline. The runtime account must create schemas, tables, and indexes and run both router and pg-boss migrations; a DML-only account cannot start the service.

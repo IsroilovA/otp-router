@@ -2,7 +2,7 @@
 
 A private, unreleased, self-hosted HTTP service for generating, delivering, and verifying phone-number OTPs. Applications configure an ordered route through Telegram, WhatsApp, SMS, or custom providers. Expect breaking configuration and schema changes while development continues.
 
-Creation commits the challenge and queued work before returning. Workers send afterward. Confirmed failures can advance the route; uncertain delivery waits for an explicit user action. Resends reuse the code and original expiry.
+Creation commits the challenge, revisioned public snapshot, event, and queued work before returning. Workers send afterward. Confirmed failures can advance the route; uncertain delivery waits for an explicit user action. Resends reuse the code and original expiry.
 
 Start with the [running guide](docs/running.md) and [provider setup](docs/provider-setup.md). The local example uses a fake provider and sends no messages.
 
@@ -10,7 +10,7 @@ Start with the [running guide](docs/running.md) and [provider setup](docs/provid
 
 - [Architecture](docs/architecture.md) and [transaction design](docs/data-model.md)
 - [Routing](docs/routing.md) and [verification security](docs/security.md)
-- [HTTP integration](docs/api.md)
+- [HTTP integration](docs/api.md) and [outbound webhooks](docs/webhooks.md)
 - [Configuration reference](docs/configuration.md)
 - [Provider and selector extensions](docs/plugins.md)
 - [Deployment and operations](docs/operations.md)

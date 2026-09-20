@@ -18,8 +18,18 @@ const telegram = instanceId("telegram-main");
 const whatsapp = instanceId("whatsapp-main");
 const sms = instanceId("sms-main");
 
+const webhookUrl = process.env["OTP_ROUTER_WEBHOOK_URL"];
+
 export default defineConfig({
   settings: {
+    ...(webhookUrl === undefined
+      ? {}
+      : {
+          webhook: {
+            url: webhookUrl,
+            signingSecret: required("OTP_ROUTER_WEBHOOK_SIGNING_SECRET"),
+          },
+        }),
     crypto: {
       deploymentId: required("OTP_ROUTER_DEPLOYMENT_ID"),
       encryption: keyRing("OTP_ROUTER_ENCRYPTION_KEY"),

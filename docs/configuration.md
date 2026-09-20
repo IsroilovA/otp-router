@@ -9,6 +9,7 @@ Environment variables do not automatically override configuration fields. `DATAB
 | Variable | Used by | Meaning |
 | --- | --- | --- |
 | `DATABASE_URL` | All database-backed modes | PostgreSQL connection URL; Compose overrides it with its internal database address. |
+| `OTP_ROUTER_WEBHOOK_URL`, `OTP_ROUTER_WEBHOOK_SIGNING_SECRET` | Both examples, optional | One outbound destination and an independent `whsec_`-prefixed base64 32-byte signing secret. Setting the URL requires the secret. |
 | `OTP_ROUTER_API_KEY` | Both examples | Backend Bearer credential, at least 32 characters. |
 | `OTP_ROUTER_ENCRYPTION_KEY`, `OTP_ROUTER_VERIFICATION_KEY`, `OTP_ROUTER_FINGERPRINT_KEY`, `OTP_ROUTER_RECIPIENT_KEY` | Both examples | Four independent, canonical base64url-encoded 32-byte keys. Preserve them across restarts. |
 | `OTP_ROUTER_FAKE_CALLBACK_SECRET` | Fake example | Fake callback authentication secret. |
@@ -38,7 +39,8 @@ Node loads TypeScript through its native type stripping. Keep entries compatible
 | `recipientSendLimit15m`, `recipientGuessLimit15m` | 10 each | Recipient-wide sends and incorrect guesses, each 1–10 per rolling 15 minutes. |
 | `deploymentSendLimit15m`, `deploymentSendLimit24h` | Required | Positive send caps across all recipients and providers. |
 | `providerSendLimits15m` | `{}` | Optional positive send caps keyed by instance ID. |
-| `providerLabels` | `{}` | Optional display labels for manual choices, up to 128 characters each. |
+| `providerLabels` | `{}` | Display labels saved at creation for accepted providers and manual choices, up to 128 characters each; defaults to channel. |
+| `webhook` | Omitted | `{ url, signingSecret }` enables outbound notifications. HTTPS is required except HTTP on literal loopback hosts for local tests. No URL credentials, fragments, redirects, or extra Bearer token. |
 
 `apiKeys` accepts one or two credentials; use two temporarily for rotation. Cryptographic key rings use `{ active: "v1", keys: { v1: "..." } }`. Follow [key rotation](security.md#key-rotation) when adding or removing keys.
 
@@ -74,6 +76,7 @@ All modes except `--openapi` require `--config /path/to/router.config.ts`. Use o
 | `--check-config` | Load the entry and validate configuration and local provider/template setup, then exit; no core database connection or send. |
 | `--check-schema` | Apply migrations, initialize database identity and queues, check compatibility, then exit; no HTTP listener or sends. |
 | `--openapi` | Print generated OpenAPI JSON without loading configuration or connecting to PostgreSQL. |
+| `--replay-webhook <eventId>` | Queue a retained failed notification again with its original event ID/body; never resend an OTP. |
 | `--invalidate-restored` | Cancel restored active challenges; requires all traffic and workers stopped. |
 | `--adopt-recipient-key` | Adopt a replacement recipient key only after the incident procedure succeeds. |
 

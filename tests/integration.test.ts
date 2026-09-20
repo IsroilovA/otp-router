@@ -245,9 +245,17 @@ const create = (
   );
 };
 
-const deliveryFromCreated = (result: OperationResult): string => {
-  if (!("delivery" in result.body)) throw new Error("Expected a challenge snapshot");
-  return result.body.delivery.deliveryId;
+const deliveryFromCreated = async (result: OperationResult): Promise<string> => {
+  const id = challengeIdFrom(result);
+  const harness = currentRuntime();
+  return (
+    await harness.run(
+      single(
+        Schema.Struct({ id: Schema.String }),
+        harness.pg`SELECT id FROM otp_router.deliveries WHERE challenge_id = ${id} AND reason = 'initial'`,
+      ),
+    )
+  ).id;
 };
 
 const fetchJob = async (): Promise<{ readonly id: string; readonly data: DeliveryJobType }> => {
@@ -442,7 +450,7 @@ describe("PostgreSQL integration", () => {
     );
     expect(createResponse.status).toBe(201);
     const created = Schema.decodeUnknownSync(Snapshot)(await createResponse.json());
-    expect(created.delivery.state).toBe("pending");
+    expect(created.state).toBe("queued");
 
     await dispatchNext();
     expect(primary.sends).toHaveLength(1);
@@ -944,7 +952,7 @@ describe("PostgreSQL integration", () => {
     await verifyWrong("wrong-2");
     const locked = await verifyWrong("wrong-3");
     expect(locked.body).toMatchObject({
-      error: { code: "incorrect_code", verificationState: "locked" },
+      error: { code: "incorrect_code", reason: "locked" },
     });
     const state = await query(
       Schema.Struct({ incorrect_guesses: Schema.Int, verification_state: Schema.String }),
@@ -967,7 +975,7 @@ describe("PostgreSQL integration", () => {
     const replayed = await Effect.runPromise(
       currentRuntime().router.cancel({ ...request, requestId: randomUUID() }),
     );
-    expect(cancelled.body).toMatchObject({ verificationState: "cancelled" });
+    expect(cancelled.body).toMatchObject({ state: "failed", reason: "cancelled" });
     expect(replayed.replayed).toBe(true);
     expect(replayed.body).toEqual(cancelled.body);
     expect(await count("challenge_secrets")).toBe(0);
@@ -1162,8 +1170,8 @@ describe("PostgreSQL integration", () => {
 
     expect(primary.sends).toHaveLength(1);
     expect(primary.sends[0]).toMatchObject({
-      deliveryId: deliveryFromCreated(created),
-      providerIdempotencyKey: deliveryFromCreated(created),
+      deliveryId: await deliveryFromCreated(created),
+      providerIdempotencyKey: await deliveryFromCreated(created),
     });
     expect(
       await query(
@@ -1587,7 +1595,7 @@ describe("PostgreSQL integration", () => {
     expect(await count("deliveries")).toBe(1);
     const status = await Effect.runPromise(currentRuntime().router.status(challengeId));
     expect(status.body).toMatchObject({
-      verificationState: "active",
+      state: "failed",
       actions: {
         verify: { allowed: true },
         resend: { allowed: false, reason: "delivery_unavailable" },
@@ -1695,7 +1703,7 @@ describe("PostgreSQL integration", () => {
     ]);
     const status = await Effect.runPromise(harness.router.status(challengeId));
     expect(status.body).toMatchObject({
-      verificationState: "active",
+      state: "failed",
       actions: {
         resend: { allowed: false, reason: "delivery_unavailable" },
         next: { allowed: false, reason: "delivery_unavailable" },
@@ -1722,7 +1730,7 @@ describe("PostgreSQL integration", () => {
     const config = withProviderIdempotency(harness.configuration, "fake-primary");
     const created = await createDirect(config, "idempotent-provider-create");
     const challengeId = challengeIdFrom(created);
-    const initialDeliveryId = deliveryFromCreated(created);
+    const initialDeliveryId = await deliveryFromCreated(created);
     await dispatchNext(config);
     const originalCode = primary.sends[0]?.code;
     if (originalCode === undefined) throw new Error("Expected the initial send code");
@@ -1814,7 +1822,7 @@ describe("PostgreSQL integration", () => {
 
     const status = await Effect.runPromise(harness.router.status(challengeId));
     expect(status.body).toMatchObject({
-      verificationState: "active",
+      state: "accepted",
       actions: {
         resend: { allowed: false, reason: "rate_limited" },
         verify: { allowed: true },
@@ -1865,7 +1873,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ state: Schema.String, acceptance: Schema.String }),
-        `SELECT state, acceptance FROM otp_router.deliveries WHERE id = '${deliveryFromCreated(created)}'`,
+        `SELECT state, acceptance FROM otp_router.deliveries WHERE id = '${await deliveryFromCreated(created)}'`,
       ),
     ).toEqual([{ state: "delivered", acceptance: "accepted" }]);
     expect(
@@ -1956,7 +1964,7 @@ describe("PostgreSQL integration", () => {
   it("deduplicates delivered callbacks without suppressing a later explicit resend", async () => {
     const created = await create();
     const challengeId = challengeIdFrom(created);
-    const initialDeliveryId = deliveryFromCreated(created);
+    const initialDeliveryId = await deliveryFromCreated(created);
     await dispatchNext();
     await execute(
       `UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
@@ -1995,7 +2003,7 @@ describe("PostgreSQL integration", () => {
   it("does not let a stale failure callback advance past a newer next action", async () => {
     const created = await create();
     const challengeId = challengeIdFrom(created);
-    const initialDeliveryId = deliveryFromCreated(created);
+    const initialDeliveryId = await deliveryFromCreated(created);
     await dispatchNext();
     await execute(
       `UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
@@ -2033,8 +2041,8 @@ describe("PostgreSQL integration", () => {
     const right = await create("deployment-cap-right", "+998909876543");
     const limited = withSettings({ deploymentSendLimit15m: 1 });
     const jobs: readonly DeliveryJobType[] = [
-      { version: 1, deliveryId: deliveryFromCreated(left), routingRevision: 1 },
-      { version: 1, deliveryId: deliveryFromCreated(right), routingRevision: 1 },
+      { version: 1, deliveryId: await deliveryFromCreated(left), routingRevision: 1 },
+      { version: 1, deliveryId: await deliveryFromCreated(right), routingRevision: 1 },
     ];
     await Promise.all(jobs.map((job) => currentRuntime().run(dispatch(limited, job))));
     expect(primary.sends).toHaveLength(1);
@@ -2078,7 +2086,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ provider_instance_id: Schema.String }),
-        `SELECT provider_instance_id FROM otp_router.deliveries WHERE id = '${deliveryFromCreated(created)}'`,
+        `SELECT provider_instance_id FROM otp_router.deliveries WHERE id = '${await deliveryFromCreated(created)}'`,
       ),
     ).toEqual([{ provider_instance_id: "fake-secondary" }]);
 
@@ -2516,7 +2524,7 @@ it.each([
     expect(blocked.sends).toHaveLength(0);
     expect(delivered.sends).toHaveLength(1);
     const status = await harness.run(challengeStatus(config, challengeId));
-    expect(status.body).toMatchObject({ delivery: { state: "accepted" } });
+    expect(status.body).toMatchObject({ state: "accepted" });
     expect(await harness.queue.fetch(deliveryQueue)).toHaveLength(0);
     expect(
       await query(
@@ -2527,25 +2535,20 @@ it.each([
   },
 );
 
-it("forecasts the same restriction and cooldown decision as an explicit resend", async () => {
+it("retains the published forecast while revalidating changed shared restrictions on submission", async () => {
   const harness = currentRuntime();
   const created = await create("restriction-forecast");
   const challengeId = challengeIdFrom(created);
   await dispatchNext();
+  const before = Schema.decodeUnknownSync(Snapshot)(
+    (await Effect.runPromise(harness.router.status(challengeId))).body,
+  );
   const retryAt = new Date(Date.now() + 45_000);
   await harness.run(
     harness.pg`INSERT INTO otp_router.provider_restrictions(provider_instance_id,retry_at) VALUES ('fake-primary',${retryAt})`,
   );
   const status = await Effect.runPromise(harness.router.status(challengeId));
-  expect(status.body).toMatchObject({
-    actions: {
-      resend: {
-        allowed: false,
-        reason: "rate_limited",
-        availableAt: retryAt.toISOString(),
-      },
-    },
-  });
+  expect(status.body).toMatchObject({ revision: before.revision, actions: before.actions });
   const request = {
     key: "restricted-resend",
     challengeId,

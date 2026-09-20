@@ -139,7 +139,6 @@ const makeErrorBody = (code: ErrorCode, requestId: string, retryAt?: string): Er
     message: errorMessages[code],
     requestId,
     ...(retryAt === undefined ? {} : { retryAt }),
-    ...(code === "incorrect_code" ? { verificationState: "active" as const } : {}),
   },
 });
 

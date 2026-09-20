@@ -1,8 +1,10 @@
+import { changed } from "../challenges/changes.js";
+import { challengeTransaction as transaction } from "../challenges/transaction.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 import type { ProviderSendError } from "../providers/contract.js";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { databaseTime, transaction } from "../database/transaction.js";
+import { databaseTime } from "../database/transaction.js";
 import { expire, findChallenge, findDelivery } from "../challenges/store.js";
 import type { Challenge, Delivery } from "../challenges/records.js";
 import { availableProviders, nextProvider } from "./eligibility.js";
@@ -44,14 +46,19 @@ export const mergeLockedOutcome = (
     const time = yield* databaseTime;
     const state = nextState(delivery, outcome);
     if (!(yield* persistOutcome(delivery, outcome, { state, time }))) return;
+    if (
+      challenge.verification_state === "active" &&
+      (state !== delivery.state ||
+        delivery.acceptance !== outcome.acceptance ||
+        outcome.stop === true ||
+        outcome.retryAt !== undefined)
+    )
+      yield* changed(challenge.id);
     if (outcome.stop === true) {
       yield* sql`UPDATE otp_router.challenges SET automatic_stopped = true WHERE id = ${challenge.id}`;
       yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending'`;
     }
-    if (state === "delivered" && delivery.state !== "delivered") {
-      yield* sql`UPDATE otp_router.challenges SET automatic_stopped = true WHERE id = ${challenge.id}`;
-      yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending' AND reason = 'fallback'`;
-    }
+    yield* stopFallbackOnEvidence(challenge, delivery, state);
     if (shouldAdvance(challenge, delivery, outcome)) {
       const next = nextProvider(
         yield* availableProviders(config, challenge, time),
@@ -65,8 +72,22 @@ export const mergeLockedOutcome = (
         yield* schedule(challenge, next.position, "fallback", time);
     }
   });
+const stopFallbackOnEvidence = (
+  challenge: Challenge,
+  delivery: Delivery,
+  state: Delivery["state"],
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    if ((state === "delivered" || state === "accepted") && delivery.state !== state) {
+      if (state === "delivered")
+        yield* sql`UPDATE otp_router.challenges SET automatic_stopped = true WHERE id = ${challenge.id}`;
+      yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending' AND reason = 'fallback'`;
+    }
+  });
 export const recordOutcome = (config: RuntimeConfiguration, id: string, outcome: Outcome) =>
   transaction(
+    config,
     Effect.gen(function* () {
       const initial = yield* findDelivery(id);
       const locked = yield* findChallenge(initial.challenge_id, true);

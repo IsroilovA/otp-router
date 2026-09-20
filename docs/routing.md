@@ -36,4 +36,8 @@ Callbacks and send responses share outcome rules. Late acceptance cannot overwri
 
 New delivery evidence stops pending automatic fallback, but does not cancel an explicit user send. Duplicate delivery evidence must not suppress a later action. Local cancellation cannot recall a message already in flight.
 
-Status forecasts show available actions and known retry times. Revalidate submitted actions because forecasts neither reserve capacity nor guarantee future eligibility.
+The public projection is `queued`, `sending`, `accepted`, `uncertain`, `verified`, or `failed`; internal verification and delivery states remain independent. Accepted/delivered records are acceptance evidence until a confirmed final failure invalidates that record. A failed or uncertain resend cannot erase another accepted record. Public provider/channel identify confirmed acceptance, never route selection. Once initial processing starts, fallback stays `sending`.
+
+Every meaningful resulting snapshot is published once per committed transition with an increasing revision. Duplicate evidence and internal bookkeeping produce no events. Late delivery evidence can change active challenges but cannot alter a terminal public snapshot.
+
+Action forecasts and absolute retry times are saved with the snapshot; time passing creates no event. Clients can reconsider a timed denial at its deadline, before expiry. Revalidate submitted actions because forecasts neither reserve capacity nor guarantee future eligibility.

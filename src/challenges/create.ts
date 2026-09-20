@@ -1,10 +1,12 @@
+import { enqueueExpiry } from "../queue/jobs.js";
+import { challengeTransaction as transaction } from "./transaction.js";
 import { duration } from "../diagnostics/metrics.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
 import { parsePhoneNumberFromString } from "libphonenumber-js/max";
 import { SelectorResult, type RuntimeConfiguration } from "../config/config.js";
-import { databaseTime, transaction } from "../database/transaction.js";
+import { databaseTime } from "../database/transaction.js";
 import { LocaleSchema, NormalizedPhoneSchema } from "../providers/contract.js";
 import { resolveChoice, availableProviders } from "../delivery/eligibility.js";
 import { schedule } from "../delivery/schedule.js";
@@ -14,7 +16,7 @@ import { lockOperation, operation, replay, saveResult } from "./idempotency.js";
 import { checkQuotas, countQuotas, lockQuotas, recipientLimit } from "./quotas.js";
 import type { PolicySnapshot } from "./records.js";
 import { findChallenge } from "./store.js";
-import { snapshot } from "./snapshot.js";
+import { snapshot } from "./publication.js";
 
 export const normalizePhone = (phone: string) =>
   Effect.gen(function* () {
@@ -58,6 +60,7 @@ const prepare = (config: RuntimeConfiguration, input: CreateInput) =>
           .pipe(Effect.mapError(() => new DomainError({ code: "delivery_unavailable" })));
         return {
           providerInstanceId: id,
+          label: config.settings.providerLabels[id] ?? provider.channel,
           pluginId: provider.pluginId,
           contractVersion: provider.contractVersion,
           channel: provider.channel,
@@ -90,6 +93,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
     const input = { ...request.input, recipient: { type: "phone" as const, phoneNumber: phone } };
     const op = operation(config.settings.crypto, { ...request, input }, "create");
     const previous = yield* transaction(
+      config,
       Effect.gen(function* () {
         yield* lockOperation(op);
         return yield* replay(config.settings.crypto, op);
@@ -98,6 +102,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
     if (previous !== undefined) return previous;
     const prepared = yield* prepare(config, input);
     return yield* transaction(
+      config,
       Effect.gen(function* () {
         yield* lockOperation(op);
         const existing = yield* replay(config.settings.crypto, op);
@@ -117,6 +122,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
         yield* countQuotas(limits, id, time);
         const challenge = yield* findChallenge(id);
         yield* schedule(challenge, position, "initial", time);
+        yield* enqueueExpiry(id, challenge.expires_at);
         const body = yield* snapshot(config, challenge, time);
         const response: OperationResult = { status: 201, body, replayed: false };
         return yield* saveResult(config.settings.crypto, op, {

@@ -17,7 +17,7 @@ import {
   requireActive,
   invalidRecipient,
 } from "../challenges/store.js";
-import { snapshot } from "../challenges/snapshot.js";
+import { snapshot } from "../challenges/publication.js";
 import type { Challenge, Delivery } from "../challenges/records.js";
 import {
   availableProviders,
@@ -57,6 +57,7 @@ export const requestDelivery = (
   request: ChallengeMutation<DeliveryInput>,
 ) =>
   domainTransaction(
+    config,
     Effect.gen(function* () {
       const op = operation(config.settings.crypto, request, "deliver");
       yield* lockOperation(op);

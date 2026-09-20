@@ -41,6 +41,21 @@ it.effect(
         { ...base.settings, automaticSendRetries: 1 },
         { ...base.settings, timedFallbackSeconds: 5 },
         { ...base.settings, deploymentSendLimit24h: 0 },
+        ...[
+          "http://example.com/hooks",
+          "https://user:password@example.com/hooks",
+          "https://example.com/hooks#fragment",
+        ].map((url) => ({
+          ...base.settings,
+          webhook: { url, signingSecret: `whsec_${Buffer.alloc(32, 9).toString("base64")}` },
+        })),
+        {
+          ...base.settings,
+          webhook: {
+            url: "https://example.com/hooks",
+            signingSecret: `whsec_${Buffer.alloc(32, 1).toString("base64")}`,
+          },
+        },
         {
           ...base.settings,
           policies: {

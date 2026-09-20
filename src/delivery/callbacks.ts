@@ -1,9 +1,10 @@
+import { challengeTransaction as transaction } from "../challenges/transaction.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Data, Effect, Schema } from "effect";
 import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { rows } from "../database/query.js";
-import { databaseTime, transaction } from "../database/transaction.js";
+import { databaseTime } from "../database/transaction.js";
 import type { NormalizedDeliveryEvent, SendAccepted } from "../providers/contract.js";
 import { expire, findChallenge, findDelivery } from "../challenges/store.js";
 import { mergeLockedOutcome } from "./outcomes.js";
@@ -50,6 +51,7 @@ export const ingestEvents = (
   events: readonly NormalizedDeliveryEvent[],
 ) =>
   transaction(
+    config,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       // Serialize each instance's inbox and response correlation before challenge locks.
@@ -67,6 +69,7 @@ export const ingestEvents = (
   );
 export const recordAccepted = (config: RuntimeConfiguration, id: string, accepted: SendAccepted) =>
   transaction(
+    config,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       const initial = yield* findDelivery(id);

@@ -1,8 +1,19 @@
 import { Schema } from "effect";
-import { DeliveryState, VerificationState } from "./contracts.js";
+import { Snapshot } from "./contracts.js";
 import { Ciphertext, Digest } from "./crypto.js";
+const VerificationState = Schema.Literals(["active", "verified", "locked", "expired", "cancelled"]);
+const DeliveryState = Schema.Literals([
+  "pending",
+  "dispatching",
+  "accepted",
+  "delivered",
+  "failed",
+  "uncertain",
+  "suppressed",
+]);
 export const SavedProvider = Schema.Struct({
   providerInstanceId: Schema.String,
+  label: Schema.String,
   pluginId: Schema.String,
   contractVersion: Schema.Literal(1),
   channel: Schema.String,
@@ -42,6 +53,9 @@ export const Challenge = Schema.Struct({
   terminal_at: Schema.NullOr(Schema.Date),
   incorrect_guesses: Schema.Int,
   send_count: Schema.Int,
+  public_revision: Schema.Int,
+  public_snapshot: Schema.NullOr(Snapshot),
+  processing_started: Schema.Boolean,
   routing_revision: Schema.Int,
   automatic_stopped: Schema.Boolean,
   current_delivery_id: Schema.String,

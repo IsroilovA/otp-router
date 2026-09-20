@@ -194,7 +194,7 @@ describe("database compatibility and maintenance", () => {
       failure: { reason: "recipient_key_change_requires_invalidation_and_quota_wait" },
     });
 
-    expect(await harness.run(invalidateRestoredChallenges)).toBe(1);
+    expect(await harness.run(invalidateRestoredChallenges(harness.configuration))).toBe(1);
     expect(
       await harness.run(Effect.result(validateDeploymentIdentity(changed, true))),
     ).toMatchObject({
@@ -248,7 +248,7 @@ describe("database compatibility and maintenance", () => {
     await harness.run(
       harness.pg`UPDATE otp_router.challenges SET expires_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
     );
-    await harness.run(cleanup);
+    await harness.run(cleanup(harness.configuration));
 
     expect(
       await harness.run(
@@ -333,7 +333,7 @@ describe("database compatibility and maintenance", () => {
       `,
     );
 
-    await harness.run(cleanup);
+    await harness.run(cleanup(harness.configuration));
 
     expect(
       await harness.run(
@@ -394,7 +394,7 @@ describe("database compatibility and maintenance", () => {
       harness.pg`UPDATE otp_router.idempotency_records SET created_at = clock_timestamp() - interval '25 hours', retain_until = clock_timestamp() - interval '1 hour' WHERE challenge_id::text = ${firstChallengeId}`,
     );
 
-    await harness.run(cleanup);
+    await harness.run(cleanup(harness.configuration));
     const activeReplay = await create(operationKey);
     expect(activeReplay.replayed).toBe(true);
     expect(challengeIdFrom(activeReplay)).toBe(firstChallengeId);
@@ -425,7 +425,7 @@ describe("database compatibility and maintenance", () => {
       harness.pg`UPDATE otp_router.idempotency_records SET created_at = clock_timestamp() - interval '25 hours', retain_until = clock_timestamp() - interval '1 hour' WHERE challenge_id::text = ${firstChallengeId}`,
     );
 
-    await harness.run(cleanup);
+    await harness.run(cleanup(harness.configuration));
     expect(
       await harness.run(
         rows(
@@ -446,7 +446,7 @@ describe("database compatibility and maintenance", () => {
     await harness.run(
       harness.pg`UPDATE otp_router.deliveries SET state = 'failed', acceptance = 'not_accepted', completed_at = clock_timestamp() WHERE challenge_id::text = ${firstChallengeId} AND state = 'dispatching'`,
     );
-    await harness.run(cleanup);
+    await harness.run(cleanup(harness.configuration));
     expect(
       await harness.run(
         rows(

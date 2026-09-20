@@ -75,7 +75,7 @@ it.effect("preserves domain rejection details and committed incorrect-code respo
           code: "incorrect_code",
           message: "The code is incorrect.",
           requestId: "original-request",
-          verificationState: "locked",
+          reason: "locked",
         },
       },
     };

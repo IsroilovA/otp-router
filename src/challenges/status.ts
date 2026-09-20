@@ -4,10 +4,11 @@ import { databaseTime } from "../database/transaction.js";
 import type { OperationResult } from "./contracts.js";
 import { domainTransaction } from "./transaction.js";
 import { expire, findChallenge } from "./store.js";
-import { snapshot } from "./snapshot.js";
+import { snapshot } from "./publication.js";
 
 export const challengeStatus = (config: RuntimeConfiguration, id: string) =>
   domainTransaction(
+    config,
     Effect.gen(function* () {
       const locked = yield* findChallenge(id, true);
       const time = yield* databaseTime;

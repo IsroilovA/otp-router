@@ -9,6 +9,7 @@ import {
 } from "effect/unstable/httpapi";
 import { Context, Schema } from "effect";
 import {
+  ChallengeEvent,
   Opaque,
   CreateInput,
   DeliveryInput,
@@ -74,7 +75,7 @@ const UnprocessableError = Schema.Struct({
     message: Schema.String,
     requestId: Schema.String,
     retryAt: Schema.optionalKey(Schema.String),
-    verificationState: Schema.optionalKey(Schema.Literals(["active", "locked"])),
+    reason: Schema.optionalKey(Schema.Literal("locked")),
   }),
 }).annotate({ identifier: "UnprocessableError" });
 const RateLimitError = errorEnvelope(
@@ -199,4 +200,36 @@ export const OtpRouterApi = HttpApi.make("otpRouter")
       description: "Backend challenge operations and provider callback ingress.",
     }),
   );
-export const openApiDocument = OpenApi.fromApi(OtpRouterApi);
+const eventSchema = Schema.toJsonSchemaDocument(ChallengeEvent);
+export const openApiDocument = {
+  ...OpenApi.fromApi(OtpRouterApi),
+  webhooks: {
+    "challenge.updated": {
+      post: {
+        summary:
+          "A complete immutable challenge snapshot; delivery is at least once and may arrive out of order",
+        security: [],
+        parameters: ["webhook-id", "webhook-timestamp", "webhook-signature"].map((name) => ({
+          name,
+          in: "header",
+          required: true,
+          schema: { type: "string" },
+        })),
+        requestBody: {
+          required: true,
+          content: {
+            "application/json": {
+              schema: { ...eventSchema.schema, $defs: eventSchema.definitions },
+            },
+          },
+        },
+        responses: {
+          "200": {
+            description:
+              "Receiver durably recorded the authenticated event (any 2xx acknowledges receipt)",
+          },
+        },
+      },
+    },
+  },
+};
