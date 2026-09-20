@@ -188,6 +188,9 @@ importers:
       effect:
         specifier: 3.22.2
         version: 3.22.2
+      libphonenumber-js:
+        specifier: 1.13.13
+        version: 1.13.13
       pg-boss:
         specifier: 12.33.2
         version: 12.33.2(patch_hash=7928bdafc76a577714becae31b3105f68511beb878ab8c42f695c01f0ec639a6)
@@ -207,6 +210,9 @@ importers:
       '@types/pg':
         specifier: 8.23.1
         version: 8.23.1
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
       oxlint:
         specifier: 1.83.0
         version: 1.83.0(oxlint-tsgolint@7.0.2002)
@@ -984,6 +990,9 @@ packages:
   '@types/pg@8.23.1':
     resolution: {integrity: sha512-fKVHpikPdg4GKks3JuLEhvwSyvwzF23hnabPy6DD8ljVbC7+6J5dQzdv4arV6jqq57djnMgs1HKBxX4P8aBI3A==}
 
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
     engines: {node: '>=16.20.0'}
@@ -1222,6 +1231,9 @@ packages:
 
   kubernetes-types@1.30.0:
     resolution: {integrity: sha512-Dew1okvhM/SQcIa2rcgujNndZwU8VnSapDgdxlYoB84ZlpAD43U6KLAFqYo17ykSFGHNPrg0qry0bP+GJd9v7Q==}
+
+  libphonenumber-js@1.13.13:
+    resolution: {integrity: sha512-hV6SmWnyQ8U1QXhhqbqYBHIStNnscG7A5XbGodgdHhf/8N5PwhYpJA5U/yHDjYwPYTd8uNGXqq416XctuvK2PA==}
 
   loupe@3.2.1:
     resolution: {integrity: sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==}
@@ -2064,6 +2076,10 @@ snapshots:
       pg-protocol: 1.16.0
       pg-types: 2.2.0
 
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 24.13.6
+
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
 
@@ -2256,6 +2272,8 @@ snapshots:
   js-tokens@9.0.1: {}
 
   kubernetes-types@1.30.0: {}
+
+  libphonenumber-js@1.13.13: {}
 
   loupe@3.2.1: {}
 

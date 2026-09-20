@@ -1,6 +1,6 @@
 # API design
 
-Status: implementation contract; not yet implemented.
+Status: implemented. `node dist/main.js --openapi` exports the generated OpenAPI document. See [implementation evidence](implementation-evidence.md).
 
 ## Accepted access model
 

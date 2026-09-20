@@ -1,6 +1,6 @@
 # Deployment and operations
 
-Status: implementation contract; runtime measurements and migration tests pending.
+Status: implemented and locally measured. See [benchmark results](benchmark.md) and [remaining release evidence](implementation-evidence.md).
 
 ## Accepted deployment model
 
@@ -20,7 +20,7 @@ The standard image includes built-in adapters. Operators configure them with the
 
 For custom adapters, create a deployment project with pinned router and adapter dependencies, explicitly import/register them, and build an image containing those packages. Provide a deployment template and example adapter using the [public contracts](plugins.md). No source fork or dynamic package installation is required.
 
-Include configuration in the image or supply it at startup. Imports must already be installed. Supply provider credentials, API keys, and cryptographic keys through runtime secrets, never image layers or committed files. The TypeScript loader, command, and Dockerfile remain implementation work.
+Include configuration in the image or supply it at startup. Imports must already be installed. Supply provider credentials, API keys, and cryptographic keys through runtime secrets, never image layers or committed files. The runtime TypeScript loader and standard Dockerfile are implemented; custom deployment projects still own their image build and package artifact staging.
 
 Use the same tested image across roles. Adapter code or dependency changes require a rebuild; externally supplied configuration and secret changes require restart under the procedures below. HTTP callers cannot install code, add credentials, or override provider endpoints.
 
@@ -74,9 +74,9 @@ Application SQL and queue management use separate bounded pools with a combined 
 
 ## Accepted operator interface
 
-Provide configuration, setup guides, and diagnostic CLI commands for local validation and version/schema compatibility. Optional live diagnostics check credentials, sender/account status, templates, and connectivity. Distinguish read-only checks from paid checks or delivery tests. Provider availability is not a startup prerequisite.
+Provide configuration, setup guides, and diagnostic CLI commands for local validation and version/schema compatibility. The current CLI includes `--check-config`, `--check-schema`, `--openapi`, `--invalidate-restored`, and the incident-only `--adopt-recipient-key` procedure. Optional live diagnostics check credentials, sender/account status, templates, and connectivity. Distinguish read-only checks from paid checks or delivery tests. Provider availability is not a startup prerequisite.
 
-Operators create provider accounts and obtain template approval. V1 has no administration dashboard. Exact commands remain implementation work.
+Operators create provider accounts and obtain template approval. V1 has no administration dashboard. Exact provider onboarding and live diagnostic commands remain provider-evidence work.
 
 ## Observability
 
@@ -90,7 +90,7 @@ Synchronize database and worker clocks. Use monotonic timers for local timeouts 
 
 ## Cleanup, backups, and late callbacks
 
-Run durable expiry and cleanup work through PostgreSQL-backed jobs. Operations enforce logical expiry immediately; cleanup lag must never extend code validity. A healthy worker should check expired records once per minute by default, in bounded batches. Measure cleanup lag and test that sustained load does not starve it.
+Run durable expiry and cleanup work through PostgreSQL-backed jobs. Operations enforce logical expiry immediately; cleanup lag must never extend code validity. A healthy worker checks expired records once per minute by default. Each sweep drains full batches through separate bounded transactions so cleanup throughput is not limited to one batch per minute. Measure cleanup lag and test that sustained load does not starve it.
 
 Backups and external log or metrics systems have their own retention. Keep encryption keys separate from encrypted backups. Restores follow the invalidation procedure above because a backup may resurrect already-consumed challenges or omit later quota usage.
 
@@ -100,7 +100,7 @@ During the seven-day history window, authenticated callbacks may update redacted
 
 Ship one self-contained router npm package and one standard container image under [MIT](../LICENSE). Export configuration, provider, and selector contracts; keep the core, HTTP, and storage modules private. External adapters may be separate packages.
 
-Distribution remains private under D104. Use local artifacts or an access-controlled registry; public publishing requires a later explicit decision. Package names and registry accounts remain release work. Record separate HTTP, configuration, plugin, and stored-schema compatibility in release metadata.
+Distribution remains private under D104. Use local artifacts or an access-controlled registry; public publishing requires a later explicit decision. The private package is `otp-router`. An access-controlled registry is optional; local package and image artifacts are supported. Record separate HTTP, configuration, plugin, and stored-schema compatibility in release metadata.
 
 ## Implementation evidence still required
 

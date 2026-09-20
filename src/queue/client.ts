@@ -19,6 +19,9 @@ const makeQueue = Effect.gen(function* () {
         const boss = new PgBoss({
           connectionString: Redacted.value(url),
           application_name: "otp_router_queue",
+          max: 6,
+          connectionTimeoutMillis: 5000,
+          monitorIntervalSeconds: 10,
         });
         boss.on("error", onError);
         boss.on("warning", onWarning);

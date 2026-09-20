@@ -1,6 +1,6 @@
 # Development plan
 
-Status: ready for core implementation. Provider-specific evidence gaps remain in [provider research](provider-research.md#remaining-provider-evidence).
+Status: the v1 runtime, built-in adapters, and private packaging are implemented. Passing evidence is recorded in [implementation evidence](implementation-evidence.md); provider-specific gaps remain in [provider research](provider-research.md#remaining-provider-evidence).
 
 ## Implementation phases
 
@@ -12,7 +12,7 @@ Status: ready for core implementation. Provider-specific evidence gaps remain in
 | Built-in providers | Implement one provider end to end, then the others. Each passes [conformance tests](plugins.md#shared-conformance-tests), onboarding checks, and a live smoke test with recorded API version, date, and redacted configuration. |
 | Private release | Build standard and custom-provider images. Compile the external adapter and selector using only package exports. Document backend HTTP examples, process roles, startup, key rotation, and recovery. Complete the [release checklist](release-checklist.md). |
 
-Carry the nine [SQL experiment](research/sql-pg-research.md) checks into database tests. Rerun them with the selected stable dependencies. The historical probe is the only executable integration evidence currently recorded.
+Carry the nine [SQL experiment](research/sql-pg-research.md) checks into database tests. The current PostgreSQL suites cover queue transactions, migrations, quotas, dispatch recovery, callbacks, and verification; remaining release-checklist cases stay tracked in [implementation evidence](implementation-evidence.md).
 
 ## Working rules
 

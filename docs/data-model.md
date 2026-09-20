@@ -1,6 +1,6 @@
 # Data model and transaction boundaries
 
-Status: implementation contract; migrations pending.
+Status: implemented with explicit migrations and real PostgreSQL transaction tests. See [implementation evidence](implementation-evidence.md).
 
 ## Ownership and identifiers
 
@@ -78,7 +78,7 @@ Test simultaneous correct submissions, incorrect guesses at both quota boundarie
 
 Test callback arrival before send response, duplicate callbacks, stale routing revisions, and process death around every dispatch boundary. Exercise retention while callbacks, queue jobs, and idempotency replays remain active. Verify that deleting challenge history cannot reset a live recipient limit.
 
-Migration DDL and measured worker tuning remain implementation work. See the [release checklist](release-checklist.md) for required evidence.
+Migration DDL is implemented and its migration/concurrency evidence is tracked in [implementation evidence](implementation-evidence.md). Measured worker tuning remains release evidence. See the [release checklist](release-checklist.md) for the required record.
 
 ## Persisted snapshot and queue versions
 

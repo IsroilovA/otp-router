@@ -1,6 +1,6 @@
 # Implementation dependencies
 
-Status: foundation dependencies installed and pinned. Application integration remains unimplemented.
+Status: dependencies are pinned and application integration passes local checks. See [implementation evidence](implementation-evidence.md) for tested runtimes and remaining release gates.
 
 ## Selected stack
 
@@ -35,7 +35,7 @@ Tune [worker](https://pgboss.io/api/workers) heartbeat, polling, and recovery se
 
 ## Tooling and package boundaries
 
-Use one lockfile and one router package under D076. Export supported configuration, provider-adapter, and routing-selector entry points from that package; keep the core, HTTP handlers, and storage implementation private. External plugin packages depend on those public entry points. Package name and registry scope remain open.
+Use one lockfile and one router package under D076. Export supported configuration, provider-adapter, and routing-selector entry points from that package; keep the core, HTTP handlers, and storage implementation private. External plugin packages depend on those public entry points. The private package is `otp-router`; it has no public registry publishing workflow.
 
 Testing reference: [Vitest guide](https://vitest.dev/guide/).
 
@@ -79,6 +79,6 @@ Drizzle adds typed table definitions and generated migrations, and Effect provid
 
 Drizzle's [lint plugin](https://orm.drizzle.team/docs/eslint-plugin) checks updates and deletes for a `where` clause. It applies to Drizzle calls, not Effect SQL strings, so it is not installed. Require predicates in query review and test consequential mutation boundaries against PostgreSQL.
 
-The database scaffold exports a pool layer and an empty migration layer. Startup composition and database behavior remain unimplemented. Migration authoring rules live in [AGENTS.md](../AGENTS.md) and [database instructions](../src/database/AGENTS.md).
+The application pool has ten connections and a five-second acquisition timeout. Startup coordinates the two router migrations, initializes pg-boss, and validates stored deployment compatibility before readiness. PostgreSQL 17 is the supported and locally tested database major for this private v1. The service exports bounded Effect metrics in Prometheus text format on its internal listener. Migration authoring rules live in [AGENTS.md](../AGENTS.md) and [database instructions](../src/database/AGENTS.md).
 
 The pinned pg-boss 12.33.2 patch restores `CompatibilityFlags` and `ResolvedConstructorOptions` from the matching upstream source. Published declarations reference these omitted types. No runtime code changes; remove the patch when the package supplies them.

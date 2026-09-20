@@ -1,6 +1,6 @@
 # Architecture
 
-Status: accepted architecture; implementation pending.
+Status: implemented. Current validation and remaining release evidence are recorded in [implementation evidence](implementation-evidence.md).
 
 ## Components
 

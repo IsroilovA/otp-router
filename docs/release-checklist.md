@@ -1,6 +1,6 @@
 # Private release acceptance
 
-Status: required evidence; application tests have not run.
+Status: local application, PostgreSQL, packaging, and benchmark checks have run. Remaining production gates are tracked in [implementation evidence](implementation-evidence.md).
 
 ## Correctness gates
 

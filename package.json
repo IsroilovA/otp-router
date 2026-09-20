@@ -1,6 +1,6 @@
 {
   "name": "otp-router",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "description": "A self-hosted service for routing phone-number OTP delivery.",
   "license": "MIT",
   "private": true,
@@ -14,13 +14,14 @@
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "format": "biome format --write .",
     "format:check": "biome format .",
-    "lint": "oxlint --deny-warnings --report-unused-disable-directives-severity error .",
+    "lint": "oxlint --tsconfig tsconfig.json --deny-warnings --report-unused-disable-directives-severity error .",
     "typecheck": "tsc --project tsconfig.json && pnpm run lint:effect",
     "lint:effect": "effect-tsgo diagnostics --project tsconfig.json --strict --severity error,warning",
     "test": "vitest run",
     "test:watch": "vitest",
     "db:up": "docker compose up -d --wait",
-    "db:down": "docker compose down"
+    "db:down": "docker compose down",
+    "start": "node dist/main.js"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
@@ -28,6 +29,7 @@
     "@effect/vitest": "0.30.0",
     "@types/node": "24.13.6",
     "@types/pg": "8.23.1",
+    "@types/ws": "8.18.1",
     "oxlint": "1.83.0",
     "oxlint-tsgolint": "7.0.2002",
     "typescript": "7.0.2",
@@ -40,6 +42,29 @@
     "@effect/sql": "0.52.1",
     "@effect/sql-pg": "0.53.0",
     "effect": "3.22.2",
+    "libphonenumber-js": "1.13.13",
     "pg-boss": "12.33.2"
+  },
+  "exports": {
+    "./config": {
+      "types": "./dist/config/config.d.ts",
+      "import": "./dist/config/config.js"
+    },
+    "./providers": {
+      "types": "./dist/providers/index.d.ts",
+      "import": "./dist/providers/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "docs/running.md"
+  ],
+  "bin": {
+    "otp-router": "dist/main.js"
+  },
+  "peerDependencies": {
+    "effect": "3.22.2"
   }
 }

@@ -1,0 +1,15 @@
+.git
+.github
+.agents
+node_modules
+dist
+coverage
+tests
+*.log
+.env
+.env.*
+! .env.example
+Dockerfile
+examples
+docs
+*.tgz

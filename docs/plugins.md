@@ -33,7 +33,7 @@ Adapters send the router-generated code unchanged and validate it against their 
 
 Every adapter declares a positive finite `defaultSendTimeoutMs`, chosen from documentation and integration tests. An instance may override it with `sendTimeoutMs`; its adapter default must still be valid. There is no universal default.
 
-The core enforces one deadline over the entire send, bounded by remaining challenge lifetime. It checks provider minimum delivery windows and snapshots the configured timeout. Internal network calls do not receive fresh budgets.
+The core enforces one deadline over the entire send, bounded by remaining challenge lifetime. It checks provider minimum delivery windows and snapshots the configured timeout. Internal network calls do not receive fresh budgets. The core derives the remaining budget from a database-time eligibility sample, then subtracts elapsed monotonic time while the dispatch gate and provider call run. Adapters must honor `remainingDeliveryMs` and must not create a new network budget.
 
 Connect interruption to transport cancellation where supported. Timeout without definitive evidence leaves uncertainty and retains the reservation. It never authorizes resend or fallback. Late responses and authenticated callbacks follow normal state rules.
 
@@ -128,7 +128,7 @@ Use schema-derived, readonly types. Brand validated identifiers, normalized phon
 | --- | --- |
 | Provider definition | `id`, implementation `version`, `contractVersion: 1`, `channel`, `configSchema`, `templateSchema` when needed, code and delivery constraints, `defaultSendTimeoutMs`, and a scoped `make` Layer. |
 | Ready provider | `send(input)` returning `Effect<SendAccepted, ProviderSendError>` with no unresolved application-service requirements; optional authenticated callback decoding. |
-| Send input | `challengeId`, `deliveryId`, normalized `recipient`, `code`, `expiresAt`, resolved `locale`, typed `template` when required, and optional supported provider idempotency key. Secrets are runtime-only values and must not be serializable diagnostics. |
+| Send input | `challengeId`, `deliveryId`, normalized `recipient`, `code`, `expiresAt`, resolved `locale`, typed `template` when required, nonnegative `remainingDeliveryMs`, and optional supported provider idempotency key. `remainingDeliveryMs` is the net delivery budget after the database-time eligibility sample and monotonic dispatch-gate elapsed time. Secrets are runtime-only values and must not be serializable diagnostics. |
 | Send accepted | Optional `providerRequestId` plus normalized acceptance evidence. A response carrying verified delivery evidence may also provide a normalized delivery event. Raw payloads are never the return contract. |
 | Send error | Tagged category from the typed-failure table, `acceptance: "not_accepted" | "unknown"`, allowlisted `diagnosticCode`, and optional `retryAt`. Final post-acceptance delivery failure is an event, not a retrospective rejection. |
 | Selector input | Normalized `recipient`, `purpose`, requested or default `locale`, and bounded readonly `routingContext`. |

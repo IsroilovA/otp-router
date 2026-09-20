@@ -1,0 +1,14 @@
+{
+  "name": "otp-router-custom-adapter-example",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.5.1",
+  "dependencies": {
+    "effect": "3.22.2",
+    "otp-router": "file:../../artifacts/otp-router-0.1.0.tgz"
+  },
+  "devDependencies": {
+    "@types/node": "24.13.6",
+    "typescript": "7.0.2"
+  }
+}
