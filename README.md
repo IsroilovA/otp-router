@@ -1,6 +1,26 @@
 # OTP Router
 
-OTP Router is a planned standalone self-hosted HTTP service written in TypeScript for generating, delivering, and verifying phone-number OTPs through configurable provider sequences. This repository currently contains design documents only.
+OTP Router is a planned standalone self-hosted HTTP service written in TypeScript for generating, delivering, and verifying phone-number OTPs through configurable provider sequences. The repository contains the accepted design and an initial TypeScript project scaffold. Application behavior is not implemented yet.
+
+## Development setup
+
+Use Node.js 24 or newer and pnpm 12.5.1. Install the locked dependencies:
+
+```sh
+pnpm install --frozen-lockfile
+```
+
+Available checks:
+
+```sh
+pnpm typecheck
+pnpm build
+pnpm lint
+pnpm format:check
+pnpm check
+```
+
+Run `pnpm format` to format supported files. Build output goes to `dist/`, which Git ignores.
 
 ## Current contracts
 

@@ -1,0 +1,24 @@
+{
+  "name": "otp-router",
+  "version": "0.0.0",
+  "description": "A self-hosted service for routing phone-number OTP delivery.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.5.1",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc --project tsconfig.build.json",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "lint": "biome lint .",
+    "typecheck": "tsc --project tsconfig.json"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "typescript": "7.0.2"
+  }
+}
