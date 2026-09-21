@@ -4,7 +4,6 @@ import { rows, single } from "../database/query.js";
 import { DomainError } from "../errors.js";
 import { findOperation, terminate as closeOperation } from "../delivery/store.js";
 import { Challenge, Secrets } from "./records.js";
-import { changed } from "./changes.js";
 const { delivery: _delivery, ...fields } = Challenge.fields;
 const Record = Schema.Struct(fields);
 export const findChallenge = (id: string, lock = false) =>
@@ -48,7 +47,6 @@ export const terminate = (
     yield* sql`UPDATE otp_router.challenges SET verification_state = ${state}, terminal_at = ${time} WHERE id = ${challenge.id} AND verification_state = 'active'`;
     yield* closeOperation(challenge.delivery, state === "expired" ? "expired" : "closed", time);
     yield* eraseSecrets(challenge.id);
-    yield* changed(challenge.id);
     return yield* findChallenge(challenge.id);
   });
 export const expire = (challenge: Challenge, time: Date) =>

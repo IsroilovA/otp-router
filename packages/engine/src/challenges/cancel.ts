@@ -1,4 +1,4 @@
-import { domainTransaction } from "./transaction.js";
+import { domainTransaction } from "../delivery/transaction.js";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";

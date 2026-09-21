@@ -8,7 +8,7 @@ import { Webhook } from "standardwebhooks";
 import { ChallengeEvent, Snapshot } from "../packages/engine/src/challenges/contracts.js";
 import { decrypt } from "../packages/engine/src/crypto.js";
 import { createChallenge } from "../packages/engine/src/challenges/create.js";
-import { challengeTransaction } from "../packages/engine/src/challenges/transaction.js";
+import { deliveryTransaction } from "../packages/engine/src/delivery/transaction.js";
 import { cleanup } from "../packages/engine/src/maintenance.js";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
@@ -296,7 +296,7 @@ describe("public snapshots and transactional events", () => {
   it("rolls back events and both job types when the surrounding transition aborts", async () => {
     const harness = app();
     const result = await harness.run(
-      challengeTransaction(
+      deliveryTransaction(
         harness.configuration,
         createChallenge(harness.configuration, {
           key: randomUUID(),

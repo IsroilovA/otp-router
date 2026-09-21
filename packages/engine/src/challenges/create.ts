@@ -13,7 +13,7 @@ import type { CreateInput, Mutation, OperationResult } from "./contracts.js";
 import { operation, lockOperation, replay, saveResult } from "./idempotency.js";
 import { findChallenge } from "./store.js";
 import { snapshot } from "./publication.js";
-import { challengeTransaction as transaction } from "./transaction.js";
+import { deliveryTransaction as transaction } from "../delivery/transaction.js";
 export const createChallenge = (config: RuntimeConfiguration, request: Mutation<CreateInput>) =>
   Effect.gen(function* () {
     const phone = yield* normalizePhone(request.input.recipient.phoneNumber);

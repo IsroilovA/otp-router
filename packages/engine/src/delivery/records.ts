@@ -44,6 +44,7 @@ export const Attempt = Schema.Struct({
   due_at: Schema.Date,
   state: AttemptState,
   reserved_at: Schema.NullOr(Schema.Date),
+  recovery_at: Schema.NullOr(Schema.Date),
   completed_at: Schema.NullOr(Schema.Date),
   acceptance: Schema.NullOr(Schema.Literals(["accepted", "not_accepted", "unknown"])),
   failure_category: Schema.NullOr(Schema.String),

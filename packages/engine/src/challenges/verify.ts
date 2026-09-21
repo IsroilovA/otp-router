@@ -1,7 +1,7 @@
 import { terminate as closeOperation } from "../delivery/store.js";
 import { verifierInput } from "./crypto.js";
-import { changed } from "./changes.js";
-import { domainTransaction } from "./transaction.js";
+import { changed } from "../delivery/changes.js";
+import { domainTransaction } from "../delivery/transaction.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
 import { Effect } from "effect";
@@ -87,7 +87,6 @@ export const verifyChallenge = (
         yield* sql`UPDATE otp_router.challenges SET verification_state = 'verified', verification_id = ${verificationId}, verified_at = ${time}, terminal_at = ${time} WHERE id = ${challenge.id} AND verification_state = 'active'`;
         yield* closeOperation(challenge.delivery, "closed", time);
         yield* eraseSecrets(challenge.id);
-        yield* changed(challenge.id);
         const response: OperationResult = {
           outcome: "completed",
           replayed: false,
@@ -108,7 +107,7 @@ export const verifyChallenge = (
       }
       yield* sql`UPDATE otp_router.challenges SET incorrect_guesses = incorrect_guesses + 1 WHERE id = ${challenge.id} AND verification_state = 'active'`;
       yield* countQuotas(limits, randomUUID(), time);
-      yield* changed(challenge.id);
+      yield* changed(challenge.operation_id);
       const active = challenge.incorrect_guesses + 1 < challenge.max_incorrect_guesses;
       if (!active) yield* terminate(challenge, "locked", time);
       const response: OperationResult = {

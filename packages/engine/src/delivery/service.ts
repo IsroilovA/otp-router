@@ -1,4 +1,4 @@
-import type { Operation } from "./records.js";
+import type { ApplicationOperation } from "../diagnostics/log.js";
 import { observeOperation, type InfrastructureError } from "../diagnostics/operation.js";
 import { admissionLimit, lockQuotas } from "./quotas.js";
 import type { PgClient } from "@effect/sql-pg";
@@ -65,16 +65,18 @@ const prepare = (
       }),
     );
   });
-const mutate = (
-  config: RuntimeConfiguration,
-  request: typeof SubmitRequest.Type | typeof DeliverRequest.Type | typeof CloseRequest.Type,
-  action: "submit" | "deliver" | "close",
-) =>
+type Mutation =
+  | { readonly action: "submit"; readonly request: typeof SubmitRequest.Type }
+  | { readonly action: "deliver"; readonly request: typeof DeliverRequest.Type }
+  | { readonly action: "close"; readonly request: typeof CloseRequest.Type };
+
+const mutate = (config: RuntimeConfiguration, command: Mutation) =>
   domainTransaction(
     config,
     Effect.gen(function* () {
-      const code = "code" in request.input ? request.input.code : undefined;
-      const input = code === undefined ? request.input : {};
+      const { request, action } = command;
+      const code = command.action === "submit" ? command.request.input.code : undefined;
+      const input = command.action === "submit" ? {} : request.input;
       const id = identity(config.settings.crypto, action, request);
       const previous = yield* replay(config.settings.crypto, id, input, code);
       // Existing results have no new send effects, including after terminal fingerprint erasure.
@@ -85,7 +87,18 @@ const mutate = (
       yield* requireExternal(locked);
       const time = yield* databaseTime;
       const operation = yield* expire(locked, time);
-      yield* applyAction(config, operation, request, { action, code, time });
+      switch (command.action) {
+        case "submit":
+          yield* attachCode(config, operation, command.request.input.code);
+          break;
+        case "deliver":
+          yield* requestSend(config, operation, command.request.input, time);
+          break;
+        case "close":
+          if (operation.state !== "closed" && operation.state !== "expired")
+            yield* terminate(operation, "closed", time);
+          break;
+      }
       const current = yield* findOperation(operation.id);
       const response: OperationResult = {
         outcome:
@@ -125,12 +138,14 @@ export const DeliveryLive = Layer.effect(
       PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection
     >();
     const run = <E extends DomainError | InfrastructureError>(
+      operation: ApplicationOperation,
       effect: Effect.Effect<
         OperationResult,
         E,
         PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection
       >,
-    ) => observeOperation("external_delivery", effect.pipe(Effect.provide(context)));
+      requestId?: string,
+    ) => observeOperation(operation, effect.pipe(Effect.provide(context)), requestId);
     const validate = <S extends Schema.Top>(schema: S, value: S["Type"]) =>
       Schema.decodeUnknownEffect(schema)(value, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => new DomainError({ code: "invalid_request" })),
@@ -138,37 +153,48 @@ export const DeliveryLive = Layer.effect(
     return {
       prepare: (request) =>
         run(
+          "delivery.prepare",
           validate(PrepareRequest, request).pipe(Effect.flatMap((value) => prepare(config, value))),
+          request.requestId,
         ),
       create: (request) =>
         run(
+          "delivery.create",
           validate(CreateRequest, request).pipe(
             Effect.flatMap((value) => {
               const { code, ...input } = value.input;
               return prepare(config, { ...value, input }, code);
             }),
           ),
+          request.requestId,
         ),
       submitCode: (request) =>
         run(
+          "delivery.submitCode",
           validate(SubmitRequest, request).pipe(
-            Effect.flatMap((value) => mutate(config, value, "submit")),
+            Effect.flatMap((value) => mutate(config, { action: "submit", request: value })),
           ),
+          request.requestId,
         ),
       deliver: (request) =>
         run(
+          "delivery.deliver",
           validate(DeliverRequest, request).pipe(
-            Effect.flatMap((value) => mutate(config, value, "deliver")),
+            Effect.flatMap((value) => mutate(config, { action: "deliver", request: value })),
           ),
+          request.requestId,
         ),
       close: (request) =>
         run(
+          "delivery.close",
           validate(CloseRequest, request).pipe(
-            Effect.flatMap((value) => mutate(config, value, "close")),
+            Effect.flatMap((value) => mutate(config, { action: "close", request: value })),
           ),
+          request.requestId,
         ),
       status: (id) =>
         run(
+          "delivery.status",
           validate(Schema.String, id).pipe(
             Effect.flatMap((value) => deliveryStatus(config, value)),
           ),
@@ -176,22 +202,3 @@ export const DeliveryLive = Layer.effect(
     };
   }),
 );
-
-const applyAction = (
-  config: RuntimeConfiguration,
-  operation: Operation,
-  request: typeof SubmitRequest.Type | typeof DeliverRequest.Type | typeof CloseRequest.Type,
-  options: {
-    readonly action: "submit" | "deliver" | "close";
-    readonly code: string | undefined;
-    readonly time: Date;
-  },
-) =>
-  Effect.gen(function* () {
-    const { action, code, time } = options;
-    if (action === "submit" && code !== undefined) yield* attachCode(config, operation, code);
-    else if (action === "deliver" && "action" in request.input)
-      yield* requestSend(config, operation, request.input, time);
-    else if (action === "close" && operation.state !== "closed" && operation.state !== "expired")
-      yield* terminate(operation, "closed", time);
-  });

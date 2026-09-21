@@ -8,8 +8,7 @@ import type { ChallengeMutation, OperationResult } from "./contracts.js";
 import { operation, lockOperation, replay, saveResult } from "./idempotency.js";
 import { findChallenge, expire, requireActive } from "./store.js";
 import { snapshot } from "./publication.js";
-import { changed } from "./changes.js";
-import { domainTransaction } from "./transaction.js";
+import { domainTransaction } from "../delivery/transaction.js";
 export const requestDelivery = (
   config: RuntimeConfiguration,
   request: ChallengeMutation<DeliveryInput>,
@@ -28,7 +27,6 @@ export const requestDelivery = (
       const challenge = yield* expire(locked, time);
       yield* requireActive(challenge);
       const attemptId = yield* requestSend(config, challenge.delivery, request.input, time);
-      yield* changed(challenge.id);
       const response: OperationResult = {
         outcome: "delivery_queued",
         replayed: false,

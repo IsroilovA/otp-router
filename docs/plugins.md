@@ -46,4 +46,4 @@ Selectors run outside database transactions and may execute more than once for c
 
 Completed creation replays bypass the selector. Later delivery actions use the saved route and current eligibility checks.
 
-Provider send input identifies `operationId` and `attemptId`. These replace challenge identity and the old ambiguous delivery ID. An adapter handles managed and external operations identically, preserves leading-zero codes and disables send retries.
+Provider send input identifies `operationId` and `attemptId`. An adapter handles managed and external operations identically, preserves leading-zero codes and disables send retries.

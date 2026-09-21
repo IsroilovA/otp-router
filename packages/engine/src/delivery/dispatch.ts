@@ -19,7 +19,7 @@ import { logEvent } from "../diagnostics/log.js";
 import { count, duration } from "../diagnostics/metrics.js";
 import { decrypt, type Ciphertext } from "../crypto.js";
 import {
-  admissionLimit,
+  extendAdmission,
   checkQuotas,
   commonSendLimits,
   countQuotas,
@@ -123,8 +123,9 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
           : {}),
       };
       yield* countQuotas(limits, delivery.id, time);
-      yield* countQuotas([admissionLimit(operation.recipient_token)], delivery.id, time);
-      yield* sql`UPDATE otp_router.delivery_attempts SET state = 'dispatching', reserved_at = ${time}, acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending'`;
+      yield* extendAdmission(operation.recipient_token, delivery.id, time);
+      // Allow outcome persistence time beyond the provider timeout before independent recovery.
+      yield* sql`UPDATE otp_router.delivery_attempts SET state = 'dispatching', reserved_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending'`;
       yield* sql`UPDATE otp_router.delivery_operations SET send_count = send_count + 1, next_user_send_at = GREATEST(next_user_send_at,${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)}) WHERE id = ${operation.id}`;
       return {
         input,

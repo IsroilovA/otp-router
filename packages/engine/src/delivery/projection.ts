@@ -1,3 +1,4 @@
+import type { Snapshot } from "./contracts.js";
 import { Context, type Effect, type Schema, type Cause } from "effect";
 import type { PgClient } from "@effect/sql-pg";
 import type { SqlClient, SqlError } from "effect/unstable/sql";
@@ -12,6 +13,7 @@ export class OwnerProjection extends Context.Service<
     readonly publish: (
       operationId: string,
       time: Date,
+      delivery: Snapshot,
     ) => Effect.Effect<
       void,
       | SqlError.SqlError

@@ -87,3 +87,10 @@ export const admissionLimit = (token: string): Limit => ({
   maximum: 1,
   windowMs: 30000,
 });
+
+export const extendAdmission = (token: string, eventId: string, time: Date) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const identity = admissionLimit(token).identity;
+    yield* sql`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES (${identity},'admission',${eventId},${time}) ON CONFLICT (identity,kind,event_id) DO UPDATE SET occurred_at = GREATEST(quota_events.occurred_at,EXCLUDED.occurred_at)`;
+  });

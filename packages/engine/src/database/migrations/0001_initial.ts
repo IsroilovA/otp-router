@@ -46,12 +46,13 @@ export default Effect.gen(function* () {
     routing_revision integer NOT NULL CHECK (routing_revision > 0),
     reason text NOT NULL CHECK (reason IN ('initial','fallback','resend','next','select')),
     due_at timestamptz NOT NULL, state text NOT NULL CHECK (state IN ('pending','dispatching','accepted','delivered','failed','uncertain','suppressed')),
-    reserved_at timestamptz, completed_at timestamptz, acceptance text CHECK (acceptance IN ('accepted','not_accepted','unknown')),
+    reserved_at timestamptz, recovery_at timestamptz, completed_at timestamptz, acceptance text CHECK (acceptance IN ('accepted','not_accepted','unknown')),
     failure_category text, diagnostic_code text, provider_request_id text, retry_at timestamptz,
-    CHECK ((state = 'dispatching') IS NOT TRUE OR reserved_at IS NOT NULL)
+    CHECK ((state = 'dispatching') IS NOT TRUE OR (reserved_at IS NOT NULL AND recovery_at IS NOT NULL))
   )`;
   yield* sql`CREATE UNIQUE INDEX attempts_advancement ON otp_router.delivery_attempts(operation_id,routing_revision,route_position) WHERE reason = 'fallback'`;
   yield* sql`CREATE INDEX attempts_operation ON otp_router.delivery_attempts(operation_id)`;
+  yield* sql`CREATE INDEX attempts_recovery ON otp_router.delivery_attempts(recovery_at) WHERE state = 'dispatching'`;
   yield* sql`CREATE INDEX attempts_pending ON otp_router.delivery_attempts(due_at) WHERE state = 'pending'`;
   yield* sql`CREATE TABLE otp_router.events (
     id uuid PRIMARY KEY, subject_id uuid NOT NULL, kind text NOT NULL CHECK (kind IN ('challenge.updated','delivery.updated')), revision integer NOT NULL CHECK (revision > 0),

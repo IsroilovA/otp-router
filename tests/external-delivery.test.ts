@@ -1,9 +1,10 @@
+import { recoverDispatches } from "../packages/engine/src/delivery/recovery.js";
 import { cleanup } from "../packages/engine/src/maintenance.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
 import { WebhookError } from "../apps/server/src/http/webhooks.js";
 import { randomUUID } from "node:crypto";
 import { Effect, Layer, Redacted, Schema } from "effect";
-import { beforeAll, afterAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FakeProvider,
   ProviderInstance,
@@ -140,9 +141,14 @@ describe("independent durable external code delivery", () => {
     });
     expect(await counts()).toMatchObject({ attempts: 0, sends: 0 });
     await app().run(validateStoredKeys(app().configuration.settings));
-    const attached = await Effect.runPromise(
-      app().delivery.submitCode(submit(prepared.body.operationId)),
-    );
+    const submission = submit(prepared.body.operationId);
+    const output = vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const attached = await Effect.runPromise(app().delivery.submitCode(submission));
+    const logs = output.mock.calls.map(([chunk]) => String(chunk)).join("");
+    expect(logs).toContain('"operation":"delivery.submitCode"');
+    expect(logs).toContain(`"requestId":"${submission.requestId}"`);
+    expect(logs).not.toContain(submission.input.code);
+    output.mockRestore();
     expect(attached.body.expiresAt).toBe(prepared.body.expiresAt);
     await runQueued();
     expect(sent).toHaveLength(1);
@@ -247,7 +253,26 @@ describe("independent durable external code delivery", () => {
     await Effect.runPromise(
       app().delivery.deliver({ ...request({ action: "resend" }), operationId }),
     );
+    // Simulate queue delay after admission, without changing the immutable send reservations.
+    await app().run(
+      app()
+        .pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '31 seconds' WHERE kind = 'admission'`,
+    );
     await runQueued();
+    const admitted = await Effect.runPromise(
+      app()
+        .delivery.prepare(
+          request({
+            recipient: { type: "phone", phoneNumber: "+998901234567" },
+            purpose: "login",
+            contextId: "next-flow",
+            policyId: "external",
+            expiresAt: new Date(Date.now() + 890000).toISOString(),
+          }),
+        )
+        .pipe(Effect.result),
+    );
+    expect(admitted).toMatchObject({ _tag: "Failure", failure: { code: "rate_limited" } });
     expect(sent).toHaveLength(2);
     expect(sent[0]?.code).toBe(sent[1]?.code);
     expect(sent[1]?.expiresAt).toBe(prepared.body.expiresAt);
@@ -359,6 +384,49 @@ describe("independent durable external code delivery", () => {
     await app().run(dispatch(app().configuration, payload));
     expect(sent).toHaveLength(0);
     expect(await counts()).toMatchObject({ sends: 1, secrets: 0, fingerprints: 0 });
+  });
+  it("recovers overdue dispatches without their queue jobs and never repeats a send", async () => {
+    const prepared = await prepare();
+    const operationId = prepared.body.operationId;
+    await Effect.runPromise(app().delivery.submitCode(submit(operationId)));
+    const job = (await app().queue.fetch(deliveryQueue))[0];
+    if (job === undefined) throw new Error("Job missing");
+    const payload = Schema.decodeUnknownSync(DeliveryJob)(job.data);
+    await app().run(dispatchGate(app().configuration, payload));
+    await app().queue.deleteJob(deliveryQueue, job.id);
+    await app().run(recoverDispatches(app().configuration));
+    expect((await Effect.runPromise(app().delivery.status(operationId))).body.state).toBe(
+      "sending",
+    );
+    await app().run(
+      app()
+        .pg`UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${payload.attemptId}`,
+    );
+    await Promise.all([
+      app().run(cleanup(app().configuration)),
+      app().run(recoverDispatches(app().configuration)),
+    ]);
+    const recovered = (await Effect.runPromise(app().delivery.status(operationId))).body;
+    expect(recovered.state).toBe("uncertain");
+    expect(await app().queue.fetch(deliveryQueue)).toHaveLength(0);
+    await app().run(dispatch(app().configuration, payload));
+    expect(sent).toHaveLength(0);
+    expect(await counts()).toMatchObject({ attempts: 1, sends: 1 });
+    expect((await Effect.runPromise(app().delivery.status(operationId))).body.revision).toBe(
+      recovered.revision,
+    );
+    await close(operationId);
+    await app().run(
+      app()
+        .pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '8 days' WHERE id = ${operationId}`,
+    );
+    await app().run(cleanup(app().configuration));
+    expect(
+      await Effect.runPromise(app().delivery.status(operationId).pipe(Effect.result)),
+    ).toMatchObject({
+      _tag: "Failure",
+      failure: { code: "operation_not_found" },
+    });
   });
   it("authenticates external HTTP endpoints and wires prepare, submit and close", async () => {
     const h = app(),

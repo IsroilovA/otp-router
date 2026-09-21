@@ -1,3 +1,4 @@
+import { recoverDispatches } from "./delivery/recovery.js";
 import { cleanupNotifications } from "./notifications/retention.js";
 import { deliveryTransaction as transaction } from "./delivery/transaction.js";
 import type { RuntimeConfiguration } from "./config/config.js";
@@ -56,6 +57,7 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
 // to one batch per scheduler tick. The Effect remains interruptible between batches.
 export const cleanup = (config: RuntimeConfiguration) =>
   Effect.gen(function* () {
+    yield* recoverDispatches(config);
     while (yield* cleanupBatch(config)) {}
   });
 export const invalidateRestoredOperations = (config: RuntimeConfiguration) =>

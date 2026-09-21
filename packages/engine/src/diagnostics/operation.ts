@@ -24,7 +24,9 @@ const sqlFailureCategories = {
   UnknownError: "database_unknown",
 } satisfies Record<SqlError.SqlErrorReason["_tag"], FailureCategory>;
 
-const failureCategory = (error: DomainError | InfrastructureError): FailureCategory | undefined => {
+export const failureCategory = (
+  error: DomainError | InfrastructureError,
+): FailureCategory | undefined => {
   switch (error._tag) {
     case "DomainError":
       return undefined;

@@ -1420,7 +1420,7 @@ describe("PostgreSQL integration", () => {
     await create();
     const job = await fetchJob();
     await execute(
-      `UPDATE otp_router.delivery_attempts SET state = 'dispatching', acceptance = 'unknown', reserved_at = clock_timestamp() WHERE id = '${job.data.attemptId}'`,
+      `UPDATE otp_router.delivery_attempts SET state = 'dispatching', acceptance = 'unknown', recovery_at = clock_timestamp() + interval '5 minutes', reserved_at = clock_timestamp() WHERE id = '${job.data.attemptId}'`,
     );
     await currentRuntime().run(dispatch(currentRuntime().configuration, job.data));
     expect(primary.sends).toHaveLength(0);

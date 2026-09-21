@@ -28,7 +28,7 @@ Deploy old and new API keys to every API process. Switch the backend after all p
 
 ## Database restore
 
-Stop every API and worker before restoring. Run `--invalidate-restored` to cancel restored active challenges, erase secrets and code fingerprints, and suppress pending delivery work. Late callbacks cannot reopen those challenges.
+Stop every API and worker before restoring. Run `--invalidate-restored` to close restored prepared/active delivery operations, cancel linked challenges, erase secrets and code fingerprints, and suppress pending work. Late callbacks cannot reopen them.
 
 ```sh
 node --env-file=.env apps/server/dist/main.js --invalidate-restored --config "$PWD/examples/config/router.config.ts"
@@ -52,21 +52,21 @@ Encryption, verification, and fingerprint-key overlap follow the [security guide
 
 Keep health and Prometheus metrics on the internal listener. Restrict access through deployment networking. JSON logs report operation outcomes and safe failure categories; never log raw errors or sensitive payloads. Use bounded metric labels, not challenge IDs, recipients, or request paths.
 
-Application logs include `operation` and, for infrastructure failures, `failureCategory`: `database_*` categories distinguish connection, authentication, authorization, syntax, constraint, and concurrency/timeout failures; `queue_operation`, `schema_validation`, and `missing_data` identify other boundaries. Mutation logs include the request ID for correlation. Clients still receive `temporarily_unavailable`; logs omit raw SQL, error messages, causes, and schema input values. Domain rejections carry their normal `reason` without an infrastructure category.
+Application mutation logs identify the operation and request ID. Worker failure logs identify the queue, job and safe failure category, distinguishing infrastructure failures, defects and interruption. Neither includes raw SQL, error causes or sensitive payloads. Clients receive stable public errors.
 
-Cleanup enforces bounded retention and erases terminal secrets. Request paths enforce expiry independently of cleanup. Quota usage must survive challenge-history deletion.
+Startup and maintenance reconcile abandoned dispatches even when their queue jobs have exhausted retries. Recovery records uncertainty and never invokes a provider. Cleanup enforces [retention](data-model.md#replay-and-retention); request paths enforce expiry independently.
 
-Set `workerConcurrency` in the entry file for the deployment's workload. Each process currently has fixed pool limits of 10 application connections and 6 queue connections, including API-only processes; budget PostgreSQL capacity across replicas. Application transactions use a 2-second lock timeout and a 5-second statement timeout. Pool limits, transaction deadlines, retention, and queue recovery timings are implementation settings, not environment-variable knobs. Build the workspace, then run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts`; historical measurements are in the [research archive](research/benchmark.md).
+Set `workerConcurrency` for the deployment's workload and budget PostgreSQL connections across all replicas, including API-only processes. Pool sizes and transaction deadlines live in the resource configuration. Run the separate capacity benchmark with `pnpm exec vitest run --config vitest.benchmark.config.ts` when evaluating deployment capacity; [historical measurements](research/benchmark.md) are context, not a capacity guarantee.
 
 ## Outbound notifications
 
-Configure the destination and independent signing secret as described in [webhooks](webhooks.md). Monitor pending age, expired leases, and failed rows in `otp_router.notifications`. Non-2xx responses and transport failures receive bounded retries; exhausted notifications and their exact event bodies remain for diagnosis. `--replay-webhook <eventId>` queues a failed notification again without any OTP send. Delivered events retain seven days; failed/pending notifications survive challenge deletion.
+Monitor pending age, expired leases and failed notifications. Follow [webhook configuration and replay](webhooks.md) to diagnose receiver failures and requeue retained events.
 
 Backups include immutable events and their delivery state. Restoring can redeliver events the receiver already knows, or roll back a challenge revision relative to the receiver. Event-ID deduplication and highest-revision application remain mandatory; abandon restored authentication flows using the restore procedure. Coordinate webhook destination and signing-secret changes across all roles.
 
 ## Deployment checklist
 
-- Use a dedicated PostgreSQL database and durable storage. PostgreSQL 17 is the repository's development and test baseline. The runtime account must create schemas, tables, and indexes and run both router and pg-boss migrations; a DML-only account cannot start the service.
+- Use a dedicated PostgreSQL database and durable storage. The runtime account must create schemas, tables, and indexes and run both router and pg-boss migrations; a DML-only account cannot start the service.
 - Back up the complete database, including router, queue, and migration state, and keep the corresponding cryptographic keys in a separate secret store. Exercise restoration with traffic stopped using the procedure above.
 - Route backend traffic privately or through TLS. Publish only the selected `/webhooks/<instanceId>` paths for provider callbacks, preserving raw request bodies, query strings, and signature headers. Keep application Bearer keys on the backend and health/metrics private.
 - Run at least one worker or combined process. API-only deployments can accept creation requests while deliveries and cleanup wait for a worker.
@@ -90,9 +90,3 @@ Start with `docker compose -f apps/server/compose.yaml ps` and `docker compose -
 | 409 `idempotency_conflict` | Retry with the original validated body or use a fresh key only for an intended new action. |
 
 Distribution is private. Pin deployment artifacts and preserve exact dependency versions in the lockfile. Verify real provider accounts with explicit authorization and designated recipients before enabling traffic.
-
-## Both capabilities
-
-Restore invalidation closes every prepared/active delivery operation and atomically cancels linked managed challenges. Prepared references have expiry jobs and bounded admission/retention just like attached operations. Key reference checks cover delivery ciphertext, attachment/request fingerprints and managed verifiers. Delivery-only configuration can omit verification keys only when no retained verifier references require them.
-
-Cleanup and notification replay operate across `delivery.updated` and `challenge.updated`. The schema now separates `delivery_operations`, `delivery_attempts`, `delivery_secrets`, challenge verification records and a shared immutable `events` store. This initial-development schema change requires a fresh database; there is no compatibility migration.

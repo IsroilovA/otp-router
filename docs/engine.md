@@ -1,44 +1,28 @@
-# Engine package
+# Engine integration
 
-`@otp-router/engine` is one private PostgreSQL/pg-boss package with one database, migration owner, version, and runtime. It supports managed OTP challenges and delivery of externally generated, externally verified numeric phone codes. The initial schema changes directly; use a fresh development database.
-
-## Supported exports
-
-| Entry | Contract |
-| --- | --- |
-| `@otp-router/engine` | `makeEngineLayer`, `EngineControl`, callbacks, diagnostics, lifecycle failures |
-| `@otp-router/engine/challenges` | `Router`: create, status, verify, deliver, cancel; managed request/result/event schemas |
-| `@otp-router/engine/delivery` | `Delivery`: prepare, create, submitCode, status, deliver, close; delivery request/result/event schemas |
-| `@otp-router/engine/config` | Settings, delivery policy, optional managed settings, configuration validation/selectors |
-| `@otp-router/engine/providers` | Provider contracts, existing Telegram, WhatsApp, SMS, fake and custom adapters |
-| `@otp-router/server` | Reusable application construction and serving |
-
-Private records and SQL helpers are not supported imports. Build before using consumers; all resolve emitted exports.
+Use `@otp-router/engine` for resources and control, `/challenges` for managed verification, `/delivery` for external code delivery, `/config` for settings and selectors, and `/providers` for adapters. Exported TypeScript contracts define request, result and event shapes. Consumers resolve built exports; private records and SQL helpers are unsupported imports.
 
 ## Resource lifecycle
 
-Load a `Configuration` with `loadConfiguration` in a scope. Pass it and an explicit redacted database URL to `makeEngineLayer`; supply platform services such as `NodeServices.layer`. It migrates, validates retained keys/deployment identity, starts pg-boss and exposes both capabilities plus callbacks and control. Imports open no resources.
+Load a `Configuration` with `loadConfiguration` in a scope. Pass the result and a redacted database URL to `makeEngineLayer`, supplying platform services such as `NodeServices.layer`. Resource construction migrates and validates the database and starts pg-boss. Imports open no resources.
 
-Start workers explicitly through `EngineControl.startWorkers({ concurrency, shutdownGraceMs })` in a nested scope. API-only callers need not start workers. Stop traffic and claims, drain, then close resources. The caller owns signals and readiness; `probe` checks the database. One deployment owns its database; there is no SaaS tenancy model.
+Start workers through `EngineControl.startWorkers` in a nested scope. API-only callers need not start workers. The caller owns signals, readiness and shutdown: stop traffic and claims, drain work, then close resources. `probe` checks database availability.
 
-## External lifecycle
+## Choosing a capability
 
-`prepare` takes a normalized phone recipient, allowed purpose/policy, opaque context ID, optional locale/routing context/manual choice, and an absolute UTC ISO `expiresAt`. It commits a prepared operation without code or provider attempts. Preparation consumes bounded recipient admission/creation quotas but reserves no future provider capacity.
+Use `Router` when the router should generate and verify codes. Create a challenge, accept its delivery updates, and verify against the original purpose/context binding. The adopting application owns authorization and consumes the verification result once; see [security](security.md).
 
-`submitCode` takes `operationId`, code, idempotency key and request ID. It attaches the code once and queues initial work atomically. Concurrent identical submissions cannot add another attempt, even with distinct request keys. A conflicting attached code is rejected. `create` combines preparation and attachment through the same primitives for callers already holding a code.
+Use `Delivery` when another authority generates and verifies codes:
 
-`status` returns a redacted snapshot with action forecasts. `deliver` accepts resend, next or explicit selection, always reusing the original code and deadline. `close` permanently stops pending work and erases recoverable secrets. Closed and expired operations never reopen. A replacement code requires a new operation. An in-flight message can still arrive after closure.
+1. `prepare` fixes the recipient, route and absolute deadline without a code. Preparation reserves no future provider capacity.
+2. `submitCode` attaches a code once and queues delivery. Identical submissions do not create another attempt; a replacement code requires a new operation. `create` combines these steps.
+3. `status` reads a redacted snapshot; `deliver` requests resend, next or selection according to [routing rules](routing.md).
+4. `close` ends the operation. Closed and expired operations never reopen, and an in-flight message cannot be recalled.
 
-These methods cannot mutate a challenge-owned operation. Use its challenge API. Delivery snapshots never contain verify actions or a verified state. The caller's external authority owns verification, identities and sessions; closure is not proof of authentication.
+External methods cannot mutate challenge-owned operations. Delivery outcomes do not prove recipient verification. See the [external-code example](../examples/external-code/README.md).
 
-Mutations validate inputs and use durable idempotency. Exact retained replay returns the original safe result with `replayed: true`, which may describe an earlier state; use status for current state. Once terminal code fingerprints are erased, replay ignores code differences and returns the retained receipt without performing work. Expired absolute deadlines also prevent old creation requests from recreating work after retention ends.
+## Results and control
 
-## Managed challenges and events
+Both capabilities return tagged domain errors. Incorrect guesses are committed results so replay does not consume another guess. Retained replay returns the original result, which may describe an earlier state; use status for reconciliation. See [idempotency](api.md#idempotency) and [transaction guarantees](data-model.md).
 
-Managed creation generates a code, stores a separately bound verifier, and creates/attaches a delivery operation in one transaction. Challenge snapshots include `operationId`. Verification, lockout, cancellation and expiry atomically close delivery and erase secrets. Explicit sends preserve guess count and deadline.
-
-Both APIs return tagged domain errors; committed incorrect guesses remain results so replay consumes no additional guesses. Infrastructure errors are redacted; defects and interruption remain distinct.
-
-`challenge.updated` and `delivery.updated` are separate typed immutable events using one notification worker. State, projections, events, queue work and replay results commit together. Durable handoff acceptance, provider acceptance and recipient verification are separate milestones.
-
-`EngineControl.replayNotification(eventId)` requeues retained failed events. `invalidateRestoredOperations` drains both capabilities after opening resources in restore mode. See [operations](operations.md), [routing](routing.md), and the [standalone external example](../examples/external-code/README.md).
+Subscribe to [public events](webhooks.md) for changes. `EngineControl.replayNotification` requeues a retained failed event; restore invalidation is an operator procedure described in [operations](operations.md).

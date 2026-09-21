@@ -1,13 +1,16 @@
 import type { Snapshot as DeliverySnapshot } from "../delivery/contracts.js";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { buildSnapshot as buildDelivery } from "../delivery/snapshot.js";
 import { quotaRetryAt, recipientLimit } from "../delivery/quotas.js";
 import type { Snapshot } from "./contracts.js";
 import type { Challenge } from "./records.js";
-export const buildSnapshot = (config: RuntimeConfiguration, challenge: Challenge, time: Date) =>
+export const buildSnapshot = (
+  config: RuntimeConfiguration,
+  challenge: Challenge,
+  delivery: DeliverySnapshot,
+  time: Date,
+) =>
   Effect.gen(function* () {
-    const delivery = yield* buildDelivery(config, challenge.delivery, time);
     const active = challenge.verification_state === "active";
     const deny = {
       allowed: false,

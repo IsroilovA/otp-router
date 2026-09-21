@@ -84,7 +84,7 @@ pnpm db:down
 
 ## Try the API
 
-Follow the [first local flow](api.md#first-local-flow) to create a challenge, inspect delivery, replay the request, and cancel it. The fake provider accepts sends without delivering a code; successful verification is exercised by the process tests or an authorized real-provider test.
+Follow the [integration flow](api.md#integration-flow) for challenge creation, updates and completion. The fake provider accepts sends without delivering a code.
 
 ## Standalone container
 

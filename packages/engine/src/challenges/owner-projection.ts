@@ -10,7 +10,7 @@ export const OwnerProjectionLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* RouterConfig;
     return {
-      publish: (operationId, time) =>
+      publish: (operationId, time, delivery) =>
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           const row = (yield* rows(
@@ -27,7 +27,7 @@ export const OwnerProjectionLive = Layer.effect(
             yield* sql`UPDATE otp_router.challenges SET verification_state = ${challenge.delivery.state === "expired" ? "expired" : "cancelled"}, terminal_at = ${time} WHERE id = ${row.id} AND verification_state = 'active'`;
             yield* eraseSecrets(row.id);
           }
-          yield* publish(config, row.id, time);
+          yield* publish(config, row.id, delivery, time);
         }),
     };
   }),

@@ -1,3 +1,5 @@
+import { observeJob } from "./diagnostics.js";
+import { recoverDispatches } from "../delivery/recovery.js";
 import { notifyEvent, recoverNotifications } from "../notifications/send.js";
 import { deliveryStatus } from "../delivery/service.js";
 import { notificationQueue, expiryQueue, NotificationJob, ExpiryJob } from "../queue/jobs.js";
@@ -81,7 +83,7 @@ export const startWorkers = (options: typeof WorkerSettings.Type) =>
                   onExcessProperty: "error",
                 }).pipe(
                   Effect.flatMap((payload) => dispatch(config, payload)),
-                  Effect.catchCause(() => Effect.fail(new QueueOperationError())),
+                  (effect) => observeJob(effect, { queue: deliveryQueue, jobId: job.id }),
                 ),
               );
           },
@@ -90,16 +92,18 @@ export const startWorkers = (options: typeof WorkerSettings.Type) =>
     });
     yield* Effect.tryPromise({
       try: () =>
-        boss.work(cleanupQueue, { batchSize: 1, pollingIntervalSeconds: 1 }, () =>
-          run(
-            cleanup(config).pipe(
-              Effect.andThen(recoverNotifications),
-              Effect.catchCause(() => Effect.fail(new QueueOperationError())),
-            ),
-          ),
-        ),
+        boss.work(cleanupQueue, { batchSize: 1, pollingIntervalSeconds: 1 }, async (jobs) => {
+          for (const job of jobs)
+            await run(
+              observeJob(cleanup(config).pipe(Effect.andThen(recoverNotifications)), {
+                queue: cleanupQueue,
+                jobId: job.id,
+              }),
+            );
+        }),
       catch: () => new QueueOperationError(),
     });
+    yield* recoverDispatches(config);
     yield* recoverNotifications;
     yield* Effect.tryPromise({
       try: () =>
@@ -115,7 +119,7 @@ export const startWorkers = (options: typeof WorkerSettings.Type) =>
               await run(
                 Schema.decodeUnknownEffect(NotificationJob)(job.data).pipe(
                   Effect.flatMap(({ eventId }) => notifyEvent(config, eventId)),
-                  Effect.catchCause(() => Effect.fail(new QueueOperationError())),
+                  (effect) => observeJob(effect, { queue: notificationQueue, jobId: job.id }),
                 ),
               );
           },
@@ -130,7 +134,7 @@ export const startWorkers = (options: typeof WorkerSettings.Type) =>
               Schema.decodeUnknownEffect(ExpiryJob)(job.data).pipe(
                 Effect.flatMap(({ operationId }) => deliveryStatus(config, operationId)),
                 Effect.asVoid,
-                Effect.catchCause(() => Effect.fail(new QueueOperationError())),
+                (effect) => observeJob(effect, { queue: expiryQueue, jobId: job.id }),
               ),
             );
         }),

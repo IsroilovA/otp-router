@@ -1,18 +1,9 @@
+import type { ApplicationOperation } from "./log.js";
 import { Effect, Metric } from "effect";
 import { PrometheusMetrics } from "effect/unstable/observability";
 
 export const count = (
-  event:
-    | "external_delivery"
-    | "create"
-    | "verify"
-    | "cancel"
-    | "deliver"
-    | "status"
-    | "send"
-    | "recovery"
-    | "callback"
-    | "suppressed",
+  event: ApplicationOperation | "send" | "recovery" | "callback" | "suppressed" | "worker",
   outcome: string,
 ) => {
   return Metric.update(

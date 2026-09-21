@@ -1,7 +1,12 @@
 import { Effect } from "effect";
 import type { ErrorCode } from "../errors.js";
 export type ApplicationOperation =
-  | "external_delivery"
+  | "delivery.prepare"
+  | "delivery.create"
+  | "delivery.submitCode"
+  | "delivery.deliver"
+  | "delivery.close"
+  | "delivery.status"
   | "create"
   | "verify"
   | "cancel"
@@ -21,10 +26,24 @@ export type FailureCategory =
   | "database_unknown"
   | "queue_operation"
   | "schema_validation"
-  | "missing_data";
+  | "missing_data"
+  | "domain_rejection"
+  | "provider_failure"
+  | "timeout"
+  | "crypto_failure"
+  | "correlation_conflict"
+  | "defect"
+  | "interrupted";
 export interface Diagnostic {
-  readonly event: "application_operation" | "provider_send" | "callback" | "recovery";
+  readonly event:
+    | "application_operation"
+    | "provider_send"
+    | "callback"
+    | "recovery"
+    | "worker_failure";
   readonly requestId?: string;
+  readonly jobId?: string;
+  readonly queue?: string;
   readonly operationId?: string;
   readonly attemptId?: string;
   readonly providerInstanceId?: string;

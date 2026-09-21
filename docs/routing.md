@@ -36,16 +36,14 @@ Callbacks and send responses share outcome rules. Late acceptance cannot overwri
 
 New delivery evidence stops pending automatic fallback, but does not cancel an explicit user send. Duplicate delivery evidence must not suppress a later action. Local cancellation cannot recall a message already in flight.
 
-The managed public projection is `queued`, `sending`, `accepted`, `uncertain`, `verified`, or `failed`; internal verification and delivery states remain independent. Accepted/delivered records are acceptance evidence until a confirmed final failure invalidates that record. A failed or uncertain resend cannot erase another accepted record. Public provider/channel identify confirmed acceptance, never route selection. Once initial processing starts, fallback stays `sending`.
+A failed or uncertain resend cannot erase another attempt's still-valid acceptance. Public provider/channel identify confirmed acceptance, never route selection. See [public states and action forecasts](api.md#challenge-operations).
 
-Every meaningful resulting snapshot is published once per committed transition with an increasing revision. Duplicate evidence and internal bookkeeping produce no events. Late delivery evidence can change active challenges but cannot alter a terminal public snapshot.
-
-Action forecasts and absolute retry times are saved with the snapshot; time passing creates no event. Clients can reconsider a timed denial at its deadline, before expiry. Revalidate submitted actions because forecasts neither reserve capacity nor guarantee future eligibility.
+Late delivery evidence can change active challenges but cannot alter a terminal public snapshot. [Public events](webhooks.md) describe committed changes; time passing alone creates no event.
 
 ## Independent operations
 
-The same dispatch, eligibility, evidence and fallback machinery serves prepared external-code operations and managed challenges. A prepared operation cannot send until attachment. External absolute deadlines allow the configured delivery lifetime (900 seconds by default); managed generation retains its separate 60–600 second limit. Attachment and dispatch both check the fixed deadline, and every saved provider must accept the code format and length.
+The same dispatch, eligibility, evidence and fallback machinery serves prepared external-code operations and managed challenges. A prepared operation cannot send until attachment. Policy settings bound external deadlines and managed lifetimes; see [configuration](configuration.md#policies). Attachment and dispatch both check the fixed deadline, and every saved provider must accept the code format and length.
 
 New operations and accepted user sends share recipient admission: one per 30 seconds, alongside rolling creation/send budgets. Dispatch extends that recipient cooldown. Automatic confirmed-failure fallback never waits for it. Recipient/provider/deployment send reservations are shared across capabilities and retain uncertain or failed dispatched attempts.
 
-External lifecycle is prepared → active → closed/expired; it never reopens. Its public state is prepared, queued, sending, accepted, uncertain, failed, closed or expired. Failure/exhaustion of routing alone does not close the operation. Delivery snapshots contain submit/close/send forecasts and no verification claim. Closing erases recoverable secrets and suppresses pending work, but cannot recall a reserved or transmitted message.
+Routing exhaustion alone does not close an external operation. Its caller ends the flow through the [external lifecycle](engine.md#choosing-a-capability).

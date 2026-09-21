@@ -38,56 +38,21 @@ External mutations of a challenge-owned operation return `managed_operation` (40
 
 All mutations require JSON and an `Idempotency-Key`. The verification code above illustrates the string format; submit the user's received code, preserving leading zeros. Manual selection also accepts `{"type":"channel","channel":"sms"}` as its choice. It must be enabled by the policy.
 
-## First local flow
+## Integration flow
 
-Start the fake-provider stack using the [running guide](running.md), then run this from the same checkout. It uses Node to read `.env` and parse JSON; no `jq` is required. Keep the key and body unchanged if a response is lost. Generate a new flow/key only for an intended new challenge.
+Use the [running guide](running.md) to start a local fake-provider deployment. The fake provider exercises acceptance and events without exposing a usable code.
 
-```sh
-export OTP_ROUTER_API_KEY="$(node --env-file=.env -p 'process.env.OTP_ROUTER_API_KEY')"
-export OTP_ROUTER_URL=http://127.0.0.1:3000
-FLOW_ID="$(node -p 'crypto.randomUUID()')"
-CREATE_BODY="{\"recipient\":{\"type\":\"phone\",\"phoneNumber\":\"+14155552671\"},\"purpose\":\"login\",\"contextId\":\"$FLOW_ID\",\"policyId\":\"login\"}"
-CREATED="$(curl --fail-with-body -sS "$OTP_ROUTER_URL/v1/challenges" \
-  -H "Authorization: Bearer $OTP_ROUTER_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: create-$FLOW_ID" \
-  --data "$CREATE_BODY")"
-CHALLENGE_ID="$(printf '%s' "$CREATED" | node --input-type=module -e '
-  let text = "";
-  for await (const chunk of process.stdin) text += chunk;
-  const result = JSON.parse(text);
-  if (typeof result.challengeId !== "string") throw new Error("Creation did not succeed");
-  process.stdout.write(result.challengeId);
-')"
-curl --fail-with-body -sS "$OTP_ROUTER_URL/v1/challenges/$CHALLENGE_ID" \
-  -H "Authorization: Bearer $OTP_ROUTER_API_KEY"
-```
-
-Creation returns `state: "queued"`, revision 1, and null provider/channel. The fake provider later moves it through `sending` to `accepted`. It never sends a message or exposes the code, so this demo cannot complete successful verification. Configure [outbound webhooks](webhooks.md) to receive those changes without polling. The [process tests](../tests/process.test.ts) cover the full create/send/verify path with an isolated test sink.
-
-Repeat the creation curl with the same `CREATE_BODY` and key, adding `-i` to see `Idempotency-Replayed: true`; this does not send again. Finish the local flow by cancelling it:
-
-```sh
-curl --fail-with-body -sS "$OTP_ROUTER_URL/v1/challenges/$CHALLENGE_ID/cancel" \
-  -H "Authorization: Bearer $OTP_ROUTER_API_KEY" \
-  -H 'Content-Type: application/json' \
-  -H "Idempotency-Key: cancel-$FLOW_ID" \
-  --data '{}'
-```
-
-With an authorized real-provider test, post the received code and original purpose/context to `/verify` instead of cancelling. Save the returned `verificationId`, `challengeId`, `purpose`, `contextId`, and `verifiedAt`; consume that verification once in your backend. Do not wait for a delivery receipt to allow verification.
+Create a challenge with a recipient, purpose, context and policy. Retain its ID and creation idempotency key. Subscribe to [updates](webhooks.md), request delivery actions as needed, and submit the received code with the original purpose/context. Save and consume the returned verification result once in your backend. Cancel when the application flow ends without verification.
 
 ## Challenge operations
 
-Managed challenge lifetime is configured by `managed.lifetimeSeconds` (default 300 seconds, range 60–3600), bounded by the selected policy’s `maxLifetimeSeconds` and provider delivery-window constraints. Set `managed.lifetimeSeconds: 900` for fifteen minutes. Creation fixes the absolute `expiresAt`; resends preserve it.
+[Policy configuration](configuration.md#policies) determines managed lifetime and provider constraints. Creation fixes the absolute deadline; resends preserve it.
 
 Creation accepts an international phone number, purpose, context ID, and policy. Optional locale, routing context, and initial delivery choice remain bounded by deployment configuration. Creation returns after durable work commits; it does not wait for a provider.
 
-Creation, reconciliation GET, cancellation, delivery-result `challenge`, and webhook `challenge` use the same snapshot schema:
+Creation, GET, cancellation, delivery results and webhooks share the exported snapshot schema.
 
-```json
-{"challengeId":"6bd2b39a-11ac-4fc7-bc02-d928d6929532","operationId":"5b0a690c-97d5-4566-9f16-2b68ba8b75c8","revision":1,"state":"queued","reason":null,"channel":null,"provider":null,"expiresAt":"2026-09-21T12:05:00.000Z","serverTime":"2026-09-21T12:00:00.000Z","actions":{"verify":{"allowed":true},"resend":{"allowed":false,"reason":"cooldown_active","availableAt":"2026-09-21T12:00:30.000Z"},"next":{"allowed":false,"reason":"no_next_provider"},"select":{"allowed":false,"reason":"manual_selection_disabled","choices":[]},"cancel":{"allowed":true}}}
-```
+
 
 | State | Meaning |
 | --- | --- |

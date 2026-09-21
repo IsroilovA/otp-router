@@ -26,9 +26,7 @@ Load secrets from the environment or a secret store. Never put OTPs, credentials
 
 Verification, cancellation, lockout, and expiry erase the code ciphertext, verifier, and verification-request code fingerprints. Remove the encrypted recipient when no bounded in-flight operation needs it. Delivery exhaustion alone does not erase the verifier.
 
-Retain redacted challenge and delivery history for seven days after terminal state. Keep idempotent results for at least twenty-four hours and while associated work remains active. Quota events outlive their full accounting windows, including the daily deployment window. Cleanup cannot reset active quotas.
-
-Provider-held records, backups, and external logs have separate retention. Restore requires the [invalidation procedure](operations.md#database-restore).
+See [retention guarantees](data-model.md#replay-and-retention) for history, receipts and quotas. Provider-held records, backups and external logs have separate retention.
 
 ## Key rotation
 
@@ -42,8 +40,6 @@ API credentials rotate independently through a brief overlap of two equally priv
 
 ## External code handoff
 
-External callers own generation and verification. The router accepts numeric codes satisfying every saved provider's length constraints, attaches once and preserves the absolute UTC deadline. Preparation is bounded by the shared 30-second recipient admission window and rolling creation limit. Both capabilities share send quotas; guess limits remain managed-only.
+External callers own generation, verification, authorization and the association between operation references and upstream flows. The router's [external lifecycle](engine.md#choosing-a-capability) provides delivery without an authentication claim.
 
-Delivery-only deployments need encryption, fingerprint and stable recipient keys, but no unused verification key. Attachment fingerprints have a separate cryptographic purpose from request fingerprints and managed verifiers. Closing/expiry deletes encrypted recipient/code and attachment fingerprints, and clears request-code fingerprints. Closed replay returns a retained redacted receipt without new effects; different code bytes are no longer compared once their fingerprint is erased. External replay records retain seven days and while active. Old preparation requests carry expired deadlines and cannot recreate work after retention.
-
-A safe status/event contains no raw recipient, code or external authentication proof. The caller must authorize operation references and preserve its association to upstream flows. Closing an operation cannot recall messages already reserved/in flight and does not prove authentication.
+Delivery-only deployments need encryption, fingerprint and stable recipient keys, but no verification key. Attachment fingerprints have a separate cryptographic purpose from request fingerprints and managed verifiers. Both capabilities share admission and send quotas; guess limits remain managed-only.
