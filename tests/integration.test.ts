@@ -1772,11 +1772,29 @@ describe("PostgreSQL integration", () => {
     ).toMatchObject({ _tag: "Failure", failure: { code: "delivery_unavailable" } });
   });
 
-  it("reuses the code for explicit resend and erases terminal secrets", async () => {
+  it("preserves a fifteen-minute deadline and code on resend and erases terminal secrets", async () => {
     const harness = currentRuntime();
-    const config = withProviderIdempotency(harness.configuration, "fake-primary");
+    const policy = harness.configuration.settings.policies["default"];
+    if (policy?.managed === undefined) throw new Error("Expected the managed default policy");
+    const config = withProviderIdempotency(
+      {
+        ...harness.configuration,
+        settings: {
+          ...harness.configuration.settings,
+          policies: {
+            ...harness.configuration.settings.policies,
+            default: { ...policy, managed: { ...policy.managed, lifetimeSeconds: 900 } },
+          },
+        },
+      },
+      "fake-primary",
+    );
     const created = await createDirect(config, "idempotent-provider-create");
     const challengeId = challengeIdFrom(created);
+    const initialSnapshot = Schema.decodeUnknownSync(Snapshot)(created.body);
+    expect(Date.parse(initialSnapshot.expiresAt) - Date.parse(initialSnapshot.serverTime)).toBe(
+      900000,
+    );
     const initialDeliveryId = await deliveryFromCreated(created);
     await dispatchNext(config);
     const originalCode = primary.sends[0]?.code;
@@ -1814,6 +1832,7 @@ describe("PostgreSQL integration", () => {
     const resend = await harness.run(requestDelivery(config, resendRequest));
     expect(resend.outcome).toBe("delivery_queued");
     if (!("attemptId" in resend.body)) throw new Error("Expected a delivery result");
+    expect(resend.body.challenge.expiresAt).toBe(initialSnapshot.expiresAt);
     const replayed = await harness.run(
       requestDelivery(config, { ...resendRequest, requestId: randomUUID() }),
     );
@@ -1822,6 +1841,10 @@ describe("PostgreSQL integration", () => {
     expect(primary.sends).toHaveLength(1);
     await dispatchNext(config);
     expect(primary.sends.map((input) => input.code)).toEqual([originalCode, originalCode]);
+    expect(primary.sends.map((input) => input.expiresAt)).toEqual([
+      initialSnapshot.expiresAt,
+      initialSnapshot.expiresAt,
+    ]);
     expect(primary.sends[1]).toMatchObject({
       attemptId: resend.body.attemptId,
       providerIdempotencyKey: resend.body.attemptId,

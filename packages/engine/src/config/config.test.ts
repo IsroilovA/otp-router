@@ -141,3 +141,38 @@ it.effect(
       }
     }),
 );
+
+it.effect("accepts longer managed lifetimes within the delivery policy maximum", () =>
+  Effect.gen(function* () {
+    for (const lifetimeSeconds of [900, 3600]) {
+      const loaded = yield* loadConfiguration({
+        ...base,
+        settings: {
+          ...base.settings,
+          policies: {
+            login: {
+              providerInstanceIds: ["fake"],
+              managed: { lifetimeSeconds },
+              maxLifetimeSeconds: lifetimeSeconds,
+            },
+          },
+        },
+      });
+      expect(loaded.settings.policies["login"]?.managed?.lifetimeSeconds).toBe(lifetimeSeconds);
+    }
+    const result = yield* loadConfiguration({
+      ...base,
+      settings: {
+        ...base.settings,
+        policies: {
+          login: {
+            providerInstanceIds: ["fake"],
+            managed: { lifetimeSeconds: 900 },
+            maxLifetimeSeconds: 899,
+          },
+        },
+      },
+    }).pipe(Effect.result);
+    expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "invalid_policy" } });
+  }),
+);

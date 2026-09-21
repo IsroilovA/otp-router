@@ -79,6 +79,8 @@ With an authorized real-provider test, post the received code and original purpo
 
 ## Challenge operations
 
+Managed challenge lifetime is configured by `managed.lifetimeSeconds` (default 300 seconds, range 60–3600), bounded by the selected policy’s `maxLifetimeSeconds` and provider delivery-window constraints. Set `managed.lifetimeSeconds: 900` for fifteen minutes. Creation fixes the absolute `expiresAt`; resends preserve it.
+
 Creation accepts an international phone number, purpose, context ID, and policy. Optional locale, routing context, and initial delivery choice remain bounded by deployment configuration. Creation returns after durable work commits; it does not wait for a provider.
 
 Creation, reconciliation GET, cancellation, delivery-result `challenge`, and webhook `challenge` use the same snapshot schema:

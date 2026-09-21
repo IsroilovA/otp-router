@@ -15,7 +15,7 @@ const bounded = (min: number, max: number) =>
   Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: min, maximum: max })));
 export const ManagedPolicy = Schema.Struct({
   codeLength: bounded(6, 8).pipe(Schema.withDecodingDefaultType(Effect.succeed(6))),
-  lifetimeSeconds: bounded(60, 600).pipe(Schema.withDecodingDefaultType(Effect.succeed(300))),
+  lifetimeSeconds: bounded(60, 3600).pipe(Schema.withDecodingDefaultType(Effect.succeed(300))),
   maxIncorrectGuesses: bounded(1, 5).pipe(Schema.withDecodingDefaultType(Effect.succeed(5))),
 });
 export const Policy = Schema.Struct({

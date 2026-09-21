@@ -54,10 +54,10 @@ Each named policy requires a nonempty, ordered `providerInstanceIds` list with n
 
 | Policy field | Default | Bounds or behavior |
 | --- | --- | --- |
-| `maxLifetimeSeconds` | 900 | 60–3600 seconds; maximum external absolute deadline measured at admission. |
+| `maxLifetimeSeconds` | 900 | 60–3600 seconds; maximum lifetime for both managed challenges and external delivery operations, measured at admission. |
 | `managed` | Omitted | Enable managed generation/verification with `{}` or explicit fields below; requires a verification key. |
 | `managed.codeLength` | 6 | 6–8 digits; provider constraints may narrow this. |
-| `managed.lifetimeSeconds` | 300 | 60–600 seconds, fixed at creation. |
+| `managed.lifetimeSeconds` | 300 | 60–3600 seconds, no greater than this policy’s `maxLifetimeSeconds`; fixed at creation. |
 | `managed.maxIncorrectGuesses` | 5 | 1–5 across all delivery actions. |
 | `maxSends` | 6 | 1–10, including automatic fallback and explicit sends. |
 | `resendCooldownSeconds` | 30 | 30–300, strictly shorter than the lifetime. |
