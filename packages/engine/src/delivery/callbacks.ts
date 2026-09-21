@@ -1,4 +1,4 @@
-import { challengeTransaction as transaction } from "../challenges/transaction.js";
+import { deliveryTransaction as transaction } from "./transaction.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Data, Effect, Schema } from "effect";
 import { providerDiagnostic } from "../providers/diagnostics.js";
@@ -6,7 +6,7 @@ import type { RuntimeConfiguration } from "../config/config.js";
 import { rows } from "../database/query.js";
 import { databaseTime } from "../database/transaction.js";
 import type { NormalizedDeliveryEvent, SendAccepted } from "../providers/contract.js";
-import { expire, findChallenge, findDelivery } from "../challenges/store.js";
+import { expire, findOperation, findAttempt } from "./store.js";
 import { mergeLockedOutcome } from "./outcomes.js";
 
 export class CorrelationConflict extends Data.TaggedError("CorrelationConflict")<{}> {}
@@ -24,20 +24,20 @@ const reconcile = (config: RuntimeConfiguration, providerId: string, reference: 
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const match = (yield* rows(
-      Schema.Struct({ delivery_id: Schema.String }),
-      sql`SELECT delivery_id FROM otp_router.provider_correlations WHERE provider_instance_id = ${providerId} AND reference = ${reference}`,
+      Schema.Struct({ attempt_id: Schema.String }),
+      sql`SELECT attempt_id FROM otp_router.provider_correlations WHERE provider_instance_id = ${providerId} AND reference = ${reference}`,
     ))[0];
     if (match === undefined) return;
-    const initial = yield* findDelivery(match.delivery_id);
-    const locked = yield* findChallenge(initial.challenge_id, true);
-    const challenge = yield* expire(locked, yield* databaseTime);
+    const initial = yield* findAttempt(match.attempt_id);
+    const locked = yield* findOperation(initial.operation_id, true);
+    const operation = yield* expire(locked, yield* databaseTime);
     const events = yield* rows(
       Inbox,
       sql`SELECT * FROM otp_router.callback_inbox WHERE provider_instance_id = ${providerId} AND reference = ${reference} AND processed = false ORDER BY received_at,deduplication_key FOR UPDATE`,
     );
     for (const event of events) {
-      const delivery = yield* findDelivery(match.delivery_id);
-      yield* mergeLockedOutcome(config, challenge, delivery, {
+      const delivery = yield* findAttempt(match.attempt_id);
+      yield* mergeLockedOutcome(config, operation, delivery, {
         state: event.status,
         acceptance: "accepted",
         ...(event.diagnostic_code === null ? {} : { diagnosticCode: event.diagnostic_code }),
@@ -54,7 +54,7 @@ export const ingestEvents = (
     config,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      // Serialize each instance's inbox and response correlation before challenge locks.
+      // Serialize each instance's inbox and response correlation before operation locks.
       yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`callback:${providerId}`},0))`;
       for (const event of events) {
         // A provider cancellation report is final failure evidence, never local cancellation or verification.
@@ -72,12 +72,12 @@ export const recordAccepted = (config: RuntimeConfiguration, id: string, accepte
     config,
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      const initial = yield* findDelivery(id);
+      const initial = yield* findAttempt(id);
       yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`callback:${initial.provider_instance_id}`},0))`;
-      const locked = yield* findChallenge(initial.challenge_id, true);
-      const challenge = yield* expire(locked, yield* databaseTime);
-      const delivery = yield* findDelivery(id);
-      yield* mergeLockedOutcome(config, challenge, delivery, {
+      const locked = yield* findOperation(initial.operation_id, true);
+      const operation = yield* expire(locked, yield* databaseTime);
+      const delivery = yield* findAttempt(id);
+      yield* mergeLockedOutcome(config, operation, delivery, {
         state: "accepted",
         acceptance: "accepted",
         ...(accepted.providerRequestId === undefined
@@ -85,12 +85,12 @@ export const recordAccepted = (config: RuntimeConfiguration, id: string, accepte
           : { providerRequestId: accepted.providerRequestId }),
       });
       if (accepted.providerRequestId !== undefined) {
-        yield* sql`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,delivery_id) VALUES (${delivery.provider_instance_id},${accepted.providerRequestId},${id}) ON CONFLICT DO NOTHING`;
+        yield* sql`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,attempt_id) VALUES (${delivery.provider_instance_id},${accepted.providerRequestId},${id}) ON CONFLICT DO NOTHING`;
         const owner = (yield* rows(
-          Schema.Struct({ delivery_id: Schema.String }),
-          sql`SELECT delivery_id FROM otp_router.provider_correlations WHERE provider_instance_id = ${delivery.provider_instance_id} AND reference = ${accepted.providerRequestId}`,
+          Schema.Struct({ attempt_id: Schema.String }),
+          sql`SELECT attempt_id FROM otp_router.provider_correlations WHERE provider_instance_id = ${delivery.provider_instance_id} AND reference = ${accepted.providerRequestId}`,
         ))[0];
-        if (owner?.delivery_id !== id) return yield* Effect.fail(new CorrelationConflict());
+        if (owner?.attempt_id !== id) return yield* Effect.fail(new CorrelationConflict());
         yield* reconcile(config, delivery.provider_instance_id, accepted.providerRequestId);
       }
       if (accepted.deliveryEvent !== undefined)

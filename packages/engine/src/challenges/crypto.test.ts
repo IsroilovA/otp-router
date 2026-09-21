@@ -1,3 +1,4 @@
+import { verifierInput } from "./crypto.js";
 import { createHmac } from "node:crypto";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
@@ -9,10 +10,8 @@ import {
   equalDigest,
   operationIdentity,
   validateCrypto,
-  verifierInput,
-  type CryptoConfig,
-} from "./crypto.js";
-const config: CryptoConfig = {
+} from "../crypto.js";
+const config = {
   deploymentId: "test",
   encryption: { active: "a", keys: { a: Buffer.alloc(32, 1).toString("base64url") } },
   verification: { active: "v", keys: { v: Buffer.alloc(32, 2).toString("base64url") } },

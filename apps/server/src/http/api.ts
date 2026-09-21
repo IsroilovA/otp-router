@@ -1,3 +1,10 @@
+import { DeliveryEvent } from "@otp-router/engine/delivery";
+import {
+  PrepareInput,
+  CreateInput as ExternalCreateInput,
+  SubmitInput,
+  Snapshot as DeliverySnapshot,
+} from "@otp-router/engine/delivery";
 import {
   HttpApi,
   HttpApiEndpoint,
@@ -17,7 +24,7 @@ import {
   Snapshot,
   VerificationResult,
   VerifyInput,
-} from "@otp-router/engine";
+} from "@otp-router/engine/challenges";
 
 const MutationHeaders = Schema.Struct({
   "idempotency-key": Opaque.annotate({
@@ -50,14 +57,23 @@ export class ApplicationAuth extends HttpApiMiddleware.Service<
   security: { bearer: HttpApiSecurity.bearer },
 }) {}
 
-const NotFoundError = errorEnvelope("NotFoundError", Schema.Literal("challenge_not_found"));
+const NotFoundError = errorEnvelope(
+  "NotFoundError",
+  Schema.Literals(["challenge_not_found", "operation_not_found"]),
+);
 const ConflictError = errorEnvelope(
   "ConflictError",
-  Schema.Literals(["idempotency_conflict", "request_in_progress", "challenge_state_conflict"]),
+  Schema.Literals([
+    "idempotency_conflict",
+    "request_in_progress",
+    "challenge_state_conflict",
+    "operation_state_conflict",
+    "managed_operation",
+  ]),
 );
 const UnavailableChallengeError = errorEnvelope(
   "UnavailableChallengeError",
-  Schema.Literal("challenge_unavailable"),
+  Schema.Literals(["challenge_unavailable", "operation_unavailable"]),
 );
 const RequestTooLargeError = errorEnvelope(
   "RequestTooLargeError",
@@ -113,6 +129,56 @@ const rateLimit = RateLimitError.pipe(HttpApiSchema.status(429));
 const params = { challengeId: Schema.String };
 
 const ApplicationGroup = HttpApiGroup.make("application").add(
+  HttpApiEndpoint.post("prepareDelivery", "/v1/delivery-operations", {
+    headers: MutationHeaders,
+    payload: PrepareInput,
+    success: DeliverySnapshot.pipe(HttpApiSchema.status(201)),
+    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.post("createDelivery", "/v1/delivery-operations/with-code", {
+    headers: MutationHeaders,
+    payload: ExternalCreateInput,
+    success: DeliverySnapshot.pipe(HttpApiSchema.status(201)),
+    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.get("getDelivery", "/v1/delivery-operations/:operationId", {
+    params: { operationId: Schema.String },
+    success: DeliverySnapshot,
+    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.post("submitDeliveryCode", "/v1/delivery-operations/:operationId/code", {
+    params: { operationId: Schema.String },
+    headers: MutationHeaders,
+    payload: SubmitInput,
+    success: [DeliverySnapshot, DeliverySnapshot.pipe(HttpApiSchema.status(202))],
+    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.post("sendDelivery", "/v1/delivery-operations/:operationId/deliveries", {
+    params: { operationId: Schema.String },
+    headers: MutationHeaders,
+    payload: DeliveryInput,
+    success: DeliverySnapshot.pipe(HttpApiSchema.status(202)),
+    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.post("closeDelivery", "/v1/delivery-operations/:operationId/close", {
+    params: { operationId: Schema.String },
+    headers: MutationHeaders,
+    payload: Schema.Struct({}),
+    success: DeliverySnapshot,
+    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
   HttpApiEndpoint.post("createChallenge", "/v1/challenges", {
     headers: MutationHeaders,
     payload: CreateInput,
@@ -200,36 +266,40 @@ export const OtpRouterApi = HttpApi.make("otpRouter")
       description: "Backend challenge operations and provider callback ingress.",
     }),
   );
-const eventSchema = Schema.toJsonSchemaDocument(ChallengeEvent);
 export const openApiDocument = {
   ...OpenApi.fromApi(OtpRouterApi),
-  webhooks: {
-    "challenge.updated": {
-      post: {
-        summary:
-          "A complete immutable challenge snapshot; delivery is at least once and may arrive out of order",
-        security: [],
-        parameters: ["webhook-id", "webhook-timestamp", "webhook-signature"].map((name) => ({
-          name,
-          in: "header",
-          required: true,
-          schema: { type: "string" },
-        })),
-        requestBody: {
-          required: true,
-          content: {
-            "application/json": {
-              schema: { ...eventSchema.schema, $defs: eventSchema.definitions },
+  webhooks: Object.fromEntries(
+    Object.entries({
+      "challenge.updated": Schema.toJsonSchemaDocument(ChallengeEvent),
+      "delivery.updated": Schema.toJsonSchemaDocument(DeliveryEvent),
+    }).map(([kind, eventSchema]) => [
+      kind,
+      {
+        post: {
+          summary: "An immutable snapshot delivered at least once; events may arrive out of order",
+          security: [],
+          parameters: ["webhook-id", "webhook-timestamp", "webhook-signature"].map((name) => ({
+            name,
+            in: "header",
+            required: true,
+            schema: { type: "string" },
+          })),
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { ...eventSchema.schema, $defs: eventSchema.definitions },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Receiver durably recorded the authenticated event (any 2xx acknowledges receipt)",
             },
           },
         },
-        responses: {
-          "200": {
-            description:
-              "Receiver durably recorded the authenticated event (any 2xx acknowledges receipt)",
-          },
-        },
       },
-    },
-  },
+    ]),
+  ),
 };

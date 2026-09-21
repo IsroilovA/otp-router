@@ -1,8 +1,11 @@
+import type { OwnerProjection } from "./delivery/projection.js";
+import { OwnerProjectionLive } from "./challenges/owner-projection.js";
+import { DeliveryLive } from "./delivery/service.js";
 import type { PgClient } from "@effect/sql-pg";
 import { Context, Effect, Layer, type Redacted } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { RouterLive } from "./challenges/service.js";
-import { invalidateRestoredChallenges } from "./challenges/cleanup.js";
+import { invalidateRestoredOperations } from "./maintenance.js";
 import { RouterConfig } from "./config/runtime.js";
 import { type RuntimeConfiguration } from "./config/config.js";
 import { makeDatabaseLayer } from "./database/client.js";
@@ -16,7 +19,7 @@ import { startWorkers } from "./worker/run.js";
 
 const makeControl = Effect.gen(function* () {
   const context = yield* Effect.context<
-    PgClient.PgClient | SqlClient.SqlClient | Queue | RouterConfig
+    PgClient.PgClient | SqlClient.SqlClient | Queue | RouterConfig | OwnerProjection
   >();
   const config = Context.get(context, RouterConfig);
   const sql = Context.get(context, SqlClient.SqlClient);
@@ -26,8 +29,8 @@ const makeControl = Effect.gen(function* () {
       startWorkers(options).pipe(Effect.provide(context)),
     replayNotification: (eventId: string) =>
       replayNotification(eventId).pipe(Effect.provide(context)),
-    invalidateRestoredChallenges: Effect.gen(function* () {
-      while ((yield* invalidateRestoredChallenges(config)) > 0) {}
+    invalidateRestoredOperations: Effect.gen(function* () {
+      while ((yield* invalidateRestoredOperations(config)) > 0) {}
     }).pipe(Effect.provide(context)),
   };
 });
@@ -65,9 +68,13 @@ export const makeEngineLayer = (options: {
       return yield* Layer.build(
         Layer.mergeAll(
           RouterLive,
+          DeliveryLive,
           ProviderCallbacksLive,
           Layer.effect(EngineControl, makeControl),
-        ).pipe(Layer.provide(dependencies)),
+        ).pipe(
+          Layer.provide(OwnerProjectionLive.pipe(Layer.provide(dependencies))),
+          Layer.provide(dependencies),
+        ),
       );
     }),
   );

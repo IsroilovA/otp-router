@@ -5,7 +5,7 @@ import { Queue } from "./client.js";
 
 export const DeliveryJob = Schema.Struct({
   version: Schema.Literal(1),
-  deliveryId: Schema.String.check(Schema.isUUID()),
+  attemptId: Schema.String.check(Schema.isUUID()),
   routingRevision: Schema.Int.pipe(Schema.check(Schema.isGreaterThan(0))),
 });
 export type DeliveryJob = typeof DeliveryJob.Type;
@@ -13,7 +13,7 @@ export const deliveryQueue = "otp-delivery-v1";
 export const notificationQueue = "otp-notification-v1";
 export const expiryQueue = "otp-expiry-v1";
 export const NotificationJob = Schema.Struct({ eventId: Schema.String.check(Schema.isUUID()) });
-export const ExpiryJob = Schema.Struct({ challengeId: Schema.String.check(Schema.isUUID()) });
+export const ExpiryJob = Schema.Struct({ operationId: Schema.String.check(Schema.isUUID()) });
 export const cleanupQueue = "otp-cleanup-v1";
 export class QueueOperationError extends Data.TaggedError("QueueOperationError")<{}> {}
 const enqueue = (name: string, job: object, options: SendOptions = {}) =>
@@ -46,8 +46,8 @@ const enqueue = (name: string, job: object, options: SendOptions = {}) =>
 export const enqueueDelivery = (job: DeliveryJob) => enqueue(deliveryQueue, job);
 export const enqueueNotification = (eventId: string, time: Date) =>
   enqueue(notificationQueue, { eventId }, { startAfter: time, singletonKey: eventId });
-export const enqueueExpiry = (challengeId: string, time: Date) =>
-  enqueue(expiryQueue, { challengeId }, { startAfter: time, singletonKey: challengeId });
+export const enqueueExpiry = (operationId: string, time: Date) =>
+  enqueue(expiryQueue, { operationId }, { startAfter: time, singletonKey: operationId });
 export const initializeQueues = Effect.gen(function* () {
   const boss = yield* Queue;
   yield* Effect.tryPromise({

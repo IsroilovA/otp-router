@@ -1,4 +1,11 @@
 import {
+  Delivery,
+  PrepareInput,
+  CreateInput as ExternalCreateInput,
+  SubmitInput,
+  type OperationResult as ExternalResult,
+} from "@otp-router/engine/delivery";
+import {
   statusForError,
   statusForOutcome,
   type ErrorCode,
@@ -20,7 +27,7 @@ import {
   type OperationResult,
   Router,
   VerifyInput as VerifyInputSchema,
-} from "@otp-router/engine";
+} from "@otp-router/engine/challenges";
 import { ApplicationAuth, OtpRouterApi, RequestContext, RequestValidation } from "./api.js";
 import { decodeJson } from "./json.js";
 import {
@@ -40,6 +47,7 @@ export interface HttpTransportOptions {
 
 export interface HttpDependencies {
   readonly router: Context.Service.Shape<typeof Router>;
+  readonly delivery: Context.Service.Shape<typeof Delivery>;
   readonly webhooks: Context.Service.Shape<typeof WebhookHandler>;
 }
 
@@ -114,6 +122,10 @@ const readApplicationJson = <A, I>(
 
 const errorMessages = {
   invalid_request: "The request is invalid.",
+  operation_not_found: "The delivery operation was not found.",
+  operation_unavailable: "The delivery operation is no longer available.",
+  operation_state_conflict: "The code is already attached.",
+  managed_operation: "Use the owning challenge API.",
   unauthorized: "Authentication failed.",
   challenge_not_found: "The challenge was not found.",
   idempotency_conflict: "The idempotency key was already used with different input.",
@@ -160,7 +172,7 @@ const responseHeaders = (replayed: boolean, body: ResponseBody): Record<string, 
   return headers;
 };
 
-const operationResponse = (result: OperationResult) =>
+const operationResponse = (result: OperationResult | ExternalResult) =>
   Schema.encodeEffect(ResponseBodySchema)(
     result.outcome === "incorrect_code"
       ? { error: { ...result.body.error, message: "The code is incorrect." } }
@@ -186,7 +198,7 @@ const errorResponse = (code: ErrorCode, requestId: string, retryAt?: string) => 
 
 const complete = (
   effect: Effect.Effect<
-    OperationResult,
+    OperationResult | ExternalResult,
     { readonly _tag: "DomainError"; readonly code: ErrorCode; readonly retryAt?: string }
   >,
   requestId: string,
@@ -266,6 +278,77 @@ const makeAuthLayer = (apiKeys: ReadonlyArray<string>) => {
 
 const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application", (handlers) =>
   handlers
+    .handleRaw("prepareDelivery", ({ request, headers }) =>
+      Effect.gen(function* () {
+        const { requestId } = yield* RequestContext;
+        const delivery = yield* Delivery;
+        const parsed = yield* mutationInput(request, headers, PrepareInput).pipe(
+          Effect.catch((error) => transportFailure(error, requestId)),
+        );
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
+        return yield* complete(delivery.prepare({ ...parsed, requestId }), requestId);
+      }),
+    )
+    .handleRaw("createDelivery", ({ request, headers }) =>
+      Effect.gen(function* () {
+        const { requestId } = yield* RequestContext;
+        const delivery = yield* Delivery;
+        const parsed = yield* mutationInput(request, headers, ExternalCreateInput).pipe(
+          Effect.catch((error) => transportFailure(error, requestId)),
+        );
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
+        return yield* complete(delivery.create({ ...parsed, requestId }), requestId);
+      }),
+    )
+    .handleRaw("submitDeliveryCode", ({ request, headers, params: path }) =>
+      Effect.gen(function* () {
+        const { requestId } = yield* RequestContext;
+        const delivery = yield* Delivery;
+        const parsed = yield* mutationInput(request, headers, SubmitInput).pipe(
+          Effect.catch((error) => transportFailure(error, requestId)),
+        );
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
+        return yield* complete(
+          delivery.submitCode({ ...parsed, requestId, operationId: path.operationId }),
+          requestId,
+        );
+      }),
+    )
+    .handleRaw("sendDelivery", ({ request, headers, params: path }) =>
+      Effect.gen(function* () {
+        const { requestId } = yield* RequestContext;
+        const delivery = yield* Delivery;
+        const parsed = yield* mutationInput(request, headers, DeliveryInputSchema).pipe(
+          Effect.catch((error) => transportFailure(error, requestId)),
+        );
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
+        return yield* complete(
+          delivery.deliver({ ...parsed, requestId, operationId: path.operationId }),
+          requestId,
+        );
+      }),
+    )
+    .handleRaw("closeDelivery", ({ request, headers, params: path }) =>
+      Effect.gen(function* () {
+        const { requestId } = yield* RequestContext;
+        const delivery = yield* Delivery;
+        const parsed = yield* mutationInput(request, headers, Schema.Struct({})).pipe(
+          Effect.catch((error) => transportFailure(error, requestId)),
+        );
+        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
+        return yield* complete(
+          delivery.close({ ...parsed, requestId, operationId: path.operationId }),
+          requestId,
+        );
+      }),
+    )
+    .handleRaw("getDelivery", ({ params: path }) =>
+      Effect.gen(function* () {
+        const { requestId } = yield* RequestContext;
+        const delivery = yield* Delivery;
+        return yield* complete(delivery.status(path.operationId), requestId);
+      }),
+    )
     .handleRaw("createChallenge", ({ request, headers }) =>
       Effect.gen(function* () {
         const { requestId } = yield* RequestContext;
@@ -415,7 +498,8 @@ export const makeHttpApiLayer = (options: HttpTransportOptions) => {
 export const makeWebHandler = (options: HttpTransportOptions, dependencies: HttpDependencies) => {
   const api = makeHttpApiLayer(options).pipe(
     HttpRouter.provideRequest(
-      Layer.merge(
+      Layer.mergeAll(
+        Layer.succeed(Delivery, dependencies.delivery),
         Layer.succeed(Router, dependencies.router),
         Layer.succeed(WebhookHandler, dependencies.webhooks),
       ),

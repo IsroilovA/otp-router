@@ -1,12 +1,12 @@
-import { changed } from "../challenges/changes.js";
-import { challengeTransaction as transaction } from "../challenges/transaction.js";
+import { changed } from "./changes.js";
+import { deliveryTransaction as transaction } from "./transaction.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 import type { ProviderSendError } from "../providers/contract.js";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";
-import { expire, findChallenge, findDelivery } from "../challenges/store.js";
-import type { Challenge, Delivery } from "../challenges/records.js";
+import { expire, findOperation, findAttempt } from "./store.js";
+import type { Operation, Attempt } from "./records.js";
 import { availableProviders, nextProvider } from "./eligibility.js";
 import { schedule } from "./schedule.js";
 
@@ -19,16 +19,16 @@ export interface Outcome {
   readonly retryAt?: Date;
   readonly stop?: boolean;
 }
-const shouldAdvance = (challenge: Challenge, delivery: Delivery, outcome: Outcome) =>
+const shouldAdvance = (operation: Operation, delivery: Attempt, outcome: Outcome) =>
   outcome.state === "failed" &&
   outcome.stop !== true &&
   delivery.state !== "failed" &&
   delivery.state !== "delivered" &&
-  challenge.verification_state === "active" &&
-  !challenge.automatic_stopped &&
-  challenge.current_delivery_id === delivery.id &&
-  challenge.routing_revision === delivery.routing_revision;
-const nextState = (delivery: Delivery, outcome: Outcome): Outcome["state"] | Delivery["state"] => {
+  operation.state === "active" &&
+  !operation.automatic_stopped &&
+  operation.current_attempt_id === delivery.id &&
+  operation.routing_revision === delivery.routing_revision;
+const nextState = (delivery: Attempt, outcome: Outcome): Outcome["state"] | Attempt["state"] => {
   if (delivery.state === "delivered") return "delivered";
   if (delivery.state === "failed" && outcome.state !== "delivered") return "failed";
   if (delivery.state === "suppressed") return "suppressed";
@@ -37,8 +37,8 @@ const nextState = (delivery: Delivery, outcome: Outcome): Outcome["state"] | Del
 };
 export const mergeLockedOutcome = (
   config: RuntimeConfiguration,
-  challenge: Challenge,
-  delivery: Delivery,
+  operation: Operation,
+  delivery: Attempt,
   outcome: Outcome,
 ) =>
   Effect.gen(function* () {
@@ -47,60 +47,56 @@ export const mergeLockedOutcome = (
     const state = nextState(delivery, outcome);
     if (!(yield* persistOutcome(delivery, outcome, { state, time }))) return;
     if (
-      challenge.verification_state === "active" &&
+      operation.state === "active" &&
       (state !== delivery.state ||
         delivery.acceptance !== outcome.acceptance ||
         outcome.stop === true ||
         outcome.retryAt !== undefined)
     )
-      yield* changed(challenge.id);
+      yield* changed(operation.id);
     if (outcome.stop === true) {
-      yield* sql`UPDATE otp_router.challenges SET automatic_stopped = true WHERE id = ${challenge.id}`;
-      yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending'`;
+      yield* sql`UPDATE otp_router.delivery_operations SET automatic_stopped = true WHERE id = ${operation.id}`;
+      yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed' WHERE operation_id = ${operation.id} AND state = 'pending'`;
     }
-    yield* stopFallbackOnEvidence(challenge, delivery, state);
-    if (shouldAdvance(challenge, delivery, outcome)) {
+    yield* stopFallbackOnEvidence(operation, delivery, state);
+    if (shouldAdvance(operation, delivery, outcome)) {
       const next = nextProvider(
-        yield* availableProviders(config, challenge, time),
+        yield* availableProviders(config, operation, time),
         delivery.route_position,
       );
       if (
         next !== undefined &&
         next.retryAt === undefined &&
-        challenge.send_count < challenge.snapshot.maxSends
+        operation.send_count < operation.snapshot.maxSends
       )
-        yield* schedule(challenge, next.position, "fallback", time);
+        yield* schedule(operation, next.position, "fallback", time);
     }
   });
-const stopFallbackOnEvidence = (
-  challenge: Challenge,
-  delivery: Delivery,
-  state: Delivery["state"],
-) =>
+const stopFallbackOnEvidence = (operation: Operation, delivery: Attempt, state: Attempt["state"]) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     if ((state === "delivered" || state === "accepted") && delivery.state !== state) {
       if (state === "delivered")
-        yield* sql`UPDATE otp_router.challenges SET automatic_stopped = true WHERE id = ${challenge.id}`;
-      yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending' AND reason = 'fallback'`;
+        yield* sql`UPDATE otp_router.delivery_operations SET automatic_stopped = true WHERE id = ${operation.id}`;
+      yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed' WHERE operation_id = ${operation.id} AND state = 'pending' AND reason = 'fallback'`;
     }
   });
 export const recordOutcome = (config: RuntimeConfiguration, id: string, outcome: Outcome) =>
   transaction(
     config,
     Effect.gen(function* () {
-      const initial = yield* findDelivery(id);
-      const locked = yield* findChallenge(initial.challenge_id, true);
-      const challenge = yield* expire(locked, yield* databaseTime);
-      const delivery = yield* findDelivery(id);
-      yield* mergeLockedOutcome(config, challenge, delivery, outcome);
+      const initial = yield* findAttempt(id);
+      const locked = yield* findOperation(initial.operation_id, true);
+      const operation = yield* expire(locked, yield* databaseTime);
+      const delivery = yield* findAttempt(id);
+      yield* mergeLockedOutcome(config, operation, delivery, outcome);
     }),
   );
 
 const persistOutcome = (
-  delivery: Delivery,
+  delivery: Attempt,
   outcome: Outcome,
-  decision: { readonly state: Delivery["state"]; readonly time: Date },
+  decision: { readonly state: Attempt["state"]; readonly time: Date },
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -108,9 +104,9 @@ const persistOutcome = (
     if (outcome.retryAt !== undefined)
       yield* sql`INSERT INTO otp_router.provider_restrictions(provider_instance_id,retry_at) VALUES (${delivery.provider_instance_id},${outcome.retryAt}) ON CONFLICT (provider_instance_id) DO UPDATE SET retry_at = GREATEST(provider_restrictions.retry_at,EXCLUDED.retry_at)`;
     if (state !== outcome.state) {
-      yield* sql`UPDATE otp_router.deliveries SET provider_request_id = COALESCE(${outcome.providerRequestId ?? null},provider_request_id) WHERE id = ${delivery.id}`;
+      yield* sql`UPDATE otp_router.delivery_attempts SET provider_request_id = COALESCE(${outcome.providerRequestId ?? null},provider_request_id) WHERE id = ${delivery.id}`;
       return false;
     }
-    yield* sql`UPDATE otp_router.deliveries SET state = ${state}, acceptance = ${state === "delivered" ? "accepted" : outcome.acceptance}, failure_category = ${outcome.failureCategory ?? null}, diagnostic_code = ${outcome.diagnosticCode ?? null}, completed_at = ${time}, provider_request_id = COALESCE(${outcome.providerRequestId ?? null},provider_request_id), retry_at = COALESCE(${outcome.retryAt ?? null},retry_at) WHERE id = ${delivery.id}`;
+    yield* sql`UPDATE otp_router.delivery_attempts SET state = ${state}, acceptance = ${state === "delivered" ? "accepted" : outcome.acceptance}, failure_category = ${outcome.failureCategory ?? null}, diagnostic_code = ${outcome.diagnosticCode ?? null}, completed_at = ${time}, provider_request_id = COALESCE(${outcome.providerRequestId ?? null},provider_request_id), retry_at = COALESCE(${outcome.retryAt ?? null},retry_at) WHERE id = ${delivery.id}`;
     return true;
   });

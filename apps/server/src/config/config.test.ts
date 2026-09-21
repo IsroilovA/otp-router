@@ -26,7 +26,7 @@ const entry: ConfigurationInput = {
       webhook: { url: "https://example.com/events", signingSecret },
       defaultLocale: "en",
       fallbackLocales: [],
-      policies: { login: { providerInstanceIds: ["fake"] } },
+      policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
       purposes: { login: ["login"] },
       deploymentSendLimit15m: 10,
       deploymentSendLimit24h: 100,

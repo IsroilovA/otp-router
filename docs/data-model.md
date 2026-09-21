@@ -1,41 +1,39 @@
 # Data and transactions
 
-PostgreSQL owns immutable outbound events, notification delivery state, revisioned public snapshots, durable challenge state, encrypted secrets, delivery history, callback correlation, idempotent responses, and quota usage. Router tables and pg-boss tables have separate schemas. Migrations must never modify queue-owned tables.
+The initial migration defines the schema directly; the engine is private and unreleased. Use fresh development databases, without upgrade shims or backfills. Router migrations never modify pg-boss tables.
 
-The migration files define the database layout. Runtime schemas validate returned rows and saved policy snapshots. Keep field inventories and SQL constraints in those sources rather than duplicating them here.
+## Records and ownership
+
+`delivery_operations` owns recipient identity, purpose/context, a saved delivery policy and route, absolute expiry, prepared/active/closed/expired lifecycle, routing revision, send count, cooldown and public delivery projection. `delivery_secrets` binds encrypted recipient/code and an attachment fingerprint to an operation. Preparation has no code. `delivery_attempts` records individual provider invocations and their evidence; correlations point to attempts.
+
+`challenges` owns a unique operation link, generation/guess settings, verification state, purpose/context binding and public challenge projection. `challenge_secrets` contains only the keyed verifier. Delivery code never queries challenge records. Composition supplies the owner projection and cross-capability maintenance.
+
+The `events` table stores exact immutable bytes with a unique `(kind, subject_id, revision)` for `challenge.updated` or `delivery.updated`. Notifications reference those events and contain only mutable attempts, leases and safe outcomes. Events can outlive their originating records while notification delivery/replay remains outstanding.
 
 ## Time and locking
 
-Database time governs expiry, cooldowns, and rolling quota windows. Sample `clock_timestamp()` after acquiring the locks required for a decision. Transaction-start time cannot decide eligibility after a lock wait. Serialize timestamps in UTC.
+Database time governs deadlines, cooldowns and rolling windows. Sample `clock_timestamp()` after acquiring locks. Acquire the request's idempotency lock, quota identities in sorted order, delivery operation row, then its challenge row. Never acquire quota locks after a delivery/challenge lock. Callback correlation locks precede operation locks.
 
-When multiple locks are needed, acquire the operation's idempotency advisory lock, quota identities in sorted order, then the challenge row. Never acquire a quota lock while holding a challenge lock. Read immutable identifiers before locking when necessary, then recheck mutable state under the lock.
-
-Creation locks and counts creation quotas. User delivery requests serialize their routing change on the challenge. Their send-quota checks are forecasts; dispatch locks and reserves the actual send budgets. Status queries do not reserve quotas.
+Preparation consumes shared recipient creation and admission quotas but does not reserve future provider capacity. User actions revalidate forecasts under locks. Dispatch locks and reserves actual recipient/provider/deployment send budgets. Automatic confirmed-failure fallback does not wait for user cooldown.
 
 ## Atomic boundaries
 
-Creation commits the challenge, encrypted secrets, initial delivery, delivery/expiry jobs, public revision 1, immutable event, notification job, quota usage, and replay result together. User delivery actions commit the new routing revision, superseded pending work, new delivery, queue job, and replay result together.
+Preparation commits its operation, encrypted recipient, expiry job, snapshot/event, admission usage and replay result. Attachment commits encrypted code/fingerprint, active state, initial attempt, queue work and publication. One-step external creation and managed creation compose those primitives in a single transaction. Invalid one-step attachment rolls back creation.
 
-Dispatch commits eligibility, send reservations, and the dispatching state before a provider call. No database transaction spans provider or selector network work. Preserve a committed reservation when an outcome or commit acknowledgement is uncertain.
+Managed creation additionally commits its verifier and challenge. Verification, lockout, cancellation and expiry close delivery and erase secrets in the same transaction. The owner projection publishes resulting managed changes before commit. Domain rejections after logical expiry still commit expiry/erasure; infrastructure failure, defects and interruption roll back incomplete work.
 
-Verification commits the comparison result, any consumed guess, terminal transition, secret erasure, and replay result together. Expected rejection after logical expiry must still commit expiry and erasure. Database failures, defects, and interruption must roll back incomplete mutations.
+Dispatch commits reservations before network I/O and stores outcomes separately. No transaction spans provider or selector network calls. A lost commit acknowledgement never authorizes another invocation. Transactional pg-boss enqueue uses the current Effect SQL connection through the per-call adapter.
 
-Transactional enqueue uses the application's current connection through pg-boss's per-call database adapter. Sharing a connection URL does not make separate pools share a transaction. The [historical SQL experiment](research/sql-pg-research.md) explains this integration.
+## Replay and retention
 
-## Callbacks and replay
+Challenge request identities and external delivery request identities are separate, stable across API-key rotation. Their stored results are typed and redacted. Attachment fingerprints prevent distinct request keys from replacing a code. Terminal transitions erase recoverable secrets and code fingerprints, including request-code fingerprints. Retained replay then returns its original receipt without comparing erased code data or performing sends; status supplies current state.
 
-Authenticate callbacks before storing normalized events. Persist caller-supplied correlation before dispatch; save provider-issued references when responses arrive. Keep unmatched events for bounded reconciliation because a callback can arrive before the send response.
+External replay results retain seven days and while work is active; managed replay results retain at least twenty-four hours and while work is active or dispatched. Terminal history retains seven days and cannot be deleted while dispatch remains unresolved. A retried external creation always carries its original absolute deadline, so an expired request cannot recreate work after retention.
 
-Serialize correlation updates before challenge updates. Merge duplicate and out-of-order evidence under the challenge lock. Only the current delivery revision can advance routing; terminal challenges cannot reopen.
+Quota records survive their complete rolling windows. Cleanup uses bounded transactions and drains full batches. Prepared operations expire through the same worker/request/cleanup paths as active operations. Restore invalidation closes both capabilities and erases all secret material.
 
-Operation identities remain stable across API-key and fingerprint-key rotation. Terminal transitions erase code fingerprints while retaining redacted replay results. A retained result may outlive challenge history. Cleanup must not remove it before its retention deadline or reset live quotas.
+## Publication and callbacks
 
-See [security](security.md#retention) for retention and [operations](operations.md#database-restore) for restore procedures.
+Changed operation/challenge sets collect mutations within a transaction. Projection excludes revision/server time from comparison, producing one resulting revision per changed public state. Mutation responses publish before their replay result is stored. Reads return the saved projection with fresh server time; forecasts never reserve capacity.
 
-## Public events and notifications
-
-Challenge transactions collect changed challenge IDs. After all nested outcome/callback changes, they project one resulting snapshot per challenge under its row lock. A canonical comparison excludes `revision` and `serverTime`; unchanged public content produces no event. Mutation responses publish their final snapshot before saving the idempotent response. Any subsequent failure rolls back both. Reads return the saved snapshot with a fresh server time. Expiry jobs run at the fixed deadline; cleanup and request paths repair overdue transitions.
-
-`challenge_events` stores exact immutable JSON body bytes and a unique `(challenge_id, revision)`. Its records deliberately outlive challenge deletion when notifications remain outstanding. `notifications` contains only mutable attempts, lease, status, and safe failure category. Each notification claim commits before HTTP, and each outcome commits separately. Successful responses are 2xx. A timeout or crash can cause duplicate delivery of the same event, which is safe through receiver deduplication. Notification retries never touch OTP dispatch.
-
-Transactional pg-boss enqueue accompanies every event and retry. Startup and periodic recovery repair missing jobs and expired leases. Failed notifications remain for diagnosis/replay; delivered events retain seven days. See [webhook integration](webhooks.md).
+Callbacks authenticate before normalized persistence. Duplicate and late evidence cannot advance stale routing revisions or reopen terminals. One notification claim commits before HTTP; outcomes commit separately. Notification retries may duplicate an event and never touch OTP dispatch. See [webhooks](webhooks.md) for receiver ordering and authentication.

@@ -1,8 +1,8 @@
 import { Context, Data, Effect, Layer, Schema } from "effect";
 import { deliveryWindowFits } from "../providers/timing.js";
-import { CryptoConfig, validateCrypto } from "../challenges/crypto.js";
-import type { RoutingContext } from "../challenges/contracts.js";
-import { Identifier, Locale } from "../challenges/contracts.js";
+import { CryptoConfig, validateCrypto } from "../crypto.js";
+import type { RoutingContext } from "../delivery/input.js";
+import { Identifier, Locale } from "../delivery/input.js";
 import {
   LocaleSchema,
   ProviderInstance,
@@ -13,17 +13,21 @@ import {
 
 const bounded = (min: number, max: number) =>
   Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: min, maximum: max })));
-export const Policy = Schema.Struct({
-  providerInstanceIds: Schema.Array(Identifier).pipe(Schema.check(Schema.isMinLength(1))),
+export const ManagedPolicy = Schema.Struct({
   codeLength: bounded(6, 8).pipe(Schema.withDecodingDefaultType(Effect.succeed(6))),
   lifetimeSeconds: bounded(60, 600).pipe(Schema.withDecodingDefaultType(Effect.succeed(300))),
   maxIncorrectGuesses: bounded(1, 5).pipe(Schema.withDecodingDefaultType(Effect.succeed(5))),
+});
+export const Policy = Schema.Struct({
+  providerInstanceIds: Schema.Array(Identifier).check(Schema.isMinLength(1)),
+  maxLifetimeSeconds: bounded(60, 3600).pipe(Schema.withDecodingDefaultType(Effect.succeed(900))),
   maxSends: bounded(1, 10).pipe(Schema.withDecodingDefaultType(Effect.succeed(6))),
   resendCooldownSeconds: bounded(30, 300).pipe(Schema.withDecodingDefaultType(Effect.succeed(30))),
   manualSelectionEnabled: Schema.Boolean.pipe(
     Schema.withDecodingDefaultType(Effect.succeed(false)),
   ),
-  manualProviderIds: Schema.optional(Schema.Array(Identifier)),
+  manualProviderIds: Schema.optionalKey(Schema.Array(Identifier)),
+  managed: Schema.optionalKey(ManagedPolicy),
 });
 export type Policy = typeof Policy.Type;
 export const Settings = Schema.Struct({
@@ -121,7 +125,7 @@ const invalid = (reason: typeof ConfigurationReason.Type) =>
 const validatePolicy = (policy: Policy, providers: ReadonlyMap<string, ReadyProvider>) =>
   Effect.gen(function* () {
     if (
-      policy.resendCooldownSeconds >= policy.lifetimeSeconds ||
+      policy.resendCooldownSeconds >= policy.maxLifetimeSeconds ||
       new Set(policy.providerInstanceIds).size !== policy.providerInstanceIds.length
     )
       return yield* invalid("invalid_policy");
@@ -143,7 +147,7 @@ export const loadConfiguration = (configuration: Configuration) =>
       const cryptoKeys = [
         settings.crypto.recipientKey,
         ...Object.values(settings.crypto.encryption.keys),
-        ...Object.values(settings.crypto.verification.keys),
+        ...Object.values(settings.crypto.verification?.keys ?? {}),
         ...Object.values(settings.crypto.fingerprint.keys),
       ];
       if (cryptoKeys.some((key) => secret.equals(Buffer.from(key, "base64url"))))
@@ -155,6 +159,7 @@ export const loadConfiguration = (configuration: Configuration) =>
     ]);
     for (const policy of Object.values(settings.policies)) {
       yield* validatePolicy(policy, providers);
+      yield* validateManagedPolicy(policy, settings.crypto.verification !== undefined);
       for (const id of policy.providerInstanceIds) {
         const provider = providers.get(id);
         if (provider !== undefined) yield* provider.resolveTemplate(locales);
@@ -174,11 +179,12 @@ const validatePolicyProviders = (policy: Policy, providers: ReadonlyMap<string, 
       const provider = providers.get(id);
       if (provider === undefined) return yield* invalid("unknown_provider");
       if (
-        policy.codeLength < provider.constraints.minCodeLength ||
-        policy.codeLength > provider.constraints.maxCodeLength ||
+        (policy.managed !== undefined &&
+          (policy.managed.codeLength < provider.constraints.minCodeLength ||
+            policy.managed.codeLength > provider.constraints.maxCodeLength)) ||
         !deliveryWindowFits(
           { ...provider.constraints, sendTimeoutMs: provider.sendTimeoutMs },
-          policy.lifetimeSeconds * 1000,
+          (policy.managed?.lifetimeSeconds ?? policy.maxLifetimeSeconds) * 1000,
         )
       )
         return yield* invalid("incompatible_provider_constraints");
@@ -211,4 +217,15 @@ const validateReferences = (settings: Settings, configuration: Configuration) =>
         if (settings.policies[id] === undefined) return yield* invalid("unknown_policy");
     for (const id of Object.keys(configuration.selectors ?? {}))
       if (settings.policies[id] === undefined) return yield* invalid("unknown_selector_policy");
+  });
+
+const validateManagedPolicy = (policy: Policy, hasVerification: boolean) =>
+  Effect.gen(function* () {
+    if (
+      policy.managed !== undefined &&
+      (!hasVerification ||
+        policy.managed.lifetimeSeconds > policy.maxLifetimeSeconds ||
+        policy.managed.lifetimeSeconds <= policy.resendCooldownSeconds)
+    )
+      return yield* invalid("invalid_policy");
   });

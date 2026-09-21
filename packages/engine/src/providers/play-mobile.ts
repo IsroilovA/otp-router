@@ -80,8 +80,8 @@ export const fitsSingleSms = (text: string): boolean => {
   return septets <= 160;
 };
 
-const messageId = (deliveryId: string): string =>
-  `otp${createHash("sha256").update(deliveryId, "utf8").digest("hex").slice(0, 17)}`;
+const messageId = (attemptId: string): string =>
+  `otp${createHash("sha256").update(attemptId, "utf8").digest("hex").slice(0, 17)}`;
 
 const mapErrorCode = (code: string): ProviderSendError => {
   if (code === "100") {
@@ -129,7 +129,7 @@ const send = (
         acceptance: "not_accepted",
         diagnosticCode: "delivery_window_too_short",
       });
-    const requestId = messageId(input.deliveryId);
+    const requestId = messageId(input.attemptId);
     const body: Schema.Json = {
       messages: [
         {

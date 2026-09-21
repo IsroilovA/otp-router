@@ -1,21 +1,16 @@
+import type { DomainError } from "../errors.js";
+import {
+  Identifier,
+  Opaque,
+  Locale,
+  Code,
+  RoutingContext,
+  Choice,
+  DeliveryInput,
+} from "../delivery/input.js";
 import type { Effect } from "effect";
-import { Context, Data, Schema } from "effect";
+import { Context, Schema } from "effect";
 
-export const Identifier = Schema.String.pipe(
-  Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/)),
-);
-export const Opaque = Schema.String.pipe(Schema.check(Schema.isPattern(/^[!-~]{1,128}$/)));
-export const Locale = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9-]{1,64}$/)));
-export const Code = Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9]{6,8}$/)));
-export const Primitive = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null]);
-export const RoutingContext = Schema.Record(Schema.String, Primitive).pipe(
-  Schema.check(Schema.makeFilter((value) => Buffer.byteLength(JSON.stringify(value)) <= 4096)),
-);
-export const Choice = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("channel"), channel: Identifier }),
-  Schema.Struct({ type: Schema.Literal("provider"), providerInstanceId: Identifier }),
-]);
-export type Choice = typeof Choice.Type;
 export const CreateInput = Schema.Struct({
   recipient: Schema.Struct({
     type: Schema.Literal("phone"),
@@ -31,12 +26,6 @@ export const CreateInput = Schema.Struct({
 export type CreateInput = typeof CreateInput.Type;
 export const VerifyInput = Schema.Struct({ code: Code, purpose: Identifier, contextId: Opaque });
 export type VerifyInput = typeof VerifyInput.Type;
-export const DeliveryInput = Schema.Union([
-  Schema.Struct({ action: Schema.Literal("resend") }),
-  Schema.Struct({ action: Schema.Literal("next") }),
-  Schema.Struct({ action: Schema.Literal("select"), choice: Choice }),
-]);
-export type DeliveryInput = typeof DeliveryInput.Type;
 export const DeniedReason = Schema.Literals([
   "challenge_unavailable",
   "already_verified",
@@ -53,6 +42,7 @@ export const Action = Schema.Struct({
   availableAt: Schema.optionalKey(Schema.String),
 });
 export const Snapshot = Schema.Struct({
+  operationId: Schema.String,
   challengeId: Schema.String,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   state: Schema.Literals(["queued", "sending", "accepted", "uncertain", "verified", "failed"]),
@@ -104,61 +94,7 @@ export const VerificationResult = Schema.Struct({
   contextId: Opaque,
   verifiedAt: Schema.String,
 });
-export const DeliveryResult = Schema.Struct({ deliveryId: Schema.String, challenge: Snapshot });
-export const ErrorCode = Schema.Literals([
-  "invalid_request",
-  "challenge_not_found",
-  "idempotency_conflict",
-  "request_in_progress",
-  "challenge_state_conflict",
-  "challenge_unavailable",
-  "incorrect_code",
-  "invalid_recipient",
-  "delivery_option_not_allowed",
-  "policy_not_allowed",
-  "delivery_unavailable",
-  "rate_limited",
-  "cooldown_active",
-  "temporarily_unavailable",
-]);
-export type ErrorCode = typeof ErrorCode.Type;
-export class DomainError<Code extends ErrorCode = ErrorCode> extends Data.TaggedError(
-  "DomainError",
-)<{
-  readonly code: Code;
-  readonly retryAt?: string;
-}> {}
-
-type MutationErrorCode =
-  | "invalid_request"
-  | "challenge_not_found"
-  | "idempotency_conflict"
-  | "request_in_progress"
-  | "temporarily_unavailable";
-type ActiveChallengeErrorCode = "challenge_state_conflict" | "challenge_unavailable";
-export type CreateChallengeError = DomainError<
-  | MutationErrorCode
-  | "invalid_recipient"
-  | "policy_not_allowed"
-  | "delivery_unavailable"
-  | "delivery_option_not_allowed"
-  | "rate_limited"
->;
-export type ChallengeStatusError = DomainError<
-  "invalid_request" | "challenge_not_found" | "temporarily_unavailable"
->;
-export type VerifyChallengeError = DomainError<
-  MutationErrorCode | ActiveChallengeErrorCode | "invalid_request" | "rate_limited"
->;
-export type DeliveryActionError = DomainError<
-  | MutationErrorCode
-  | ActiveChallengeErrorCode
-  | "delivery_unavailable"
-  | "delivery_option_not_allowed"
-  | "rate_limited"
-  | "cooldown_active"
->;
-export type CancelChallengeError = DomainError<MutationErrorCode | "challenge_state_conflict">;
+export const DeliveryResult = Schema.Struct({ attemptId: Schema.String, challenge: Snapshot });
 export const IncorrectCodeResult = Schema.Struct({
   error: Schema.Struct({
     code: Schema.Literal("incorrect_code"),
@@ -212,16 +148,16 @@ export class Router extends Context.Service<
   {
     readonly create: (
       request: Mutation<CreateInput>,
-    ) => Effect.Effect<OperationResult, CreateChallengeError>;
-    readonly status: (id: string) => Effect.Effect<OperationResult, ChallengeStatusError>;
+    ) => Effect.Effect<OperationResult, DomainError>;
+    readonly status: (id: string) => Effect.Effect<OperationResult, DomainError>;
     readonly verify: (
       request: ChallengeMutation<VerifyInput>,
-    ) => Effect.Effect<OperationResult, VerifyChallengeError>;
+    ) => Effect.Effect<OperationResult, DomainError>;
     readonly deliver: (
       request: ChallengeMutation<DeliveryInput>,
-    ) => Effect.Effect<OperationResult, DeliveryActionError>;
+    ) => Effect.Effect<OperationResult, DomainError>;
     readonly cancel: (
       request: ChallengeMutation<Record<string, never>>,
-    ) => Effect.Effect<OperationResult, CancelChallengeError>;
+    ) => Effect.Effect<OperationResult, DomainError>;
   }
 >()("otp-router/Router") {}

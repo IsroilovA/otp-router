@@ -28,6 +28,14 @@
     "./providers": {
       "types": "./dist/providers/index.d.ts",
       "import": "./dist/providers/index.js"
+    },
+    "./challenges": {
+      "types": "./dist/challenges/index.d.ts",
+      "import": "./dist/challenges/index.js"
+    },
+    "./delivery": {
+      "types": "./dist/delivery/index.d.ts",
+      "import": "./dist/delivery/index.js"
     }
   },
   "files": [

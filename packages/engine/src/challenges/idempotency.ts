@@ -2,8 +2,9 @@ import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
 import { databaseTime } from "../database/transaction.js";
-import { DomainError, OperationOutcome, ResultBody, OperationResult } from "./contracts.js";
-import { Digest, digest, equalDigest, operationIdentity, type CryptoConfig } from "./crypto.js";
+import { OperationOutcome, ResultBody, OperationResult } from "./contracts.js";
+import { DomainError } from "../errors.js";
+import { Digest, digest, equalDigest, operationIdentity, type CryptoConfig } from "../crypto.js";
 import { expire, findChallenge } from "./store.js";
 
 export interface Operation {

@@ -1,10 +1,10 @@
-import { notifyChallenge, recoverNotifications } from "../notifications/send.js";
-import { challengeStatus } from "../challenges/status.js";
+import { notifyEvent, recoverNotifications } from "../notifications/send.js";
+import { deliveryStatus } from "../delivery/service.js";
 import { notificationQueue, expiryQueue, NotificationJob, ExpiryJob } from "../queue/jobs.js";
 import { Effect, Schema } from "effect";
 import { RouterConfig } from "../config/runtime.js";
 
-import { cleanup } from "../challenges/cleanup.js";
+import { cleanup } from "../maintenance.js";
 import { dispatch } from "../delivery/dispatch.js";
 import { Queue } from "../queue/client.js";
 import { cleanupQueue, DeliveryJob, deliveryQueue, QueueOperationError } from "../queue/jobs.js";
@@ -114,7 +114,7 @@ export const startWorkers = (options: typeof WorkerSettings.Type) =>
             for (const job of jobs)
               await run(
                 Schema.decodeUnknownEffect(NotificationJob)(job.data).pipe(
-                  Effect.flatMap(({ eventId }) => notifyChallenge(config, eventId)),
+                  Effect.flatMap(({ eventId }) => notifyEvent(config, eventId)),
                   Effect.catchCause(() => Effect.fail(new QueueOperationError())),
                 ),
               );
@@ -128,7 +128,7 @@ export const startWorkers = (options: typeof WorkerSettings.Type) =>
           for (const job of jobs)
             await run(
               Schema.decodeUnknownEffect(ExpiryJob)(job.data).pipe(
-                Effect.flatMap(({ challengeId }) => challengeStatus(config, challengeId)),
+                Effect.flatMap(({ operationId }) => deliveryStatus(config, operationId)),
                 Effect.asVoid,
                 Effect.catchCause(() => Effect.fail(new QueueOperationError())),
               ),

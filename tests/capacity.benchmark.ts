@@ -157,10 +157,10 @@ const provider = {
   idempotency: { supported: false },
   resolveTemplate: (locales) => Effect.succeed({ locale: locales[0] ?? "en", template: null }),
   send: (input) => Effect.promise(async () => {
-    await appendFile(sink, JSON.stringify({ deliveryId: input.deliveryId, invokedAt: Date.now() }) + "\\n", { encoding: "utf8", mode: 0o600 });
+    await appendFile(sink, JSON.stringify({ attemptId: input.attemptId, invokedAt: Date.now() }) + "\\n", { encoding: "utf8", mode: 0o600 });
     if (process.env.OTP_BENCHMARK_BLOCK === "1") await new Promise(() => {});
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 5));
-    return { providerRequestId: "benchmark:" + input.deliveryId };
+    return { providerRequestId: "benchmark:" + input.attemptId };
   }),
 };
 
@@ -176,7 +176,7 @@ export default defineConfig({
     },
     defaultLocale: "en",
     fallbackLocales: [],
-    policies: { benchmark: { providerInstanceIds: ["benchmark-fake"], lifetimeSeconds: 600, maxSends: 10, resendCooldownSeconds: 30 } },
+    policies: { benchmark: { providerInstanceIds: ["benchmark-fake"], managed: { lifetimeSeconds: 600 }, maxSends: 10, resendCooldownSeconds: 30 } },
     purposes: { benchmark: ["benchmark"] },
     deploymentSendLimit15m: 1000000,
     deploymentSendLimit24h: 1000000,
@@ -203,7 +203,7 @@ export default defineConfig({
 };
 
 const SinkEntry = Schema.Struct({
-  deliveryId: Schema.String,
+  attemptId: Schema.String,
   invokedAt: Schema.Number,
 });
 type SinkEntry = typeof SinkEntry.Type;
@@ -227,11 +227,11 @@ const MinimalSnapshot = Schema.Struct({
 });
 type MinimalSnapshot = typeof MinimalSnapshot.Type;
 
-const deliveryIdFrom = async (observation: HttpObservation): Promise<string> => {
+const attemptIdFrom = async (observation: HttpObservation): Promise<string> => {
   const id = observation.snapshot?.challengeId;
   if (id === undefined) throw new Error("Challenge response omitted its challenge ID");
   return psql(
-    `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${id}' AND reason = 'initial'`,
+    `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${id}') AND reason = 'initial'`,
   );
 };
 
@@ -375,7 +375,7 @@ interface DatabaseOperationalMetrics {
 
 const databaseOperationalMetrics = async (): Promise<DatabaseOperationalMetrics> => {
   const result = await psql(
-    "SELECT (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()), (SELECT count(*) FROM otp_router.challenges WHERE verification_state='active' AND expires_at<clock_timestamp()), (SELECT COALESCE(max(extract(epoch FROM (clock_timestamp()-expires_at))),0) FROM otp_router.challenges WHERE verification_state='active' AND expires_at<clock_timestamp())",
+    "SELECT (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()), (SELECT count(*) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp()), (SELECT COALESCE(max(extract(epoch FROM (clock_timestamp()-expires_at))),0) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp())",
   );
   const [connections, cleanupOverdueCount, cleanupMaxOverdueSeconds] = result
     .split("|")
@@ -586,7 +586,7 @@ const expectNoRampErrors = (
 const queuedCount = async (): Promise<number> =>
   Number(
     await psql(
-      "SELECT count(*) FROM otp_router.deliveries WHERE state IN ('pending','dispatching')",
+      "SELECT count(*) FROM otp_router.delivery_attempts WHERE state IN ('pending','dispatching')",
     ),
   );
 
@@ -595,7 +595,7 @@ const waitForDrain = async (): Promise<void> =>
 
 const queueDelayPercentiles = async (): Promise<ReadonlyArray<number>> => {
   const result = await psql(
-    "SELECT percentile_cont(ARRAY[0.5,0.95,0.99]) WITHIN GROUP (ORDER BY extract(epoch FROM (reserved_at-due_at))*1000) FROM otp_router.deliveries WHERE reserved_at IS NOT NULL",
+    "SELECT percentile_cont(ARRAY[0.5,0.95,0.99]) WITHIN GROUP (ORDER BY extract(epoch FROM (reserved_at-due_at))*1000) FROM otp_router.delivery_attempts WHERE reserved_at IS NOT NULL",
   );
   return result.replace(/[{}]/gu, "").split(",").map(Number);
 };
@@ -630,7 +630,7 @@ const cleanupRecoveryOnly = async (args: ReadonlyArray<string>): Promise<Cleanup
   workerProcess = undefined;
   const forcedExpired = Number(
     await psql(
-      "WITH forced AS (UPDATE otp_router.challenges SET expires_at=clock_timestamp()-interval '2 minutes' WHERE context_id LIKE 'cleanup-cohort-%' RETURNING 1) SELECT count(*) FROM forced",
+      "WITH forced AS (UPDATE otp_router.delivery_operations SET expires_at=clock_timestamp()-interval '2 minutes' WHERE context_id LIKE 'cleanup-cohort-%' RETURNING 1) SELECT count(*) FROM forced",
     ),
   );
   expect(forcedExpired).toBe(CLEANUP_BACKLOG_SIZE);
@@ -742,7 +742,7 @@ describe("local capacity benchmark", () => {
     const baselineBacklog = await queuedCount();
     const forcedExpired = Number(
       await psql(
-        "WITH forced AS (UPDATE otp_router.challenges SET expires_at=clock_timestamp()-interval '2 minutes' WHERE id IN (SELECT id FROM otp_router.challenges WHERE verification_state='active' ORDER BY created_at DESC LIMIT 250) RETURNING 1) SELECT count(*) FROM forced",
+        "WITH forced AS (UPDATE otp_router.delivery_operations SET expires_at=clock_timestamp()-interval '2 minutes' WHERE id IN (SELECT id FROM otp_router.challenges WHERE verification_state='active' ORDER BY created_at DESC LIMIT 250) RETURNING 1) SELECT count(*) FROM forced",
       ),
     );
     expect(forcedExpired).toBe(CLEANUP_BACKLOG_SIZE);
@@ -764,7 +764,7 @@ describe("local capacity benchmark", () => {
       async () =>
         Number(
           await psql(
-            "SELECT count(*) FROM otp_router.challenges WHERE verification_state='active' AND expires_at<clock_timestamp()-interval '90 seconds'",
+            "SELECT count(*) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp()-interval '90 seconds'",
           ),
         ) === 0,
       90_000,
@@ -781,14 +781,14 @@ describe("local capacity benchmark", () => {
     await stopProcess(workerProcess);
     workerProcess = undefined;
     const crash = await createChallenge("recovery-crash", true);
-    const crashDeliveryId = await deliveryIdFrom(crash);
+    const crashDeliveryId = await attemptIdFrom(crash);
     workerProcess = startProcess(
       args,
       processEnvironment("worker", workerPort, workerInternalPort, true),
     );
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor("blocked fake-provider invocation", async () =>
-      (await readSink(fixture.sinkPath)).some((entry) => entry.deliveryId === crashDeliveryId),
+      (await readSink(fixture.sinkPath)).some((entry) => entry.attemptId === crashDeliveryId),
     );
     workerProcess.child.kill("SIGKILL");
     await workerProcess.exit;
@@ -813,8 +813,9 @@ describe("local capacity benchmark", () => {
     await waitFor(
       "crashed dispatch to become uncertain",
       async () =>
-        (await psql(`SELECT state FROM otp_router.deliveries WHERE id='${crashDeliveryId}'`)) ===
-        "uncertain",
+        (await psql(
+          `SELECT state FROM otp_router.delivery_attempts WHERE id='${crashDeliveryId}'`,
+        )) === "uncertain",
     );
     const crashRecoveryMs = performance.now() - crashRestarted;
     expect(
@@ -829,19 +830,21 @@ describe("local capacity benchmark", () => {
     const sink = await readSink(fixture.sinkPath);
     const invocationCounts = new Map<string, number>();
     for (const entry of sink) {
-      invocationCounts.set(entry.deliveryId, (invocationCounts.get(entry.deliveryId) ?? 0) + 1);
+      invocationCounts.set(entry.attemptId, (invocationCounts.get(entry.attemptId) ?? 0) + 1);
     }
     const duplicateExternalSends = [...invocationCounts.values()].filter(
       (count) => count > 1,
     ).length;
-    const deliveryCount = Number(await psql("SELECT count(*) FROM otp_router.deliveries"));
+    const deliveryCount = Number(await psql("SELECT count(*) FROM otp_router.delivery_attempts"));
     const terminalDeliveryCount = Number(
       await psql(
-        "SELECT count(*) FROM otp_router.deliveries WHERE state IN ('accepted','uncertain')",
+        "SELECT count(*) FROM otp_router.delivery_attempts WHERE state IN ('accepted','uncertain')",
       ),
     );
     const quotaExceeded = Number(
-      await psql("SELECT count(*) FROM otp_router.challenges WHERE send_count > 1"),
+      await psql(
+        "SELECT count(*) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE send_count > 1",
+      ),
     );
     const postgresVersion = await psql("SHOW server_version");
     const postgresMaxConnections = Number(await psql("SHOW max_connections"));

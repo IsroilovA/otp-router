@@ -1,11 +1,11 @@
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
-import { DomainError } from "./contracts.js";
+import { DomainError } from "../errors.js";
 import type { Settings } from "../config/config.js";
 export interface Limit {
   readonly identity: string;
-  readonly kind: "create" | "send" | "guess";
+  readonly kind: "create" | "send" | "guess" | "admission";
   readonly maximum: number;
   readonly windowMs: number;
 }
@@ -75,9 +75,15 @@ export const checkQuotas = (limits: readonly Limit[], time: Date) =>
 export const countQuotas = (limits: readonly Limit[], eventId: string, time: Date) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    for (const identity of new Set(limits.map((limit) => limit.identity))) {
-      const limit = limits.find((item) => item.identity === identity);
-      if (limit !== undefined)
-        yield* sql`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES (${identity},${limit.kind},${eventId},${time}) ON CONFLICT DO NOTHING`;
+    for (const limit of limits) {
+      const identity = limit.identity;
+      yield* sql`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES (${identity},${limit.kind},${eventId},${time}) ON CONFLICT DO NOTHING`;
     }
   });
+
+export const admissionLimit = (token: string): Limit => ({
+  identity: `recipient:${token}`,
+  kind: "admission",
+  maximum: 1,
+  windowMs: 30000,
+});

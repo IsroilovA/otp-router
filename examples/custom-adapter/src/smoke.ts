@@ -1,7 +1,7 @@
 import { Context, Effect, Layer, Schema } from "effect";
 import {
-  ChallengeIdSchema,
-  DeliveryIdSchema,
+  OperationIdSchema,
+  AttemptIdSchema,
   IsoDateTimeSchema,
   LocaleSchema,
   NormalizedPhoneSchema,
@@ -13,12 +13,10 @@ import { TextProvider, textSelector } from "./index.js";
 
 const providerId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("text-primary");
 const recipient = Schema.decodeUnknownSync(NormalizedPhoneSchema)("+14155552671");
-const challengeId = Schema.decodeUnknownSync(ChallengeIdSchema)(
+const operationId = Schema.decodeUnknownSync(OperationIdSchema)(
   "00000000-0000-4000-8000-000000000000",
 );
-const deliveryId = Schema.decodeUnknownSync(DeliveryIdSchema)(
-  "00000000-0000-4000-8000-000000000001",
-);
+const attemptId = Schema.decodeUnknownSync(AttemptIdSchema)("00000000-0000-4000-8000-000000000001");
 const code = Schema.decodeUnknownSync(OtpCodeSchema)("012345");
 const locale = Schema.decodeUnknownSync(LocaleSchema)("en");
 const expiresAt = Schema.decodeUnknownSync(IsoDateTimeSchema)("2030-01-01T00:00:00Z");
@@ -45,8 +43,8 @@ const run = Effect.scoped(
     );
     const provider = Context.get(context, ProviderInstance);
     const accepted = yield* provider.send({
-      challengeId,
-      deliveryId,
+      operationId,
+      attemptId,
       recipient,
       code,
       expiresAt,
@@ -54,7 +52,7 @@ const run = Effect.scoped(
       locale,
       template: {},
     });
-    if (accepted.providerRequestId !== `text:${deliveryId}`) {
+    if (accepted.providerRequestId !== `text:${attemptId}`) {
       return yield* Effect.die(new Error("custom provider returned an unexpected result"));
     }
     return { selector: route._tag, provider: provider.pluginId } as const;

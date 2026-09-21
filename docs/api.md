@@ -18,8 +18,23 @@ Treat this output as generated. Change schemas and handlers together, then verif
 | `POST /v1/challenges` | Recipient, purpose, context ID, policy ID; example below | 201 challenge snapshot |
 | `GET /v1/challenges/{challengeId}` | None; no idempotency key needed | 200 challenge snapshot |
 | `POST /v1/challenges/{challengeId}/verify` | `{"code":"123456","purpose":"login","contextId":"example-flow-1"}` | 200 verification result |
-| `POST /v1/challenges/{challengeId}/deliveries` | `{"action":"resend"}`, `{"action":"next"}`, or `{"action":"select","choice":{"type":"provider","providerInstanceId":"sms-main"}}` | 202 delivery ID and challenge snapshot |
+| `POST /v1/challenges/{challengeId}/deliveries` | `{"action":"resend"}`, `{"action":"next"}`, or `{"action":"select","choice":{"type":"provider","providerInstanceId":"sms-main"}}` | 202 attempt ID and challenge snapshot |
 | `POST /v1/challenges/{challengeId}/cancel` | `{}` | 200 challenge snapshot |
+
+External delivery uses the same Bearer authentication, bounded bodies, request IDs and idempotency headers:
+
+| Method and path | Body | Success |
+| --- | --- | --- |
+| `POST /v1/delivery-operations` | Recipient, purpose, contextId, policyId, absolute UTC `expiresAt`; optional locale/routing choice | 201 prepared snapshot |
+| `POST /v1/delivery-operations/with-code` | Preparation body plus `code` | 201 snapshot with initial work queued |
+| `GET /v1/delivery-operations/{operationId}` | None | 200 current delivery snapshot |
+| `POST /v1/delivery-operations/{operationId}/code` | `{"code":"123456"}` | 202 attachment; 200 when already attached identically under a different key |
+| `POST /v1/delivery-operations/{operationId}/deliveries` | resend/next/select action | 202 snapshot |
+| `POST /v1/delivery-operations/{operationId}/close` | `{}` | 200 terminal snapshot |
+
+External delivery has no verify endpoint or verified state. Preparation is durable handoff acceptance, not a capacity guarantee. Provider acceptance arrives asynchronously; the external authority performs recipient verification. Preserve the original deadline and code on retries and channel switches. Close after the external flow ends; closure cannot recall an in-flight message.
+
+External mutations of a challenge-owned operation return `managed_operation` (409). Missing operations return 404, terminal code submission returns 410, conflicting attached codes return 409, and quotas/cooldowns return 429. Retained replay returns its original safe response without repeating sends; query status for current state. Challenge snapshots expose their `operationId`.
 
 All mutations require JSON and an `Idempotency-Key`. The verification code above illustrates the string format; submit the user's received code, preserving leading zeros. Manual selection also accepts `{"type":"channel","channel":"sms"}` as its choice. It must be enabled by the policy.
 

@@ -9,15 +9,13 @@ export const ProviderInstanceIdSchema = Schema.NonEmptyString.pipe(
 );
 export type ProviderInstanceId = typeof ProviderInstanceIdSchema.Type;
 
-export const ChallengeIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand("ChallengeId"),
+export const OperationIdSchema = Schema.String.check(Schema.isUUID()).pipe(
+  Schema.brand("OperationId"),
 );
-export type ChallengeId = typeof ChallengeIdSchema.Type;
+export type OperationId = typeof OperationIdSchema.Type;
 
-export const DeliveryIdSchema = Schema.String.check(Schema.isUUID()).pipe(
-  Schema.brand("DeliveryId"),
-);
-export type DeliveryId = typeof DeliveryIdSchema.Type;
+export const AttemptIdSchema = Schema.String.check(Schema.isUUID()).pipe(Schema.brand("AttemptId"));
+export type AttemptId = typeof AttemptIdSchema.Type;
 
 export const NormalizedPhoneSchema = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^\+[1-9][0-9]{6,14}$/)),
@@ -112,8 +110,8 @@ export interface ResolvedTemplate {
 }
 
 export interface ProviderSendInput {
-  readonly challengeId: ChallengeId;
-  readonly deliveryId: DeliveryId;
+  readonly operationId: OperationId;
+  readonly attemptId: AttemptId;
   readonly recipient: NormalizedPhone;
   readonly code: OtpCode;
   readonly expiresAt: IsoDateTime;

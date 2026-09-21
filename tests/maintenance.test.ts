@@ -1,13 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import {
-  cleanup,
-  invalidateRestoredChallenges,
-} from "../packages/engine/src/challenges/cleanup.js";
+import { cleanup, invalidateRestoredOperations } from "../packages/engine/src/maintenance.js";
 import { createChallenge } from "../packages/engine/src/challenges/create.js";
-import type { KeyRing } from "../packages/engine/src/challenges/crypto.js";
-import { quotaRetryAt, sendLimits } from "../packages/engine/src/challenges/quotas.js";
+import type { KeyRing } from "../packages/engine/src/crypto.js";
+import { quotaRetryAt, sendLimits } from "../packages/engine/src/delivery/quotas.js";
 import type {
   Configuration,
   RuntimeConfiguration,
@@ -41,7 +38,7 @@ const configuration: Configuration = {
     },
     defaultLocale: "en",
     fallbackLocales: [],
-    policies: { login: { providerInstanceIds: ["fake"] } },
+    policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
     purposes: { login: ["login"] },
     deploymentSendLimit15m: 2,
     deploymentSendLimit24h: 3,
@@ -70,7 +67,7 @@ const rotatedSettings = (settings: Settings): Settings => ({
     },
     verification: {
       active: "verify-new",
-      keys: { ...settings.crypto.verification.keys, "verify-new": key(12) },
+      keys: { ...settings.crypto.verification?.keys, "verify-new": key(12) },
     },
     fingerprint: {
       active: "fingerprint-new",
@@ -99,7 +96,10 @@ const omitRetainedKey = (
     case "verification":
       return {
         ...rotated,
-        crypto: { ...rotated.crypto, verification: activeOnly(rotated.crypto.verification) },
+        crypto: {
+          ...rotated.crypto,
+          verification: activeOnly(rotated.crypto.verification ?? { active: "", keys: {} }),
+        },
       };
     case "fingerprint":
       return {
@@ -203,7 +203,7 @@ describe("database compatibility and maintenance", () => {
       failure: { reason: "recipient_key_change_requires_invalidation_and_quota_wait" },
     });
 
-    expect(await harness.run(invalidateRestoredChallenges(harness.configuration))).toBe(1);
+    expect(await harness.run(invalidateRestoredOperations(harness.configuration))).toBe(1);
     expect(
       await harness.run(Effect.result(validateDeploymentIdentity(changed, true))),
     ).toMatchObject({
@@ -222,7 +222,7 @@ describe("database compatibility and maintenance", () => {
       await harness.run(
         rows(
           Schema.Struct({ state: Schema.String }),
-          harness.pg`SELECT state FROM otp_router.deliveries`,
+          harness.pg`SELECT state FROM otp_router.delivery_attempts`,
         ),
       ),
     ).toEqual([{ state: "suppressed" }]);
@@ -244,7 +244,7 @@ describe("database compatibility and maintenance", () => {
     ).toEqual([{ count: 1 }]);
 
     await harness.run(
-      harness.pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '24 hours 1 second' WHERE kind = 'create'`,
+      harness.pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '24 hours 1 second' WHERE kind IN ('create','admission')`,
     );
     await harness.run(validateDeploymentIdentity(changed, true));
     await harness.run(validateDeploymentIdentity(changed));
@@ -255,7 +255,7 @@ describe("database compatibility and maintenance", () => {
     const created = await create("cleanup-expiry");
     const challengeId = challengeIdFrom(created);
     await harness.run(
-      harness.pg`UPDATE otp_router.challenges SET expires_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+      harness.pg`UPDATE otp_router.delivery_operations SET created_at = clock_timestamp() - interval '1 day', expires_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
     await harness.run(cleanup(harness.configuration));
 
@@ -271,7 +271,7 @@ describe("database compatibility and maintenance", () => {
       await harness.run(
         rows(
           Schema.Struct({ state: Schema.String }),
-          harness.pg`SELECT state FROM otp_router.deliveries WHERE challenge_id::text = ${challengeId}`,
+          harness.pg`SELECT state FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
         ),
       ),
     ).toEqual([{ state: "suppressed" }]);
@@ -303,33 +303,22 @@ describe("database compatibility and maintenance", () => {
     await harness.run(
       harness.pg`
         WITH source AS (
-          SELECT c.*, s.phone, s.code, s.verifier
-          FROM otp_router.challenges c
-          JOIN otp_router.challenge_secrets s ON s.challenge_id = c.id
+          SELECT o.* FROM otp_router.delivery_operations o
+          JOIN otp_router.challenges c ON c.operation_id = o.id
           WHERE c.id::text = ${sourceChallengeId}
-        ), seed AS MATERIALIZED (
-          SELECT gen_random_uuid() AS clone_id, series.value, source.*
-          FROM source
-          CROSS JOIN generate_series(1, 205) AS series(value)
-        ), inserted AS (
-          INSERT INTO otp_router.challenges (
-            id, purpose, context_id, recipient_token, policy_id, snapshot,
-            verification_state, verification_id, verified_at, created_at, expires_at,
-            terminal_at, incorrect_guesses, send_count, routing_revision,
-            automatic_stopped, current_delivery_id, next_user_send_at
-          )
-          SELECT
-            clone_id, purpose, ${contextPrefix} || value::text, recipient_token, policy_id,
-            snapshot, 'active', NULL, NULL, created_at,
-            clock_timestamp() - interval '1 minute', NULL, incorrect_guesses, send_count,
-            routing_revision, false, current_delivery_id, next_user_send_at
-          FROM seed
+        ), operations AS (
+          INSERT INTO otp_router.delivery_operations(id,owner,purpose,context_id,recipient_token,policy_id,snapshot,state,created_at,expires_at,initial_position,next_user_send_at)
+          SELECT gen_random_uuid(),'challenge',purpose,${contextPrefix} || value::text,recipient_token,policy_id,snapshot,'prepared',clock_timestamp()-interval '2 minutes',clock_timestamp()-interval '1 minute',0,clock_timestamp()
+          FROM source CROSS JOIN generate_series(1,205) AS series(value)
+          RETURNING id,context_id
+        ), challenges AS (
+          INSERT INTO otp_router.challenges(id,operation_id,purpose,context_id,code_length,max_incorrect_guesses,verification_state,created_at)
+          SELECT o.id,o.id,c.purpose,o.context_id,c.code_length,c.max_incorrect_guesses,'active',c.created_at
+          FROM operations o CROSS JOIN otp_router.challenges c WHERE c.id::text = ${sourceChallengeId}
           RETURNING id
         )
-        INSERT INTO otp_router.challenge_secrets(challenge_id, phone, code, verifier)
-        SELECT inserted.id, source.phone, source.code, source.verifier
-        FROM inserted
-        CROSS JOIN source
+        INSERT INTO otp_router.challenge_secrets(challenge_id,verifier)
+        SELECT c.id,s.verifier FROM challenges c CROSS JOIN otp_router.challenge_secrets s WHERE s.challenge_id::text = ${sourceChallengeId}
       `,
     );
     await harness.run(
@@ -351,7 +340,7 @@ describe("database compatibility and maintenance", () => {
           harness.pg`
             SELECT
               count(*) FILTER (
-                WHERE verification_state = 'active' AND expires_at <= clock_timestamp()
+                WHERE verification_state = 'active' AND (SELECT expires_at FROM otp_router.delivery_operations WHERE id=challenges.operation_id) <= clock_timestamp()
               )::integer AS active_expired,
               count(*) FILTER (
                 WHERE verification_state = 'expired' AND context_id LIKE ${`${contextPrefix}%`}
@@ -417,7 +406,7 @@ describe("database compatibility and maintenance", () => {
     ).toEqual([{ count: 1 }]);
 
     await harness.run(
-      harness.pg`UPDATE otp_router.deliveries SET state = 'dispatching', reserved_at = clock_timestamp(), acceptance = 'unknown' WHERE challenge_id::text = ${firstChallengeId} AND state = 'pending'`,
+      harness.pg`UPDATE otp_router.delivery_attempts SET state = 'dispatching', reserved_at = clock_timestamp(), acceptance = 'unknown' WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'pending'`,
     );
     await Effect.runPromise(
       harness.router.cancel({
@@ -428,7 +417,7 @@ describe("database compatibility and maintenance", () => {
       }),
     );
     await harness.run(
-      harness.pg`UPDATE otp_router.challenges SET terminal_at = clock_timestamp() - interval '8 days' WHERE id::text = ${firstChallengeId}`,
+      harness.pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '8 days' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId})`,
     );
     await harness.run(
       harness.pg`UPDATE otp_router.idempotency_records SET created_at = clock_timestamp() - interval '25 hours', retain_until = clock_timestamp() - interval '1 hour' WHERE challenge_id::text = ${firstChallengeId}`,
@@ -453,7 +442,7 @@ describe("database compatibility and maintenance", () => {
     ).toEqual([{ count: 2 }]);
 
     await harness.run(
-      harness.pg`UPDATE otp_router.deliveries SET state = 'failed', acceptance = 'not_accepted', completed_at = clock_timestamp() WHERE challenge_id::text = ${firstChallengeId} AND state = 'dispatching'`,
+      harness.pg`UPDATE otp_router.delivery_attempts SET state = 'failed', acceptance = 'not_accepted', completed_at = clock_timestamp() WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'dispatching'`,
     );
     await harness.run(cleanup(harness.configuration));
     expect(
@@ -473,6 +462,9 @@ describe("database compatibility and maintenance", () => {
       ),
     ).toEqual([{ count: 1 }]);
 
+    await harness.run(
+      harness.pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '31 seconds' WHERE kind = 'admission'`,
+    );
     const reused = await create(operationKey);
     expect(reused.replayed).toBe(false);
     expect(challengeIdFrom(reused)).not.toBe(firstChallengeId);

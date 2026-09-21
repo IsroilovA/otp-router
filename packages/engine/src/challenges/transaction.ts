@@ -1,7 +1,7 @@
 import { Effect, Result } from "effect";
-import { transaction as databaseTransaction } from "../database/transaction.js";
+import { deliveryTransaction } from "../delivery/transaction.js";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { DomainError } from "./contracts.js";
+import { DomainError } from "../errors.js";
 import { Changes } from "./changes.js";
 import { flushChanges } from "./publication.js";
 
@@ -11,7 +11,8 @@ export const challengeTransaction = <A, E, R>(
 ) =>
   Effect.gen(function* () {
     if ((yield* Changes) !== undefined) return yield* body;
-    return yield* databaseTransaction(
+    return yield* deliveryTransaction(
+      config,
       Effect.gen(function* () {
         const result = yield* body;
         yield* flushChanges(config);

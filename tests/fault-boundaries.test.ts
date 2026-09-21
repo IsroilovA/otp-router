@@ -1,3 +1,4 @@
+import { ageAdmission } from "./fixture.js";
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Layer, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -47,7 +48,7 @@ const provider: ReadyProvider = {
     Effect.sync(() => {
       sends.push(input);
       return {
-        providerRequestId: `fault-test:${input.deliveryId}`,
+        providerRequestId: `fault-test:${input.attemptId}`,
       };
     }),
 };
@@ -63,7 +64,7 @@ const configuration: Configuration = {
     },
     defaultLocale: "en",
     fallbackLocales: [],
-    policies: { login: { providerInstanceIds: [providerId] } },
+    policies: { login: { managed: {}, providerInstanceIds: [providerId] } },
     purposes: { login: ["login"] },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1_000,
@@ -119,14 +120,14 @@ describe("PostgreSQL fault boundaries", () => {
     return control;
   };
 
-  const deliveryIdFrom = async (result: OperationResult): Promise<string> => {
+  const attemptIdFrom = async (result: OperationResult): Promise<string> => {
     const id = challengeIdFrom(result);
     const harness = observer();
     return (
       await harness.run(
         single(
           Schema.Struct({ id: Schema.String }),
-          harness.pg`SELECT id FROM otp_router.deliveries WHERE challenge_id = ${id} AND reason = 'initial'`,
+          harness.pg`SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${id}) AND reason = 'initial'`,
         ),
       )
     ).id;
@@ -150,14 +151,14 @@ describe("PostgreSQL fault boundaries", () => {
           SELECT
             (SELECT count(*) FROM otp_router.challenges)::integer AS challenges,
             (SELECT count(*) FROM otp_router.challenge_secrets)::integer AS secrets,
-            (SELECT count(*) FROM otp_router.deliveries)::integer AS deliveries,
-            (SELECT count(*) FROM otp_router.deliveries WHERE state = 'pending')::integer AS pending,
-            (SELECT count(*) FROM otp_router.deliveries WHERE reserved_at IS NOT NULL)::integer AS reserved,
+            (SELECT count(*) FROM otp_router.delivery_attempts)::integer AS deliveries,
+            (SELECT count(*) FROM otp_router.delivery_attempts WHERE state = 'pending')::integer AS pending,
+            (SELECT count(*) FROM otp_router.delivery_attempts WHERE reserved_at IS NOT NULL)::integer AS reserved,
             (SELECT count(*) FROM otp_router.idempotency_records)::integer AS operations,
             (SELECT count(*) FROM otp_router.quota_events WHERE kind = 'create')::integer AS "createQuotas",
             (SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send')::integer AS "sendQuotas",
             (SELECT count(*) FROM pgboss.job WHERE name = ${deliveryQueue})::integer AS jobs,
-            COALESCE((SELECT sum(send_count) FROM otp_router.challenges), 0)::integer AS "sendCount"
+            COALESCE((SELECT sum(send_count) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges), 0)::integer AS "sendCount"
         `,
       ),
     );
@@ -259,8 +260,9 @@ describe("PostgreSQL fault boundaries", () => {
     const challengeId = challengeIdFrom(created);
     await observer().run(
       observer()
-        .pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+        .pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(observer());
     const pool = await holdApplicationPool();
     try {
       const result = await Effect.runPromise(
@@ -305,11 +307,11 @@ describe("PostgreSQL fault boundaries", () => {
     );
     expect(retried.replayed).toBe(false);
     expect(await state()).toMatchObject({ deliveries: 2, operations: 2, jobs: 2 });
-    if (!("deliveryId" in retried.body)) throw new Error("Expected a delivery result");
+    if (!("attemptId" in retried.body)) throw new Error("Expected a delivery result");
     await app().run(
       dispatch(app().configuration, {
         version: 1,
-        deliveryId: retried.body.deliveryId,
+        attemptId: retried.body.attemptId,
         routingRevision: 2,
       }),
     );
@@ -391,7 +393,7 @@ describe("PostgreSQL fault boundaries", () => {
     await app().run(
       dispatch(app().configuration, {
         version: 1,
-        deliveryId: await deliveryIdFrom(recovered),
+        attemptId: await attemptIdFrom(recovered),
         routingRevision: 1,
       }),
     );

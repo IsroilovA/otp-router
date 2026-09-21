@@ -31,7 +31,7 @@ const claim = (id: string) =>
         AND ((state = 'pending' AND next_attempt_at <= clock_timestamp())
           OR (state = 'delivering' AND lease_until <= clock_timestamp()))
       RETURNING event_id,attempts
-    ) SELECT e.body,c.attempts FROM claimed c JOIN otp_router.challenge_events e ON e.id = c.event_id
+    ) SELECT e.body,c.attempts FROM claimed c JOIN otp_router.events e ON e.id = c.event_id
   `,
       ))[0];
     }),
@@ -56,7 +56,7 @@ const finish = (id: string, attempt: number, status: number | undefined) =>
       if (state === "pending" && updated.length !== 0) yield* enqueueNotification(id, next);
     }),
   );
-export const notifyChallenge = (config: RuntimeConfiguration, id: string) =>
+export const notifyEvent = (config: RuntimeConfiguration, id: string) =>
   Effect.gen(function* () {
     const destination = config.settings.webhook;
     if (destination === undefined) return;

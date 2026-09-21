@@ -171,6 +171,29 @@
           }
         ]
       }
+    },
+    {
+      "files": ["packages/engine/src/delivery/**/*.ts"],
+      "rules": {
+        "no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "group": [
+                  "**/challenges",
+                  "**/challenges/**",
+                  "**/http",
+                  "**/http/**",
+                  "**/worker",
+                  "**/worker/**"
+                ],
+                "message": "Delivery is independent of managed verification, HTTP and worker entry points."
+              }
+            ]
+          }
+        ]
+      }
     }
   ]
 }

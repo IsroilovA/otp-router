@@ -1,19 +1,21 @@
+import { DeliveryEvent } from "../packages/engine/src/delivery/contracts.js";
+import { ageAdmission } from "./fixture.js";
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { Effect, Redacted, Schema } from "effect";
 import { Webhook } from "standardwebhooks";
 import { ChallengeEvent, Snapshot } from "../packages/engine/src/challenges/contracts.js";
-import { decrypt } from "../packages/engine/src/challenges/crypto.js";
+import { decrypt } from "../packages/engine/src/crypto.js";
 import { createChallenge } from "../packages/engine/src/challenges/create.js";
 import { challengeTransaction } from "../packages/engine/src/challenges/transaction.js";
-import { cleanup } from "../packages/engine/src/challenges/cleanup.js";
+import { cleanup } from "../packages/engine/src/maintenance.js";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
 import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
 import { ingestEvents, recordAccepted } from "../packages/engine/src/delivery/callbacks.js";
 import {
-  notifyChallenge,
+  notifyEvent,
   recoverNotifications,
   replayNotification,
 } from "../packages/engine/src/notifications/send.js";
@@ -27,7 +29,7 @@ import {
 import { startWorkers } from "../packages/engine/src/worker/run.js";
 import { RouterConfig } from "../packages/engine/src/config/runtime.js";
 
-import { findSecrets } from "../packages/engine/src/challenges/store.js";
+import { findSecrets } from "../packages/engine/src/delivery/store.js";
 import {
   applySnapshot,
   initializeReceiver,
@@ -88,7 +90,7 @@ const events = async (id: string) => {
   const stored = await harness.run(
     rows(
       Schema.Struct({ body: Schema.String }),
-      harness.pg`SELECT body FROM otp_router.challenge_events WHERE challenge_id = ${id} ORDER BY revision`,
+      harness.pg`SELECT body FROM otp_router.events WHERE kind = 'challenge.updated' AND subject_id = ${id} ORDER BY revision`,
     ),
   );
   return stored.map(({ body }) => Schema.decodeUnknownSync(ChallengeEvent)(JSON.parse(body)));
@@ -113,8 +115,9 @@ const outcome = (id: string, state: "accepted" | "failed" | "uncertain") =>
 const resend = async (id: string) => {
   const harness = app();
   await harness.run(
-    harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() WHERE id = ${id}`,
+    harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${id})`,
   );
+  await ageAdmission(harness);
   await Effect.runPromise(
     harness.router.deliver({
       challengeId: id,
@@ -156,7 +159,10 @@ beforeAll(async () => {
       defaultLocale: "en",
       fallbackLocales: [],
       policies: {
-        login: { providerInstanceIds: ["primary", "secondary"], maxIncorrectGuesses: 2 },
+        login: {
+          providerInstanceIds: ["primary", "secondary"],
+          managed: { maxIncorrectGuesses: 2 },
+        },
       },
       providerLabels: { primary: "Primary channel", secondary: "Backup channel" },
       purposes: { login: ["login"] },
@@ -203,14 +209,14 @@ describe("public snapshots and transactional events", () => {
       state: "sending",
       provider: null,
     });
-    await outcome(first.deliveryId, "failed");
+    await outcome(first.attemptId, "failed");
     expect((await events(created.challengeId)).map((event) => event.challenge.state)).toEqual([
       "queued",
       "sending",
       "sending",
     ]);
     const second = await gate();
-    await outcome(second.deliveryId, "accepted");
+    await outcome(second.attemptId, "accepted");
     const accepted = await status(created.challengeId);
     expect(accepted).toMatchObject({
       state: "accepted",
@@ -218,20 +224,20 @@ describe("public snapshots and transactional events", () => {
       channel: "fake",
     });
     const uncertain = await resend(created.challengeId);
-    await outcome(uncertain.deliveryId, "uncertain");
+    await outcome(uncertain.attemptId, "uncertain");
     expect(await status(created.challengeId)).toMatchObject({
       state: "accepted",
       provider: accepted.provider,
     });
     const failed = await resend(created.challengeId);
-    await outcome(failed.deliveryId, "failed");
+    await outcome(failed.attemptId, "failed");
     expect(await status(created.challengeId)).toMatchObject({
       state: "accepted",
       provider: accepted.provider,
     });
     const callback = {
       deduplicationKey: "final-failure",
-      correlationReference: second.deliveryId,
+      correlationReference: second.attemptId,
       status: "failed" as const,
     };
     await harness.run(ingestEvents(harness.configuration, "secondary", [callback]));
@@ -248,7 +254,7 @@ describe("public snapshots and transactional events", () => {
       ingestEvents(harness.configuration, "secondary", [
         {
           deduplicationKey: "late-delivery",
-          correlationReference: second.deliveryId,
+          correlationReference: second.attemptId,
           status: "delivered",
         },
       ]),
@@ -265,7 +271,7 @@ describe("public snapshots and transactional events", () => {
     const harness = app();
     const created = await create();
     const job = await gate();
-    await outcome(job.deliveryId, "uncertain");
+    await outcome(job.attemptId, "uncertain");
     expect(await status(created.challengeId)).toMatchObject({
       state: "uncertain",
       reason: "delivery_uncertain",
@@ -273,7 +279,7 @@ describe("public snapshots and transactional events", () => {
     });
     expect(await harness.queue.fetch(deliveryQueue)).toHaveLength(0);
     await harness.run(
-      recordAccepted(harness.configuration, job.deliveryId, { providerRequestId: "late" }),
+      recordAccepted(harness.configuration, job.attemptId, { providerRequestId: "late" }),
     );
     const accepted = await status(created.challengeId);
     expect(accepted).toMatchObject({ state: "accepted", provider: { id: "primary" } });
@@ -309,7 +315,7 @@ describe("public snapshots and transactional events", () => {
       await harness.run(
         single(
           Schema.Struct({ count: Schema.Int }),
-          harness.pg`SELECT count(*)::int AS count FROM otp_router.challenge_events`,
+          harness.pg`SELECT count(*)::int AS count FROM otp_router.events`,
         ),
       ),
     ).toEqual({ count: 0 });
@@ -333,13 +339,14 @@ describe("public snapshots and transactional events", () => {
         );
       else if (terminal === "expired") {
         await harness.run(
-          harness.pg`UPDATE otp_router.challenges SET expires_at = clock_timestamp() WHERE id = ${created.challengeId}`,
+          harness.pg`UPDATE otp_router.delivery_operations SET expires_at = clock_timestamp() WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${created.challengeId})`,
         );
         await harness.run(cleanup(harness.configuration));
       } else {
-        const saved = await harness.run(findSecrets(created.challengeId));
+        const saved = await harness.run(findSecrets(created.operationId));
+        if (saved.code === null) throw new Error("Expected attached code");
         const code = await Effect.runPromise(
-          decrypt(harness.configuration.settings.crypto, created.challengeId, "code", saved.code),
+          decrypt(harness.configuration.settings.crypto, created.operationId, "code", saved.code),
         );
         const input = {
           purpose: "login",
@@ -399,8 +406,8 @@ it("retries immutable signed events independently, recovers missing jobs, retain
   vi.useFakeTimers({ toFake: ["Date"] });
   const signingTime = Date.now();
   await Promise.all([
-    harness.run(notifyChallenge(harness.configuration, id)),
-    harness.run(notifyChallenge(harness.configuration, id)),
+    harness.run(notifyEvent(harness.configuration, id)),
+    harness.run(notifyEvent(harness.configuration, id)),
   ]);
   expect(received).toHaveLength(1);
   const first = received[0];
@@ -415,7 +422,7 @@ it("retries immutable signed events independently, recovers missing jobs, retain
   expect(await harness.queue.fetch(notificationQueue)).toHaveLength(1);
   responseStatus = 204;
   vi.setSystemTime(signingTime + 1000);
-  await harness.run(notifyChallenge(harness.configuration, id));
+  await harness.run(notifyEvent(harness.configuration, id));
   expect(received).toHaveLength(2);
   expect(received[1]?.body).toBe(first.body);
   expect(received[1]?.headers["webhook-timestamp"]).not.toBe(first.headers["webhook-timestamp"]);
@@ -443,21 +450,21 @@ it("retries immutable signed events independently, recovers missing jobs, retain
     }),
   );
   await harness.run(
-    harness.pg`UPDATE otp_router.challenges SET terminal_at = clock_timestamp() - interval '8 days' WHERE id = ${created.challengeId}`,
+    harness.pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '8 days' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${created.challengeId})`,
   );
   await harness.run(
-    harness.pg`UPDATE otp_router.challenge_events SET occurred_at = clock_timestamp() - interval '8 days' WHERE challenge_id = ${created.challengeId}`,
+    harness.pg`UPDATE otp_router.events SET occurred_at = clock_timestamp() - interval '8 days' WHERE kind = 'challenge.updated' AND subject_id = ${created.challengeId}`,
   );
   await harness.run(cleanup(harness.configuration));
   expect((await events(created.challengeId)).some((stored) => stored.eventId === id)).toBe(true);
   expect(await harness.run(replayNotification(id))).toBe(true);
-  await harness.run(notifyChallenge(harness.configuration, id));
+  await harness.run(notifyEvent(harness.configuration, id));
   expect(received[2]?.body).toBe(first.body);
   expect(
     await harness.run(
       single(
         Schema.Struct({ count: Schema.Int }),
-        harness.pg`SELECT count(*)::int AS count FROM otp_router.deliveries WHERE challenge_id = ${created.challengeId}`,
+        harness.pg`SELECT count(*)::int AS count FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${created.challengeId})`,
       ),
     ),
   ).toEqual({ count: 0 });
@@ -467,11 +474,11 @@ it("durably deduplicates authenticated receipts and never overwrites a higher re
   const harness = app();
   const created = await create();
   const job = await gate();
-  await outcome(job.deliveryId, "accepted");
+  await outcome(job.attemptId, "accepted");
   const all = await events(created.challengeId);
   responseStatus = 204;
   for (const event of [...all].reverse()) {
-    await harness.run(notifyChallenge(harness.configuration, event.eventId));
+    await harness.run(notifyEvent(harness.configuration, event.eventId));
     const receipt = received.at(-1);
     if (receipt === undefined) throw new Error("Receipt missing");
     await harness.run(receiveWebhook({ ...receipt, secret }));
@@ -508,13 +515,14 @@ it("durably deduplicates authenticated receipts and never overwrites a higher re
 it("runs notification workers independently and retains an expiry job for every challenge", async () => {
   const harness = app();
   responseStatus = 204;
-  notifyAfter = 6;
+  notifyAfter = 12;
   await harness.run(
     Effect.gen(function* () {
       yield* startWorkers({ concurrency: 4, shutdownGraceMs: 30000 }).pipe(
         Effect.provideService(RouterConfig, harness.configuration),
       );
-      for (let index = 0; index < 2; index++)
+      for (let index = 0; index < 2; index++) {
+        yield* harness.pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '31 seconds' WHERE kind = 'admission'`;
         yield* createChallenge(harness.configuration, {
           key: randomUUID(),
           requestId: randomUUID(),
@@ -525,6 +533,7 @@ it("runs notification workers independently and retains an expiry job for every 
             policyId: "login",
           },
         });
+      }
       yield* Effect.promise(() => receivedReady.promise).pipe(Effect.timeout("10 seconds"));
     }).pipe(Effect.scoped),
   );
@@ -543,13 +552,13 @@ it("runs notification workers independently and retains an expiry job for every 
         harness.pg`SELECT count(*)::int AS count FROM otp_router.notifications WHERE state = 'delivered'`,
       ),
     ),
-  ).toEqual({ count: 6 });
+  ).toEqual({ count: 12 });
   for (const receipt of received)
     expect(
-      Schema.decodeUnknownSync(ChallengeEvent)(
+      Schema.decodeUnknownSync(Schema.Union([ChallengeEvent, DeliveryEvent]))(
         new Webhook(secret).verify(receipt.body, receipt.headers),
       ).type,
-    ).toBe("challenge.updated");
+    ).toMatch(/^(challenge|delivery)\.updated$/);
 });
 
 it("publishes only the final snapshot when acceptance and early failure evidence commit together", async () => {
@@ -557,7 +566,7 @@ it("publishes only the final snapshot when acceptance and early failure evidence
   const created = await create();
   const job = await gate();
   await harness.run(
-    recordAccepted(harness.configuration, job.deliveryId, {
+    recordAccepted(harness.configuration, job.attemptId, {
       providerRequestId: "inline-reference",
       deliveryEvent: {
         deduplicationKey: "inline-failure",

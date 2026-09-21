@@ -32,7 +32,7 @@ const configuration: Configuration = {
     },
     defaultLocale: "en",
     fallbackLocales: [],
-    policies: { login: { providerInstanceIds: ["fake"] } },
+    policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
     purposes: { login: ["login"] },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1000,
@@ -74,7 +74,7 @@ describe("transaction-local queue integration", () => {
     Effect.gen(function* () {
       const h = current();
       yield* h.pg`INSERT INTO otp_router.integration_markers(id) VALUES (${id})`;
-      yield* enqueueDelivery({ version: 1, deliveryId: id, routingRevision: 1 });
+      yield* enqueueDelivery({ version: 1, attemptId: id, routingRevision: 1 });
     });
   const state = async () => {
     const h = current();
@@ -233,7 +233,7 @@ describe("transaction-local queue integration", () => {
     if (database === undefined) throw new Error("Missing database");
     const id = await h.queue.send(
       deliveryQueue,
-      { version: 1, deliveryId: randomUUID(), routingRevision: 1 },
+      { version: 1, attemptId: randomUUID(), routingRevision: 1 },
       { startAfter: 600 },
     );
     expect(id).not.toBeNull();

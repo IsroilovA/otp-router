@@ -211,7 +211,7 @@ export const FakeProvider: ProviderDefinition<
           resolveTemplate: resolveNoTemplate,
           send: (input) =>
             validateSendInput(input, constraints).pipe(
-              Effect.andThen(sendForOutcome(options.config.outcome, `fake:${input.deliveryId}`)),
+              Effect.andThen(sendForOutcome(options.config.outcome, `fake:${input.attemptId}`)),
             ),
           callback: (input) => decodeCallback(input, Redacted.value(options.config.callbackSecret)),
         };

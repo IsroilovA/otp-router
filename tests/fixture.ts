@@ -1,3 +1,7 @@
+import { OwnerProjection } from "../packages/engine/src/delivery/projection.js";
+import { OwnerProjectionLive } from "../packages/engine/src/challenges/owner-projection.js";
+import { DeliveryLive } from "../packages/engine/src/delivery/service.js";
+import { Delivery } from "../packages/engine/src/delivery/contracts.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { connect } from "node:net";
@@ -120,7 +124,7 @@ export const startPostgres = async (): Promise<PostgresFixture> => {
       "POSTGRES_PASSWORD=integration-secret",
       "--env",
       "POSTGRES_DB=otp_router_test",
-      "postgres:17-alpine",
+      "postgres:18",
     ]);
     await waitUntilReady(containerName);
     const port = await mappedPort(containerName);
@@ -141,8 +145,9 @@ export interface IntegrationRuntime {
   readonly pg: Context.Service.Shape<typeof PgClient.PgClient>;
   readonly queue: PgBoss;
   readonly router: Context.Service.Shape<typeof Router>;
+  readonly delivery: Context.Service.Shape<typeof Delivery>;
   readonly run: <A, E>(
-    effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue>,
+    effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection>,
   ) => Promise<A>;
   readonly reset: () => Promise<void>;
   readonly close: () => Promise<void>;
@@ -179,12 +184,21 @@ export const startRuntime = async (
     const runtimeConfiguration = await Effect.runPromise(
       loadConfiguration(configuration).pipe(Effect.provideService(Scope.Scope, scope)),
     );
+    const projectionContext = await Effect.runPromise(
+      buildInScope(
+        OwnerProjectionLive.pipe(Layer.provide(Layer.succeed(RouterConfig, runtimeConfiguration))),
+        scope,
+      ),
+    );
+    const projection = Context.get(projectionContext, OwnerProjection);
     const routerContext = await Effect.runPromise(
       buildInScope(
-        RouterLive.pipe(
+        Layer.mergeAll(RouterLive, DeliveryLive).pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(RouterConfig, runtimeConfiguration),
+              Layer.succeed(OwnerProjection, projection),
+              Layer.succeed(SqlClient.SqlClient, sql),
               Layer.succeed(PgClient.PgClient, pg),
               Layer.succeed(Queue, queue),
             ),
@@ -195,20 +209,25 @@ export const startRuntime = async (
     );
     const router = Context.get(routerContext, Router);
     const run = <A, E>(
-      effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue>,
+      effect: Effect.Effect<
+        A,
+        E,
+        PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection
+      >,
     ): Promise<A> =>
       Effect.runPromise(
         effect.pipe(
           Effect.provideService(PgClient.PgClient, pg),
           Effect.provideService(SqlClient.SqlClient, sql),
           Effect.provideService(Queue, queue),
+          Effect.provideService(OwnerProjection, projection),
         ),
       );
     const reset = async (): Promise<void> => {
       await queue.deleteAllJobs();
       await run(
         sql.unsafe(
-          "TRUNCATE TABLE otp_router.notifications, otp_router.challenge_events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.deliveries, otp_router.challenge_secrets, otp_router.idempotency_records, otp_router.quota_events, otp_router.challenges CASCADE",
+          "TRUNCATE TABLE otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.idempotency_records, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_idempotency, otp_router.delivery_operations CASCADE",
         ),
       );
     };
@@ -217,6 +236,7 @@ export const startRuntime = async (
       pg,
       queue,
       router,
+      delivery: Context.get(routerContext, Delivery),
       run,
       reset,
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)),
@@ -231,3 +251,9 @@ export const challengeIdFrom = (result: OperationResult): string => {
   if (!("challengeId" in result.body)) throw new Error("Expected a challenge result");
   return result.body.challengeId;
 };
+
+// Advance the persisted admission clock when a test advances a user-send cooldown.
+export const ageAdmission = (runtime: IntegrationRuntime) =>
+  runtime.run(
+    runtime.pg`UPDATE otp_router.quota_events SET occurred_at=clock_timestamp()-interval '31 seconds' WHERE kind='admission'`,
+  );

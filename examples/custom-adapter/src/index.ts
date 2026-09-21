@@ -27,7 +27,7 @@ const send = (config: TextConfiguration, input: ProviderSendInput): Effect.Effec
   Effect.sync(() => {
     void `${config.prefix}${input.code}`;
     return {
-      providerRequestId: `text:${input.deliveryId}`,
+      providerRequestId: `text:${input.attemptId}`,
     };
   });
 

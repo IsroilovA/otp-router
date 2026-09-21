@@ -25,7 +25,7 @@ const base: Configuration = {
     },
     defaultLocale: "en",
     fallbackLocales: [],
-    policies: { login: { providerInstanceIds: ["fake"] } },
+    policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
     purposes: { login: ["login"] },
     deploymentSendLimit15m: 10,
     deploymentSendLimit24h: 100,
@@ -60,7 +60,8 @@ it.effect(
           policies: {
             login: {
               providerInstanceIds: ["fake"],
-              lifetimeSeconds: 60,
+              managed: { lifetimeSeconds: 60 },
+              maxLifetimeSeconds: 60,
               resendCooldownSeconds: 60,
             },
           },

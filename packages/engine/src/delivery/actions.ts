@@ -1,41 +1,29 @@
-import { domainTransaction } from "../challenges/transaction.js";
+import { admissionLimit, quotaRetryAt, countQuotas } from "./quotas.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { databaseTime } from "../database/transaction.js";
-import {
-  DomainError,
-  type ChallengeMutation,
-  type DeliveryInput,
-  type OperationResult,
-} from "../challenges/contracts.js";
-import { lockOperation, operation, replay, saveResult } from "../challenges/idempotency.js";
-import {
-  expire,
-  findChallenge,
-  findDelivery,
-  requireActive,
-  invalidRecipient,
-} from "../challenges/store.js";
-import { snapshot } from "../challenges/publication.js";
-import type { Challenge, Delivery } from "../challenges/records.js";
+import { DomainError } from "../errors.js";
+import type { DeliveryInput } from "./input.js";
+import type { Operation, Attempt } from "./records.js";
+import { findOperation, findAttempt, requireActive, invalidRecipient } from "./store.js";
 import {
   availableProviders,
   resolveChoice,
   nextProvider,
   userSendBlock,
+  withAdmissionCooldown,
   type ProviderAvailability,
 } from "./eligibility.js";
 import { schedule } from "./schedule.js";
 const selectTarget = (
-  challenge: Challenge,
-  current: Delivery,
+  operation: Operation,
+  current: Attempt,
   input: DeliveryInput,
   available: readonly ProviderAvailability[],
 ) => {
   switch (input.action) {
     case "select":
-      return resolveChoice(challenge.snapshot, input.choice, available);
+      return resolveChoice(operation.snapshot, input.choice, available);
     case "resend": {
       const target = available.find(
         ({ provider }) => provider.providerInstanceId === current.provider_instance_id,
@@ -52,47 +40,39 @@ const selectTarget = (
     }
   }
 };
-export const requestDelivery = (
+export const requestSend = (
   config: RuntimeConfiguration,
-  request: ChallengeMutation<DeliveryInput>,
+  operation: Operation,
+  input: DeliveryInput,
+  time: Date,
 ) =>
-  domainTransaction(
-    config,
-    Effect.gen(function* () {
-      const op = operation(config.settings.crypto, request, "deliver");
-      yield* lockOperation(op);
-      const previous = yield* replay(config.settings.crypto, op);
-      if (previous !== undefined) return previous;
-      const locked = yield* findChallenge(request.challengeId, true);
-      const time = yield* databaseTime;
-      const challenge = yield* expire(locked, time);
-      yield* requireActive(challenge);
-      const current = yield* findDelivery(challenge.current_delivery_id);
-      if (yield* invalidRecipient(challenge.id))
-        return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
-      const target = yield* selectTarget(
-        challenge,
-        current,
-        request.input,
-        yield* availableProviders(config, challenge, time),
-      );
-      const blocked = userSendBlock(challenge, time, target.retryAt);
-      if (blocked !== undefined) return yield* Effect.fail(new DomainError(blocked));
-      const sql = yield* SqlClient.SqlClient;
-      yield* sql`UPDATE otp_router.deliveries SET state = 'suppressed' WHERE challenge_id = ${challenge.id} AND state = 'pending'`;
-      yield* sql`UPDATE otp_router.challenges SET routing_revision = routing_revision + 1, automatic_stopped = false, next_user_send_at = ${new Date(time.getTime() + challenge.snapshot.resendCooldownSeconds * 1000)} WHERE id = ${challenge.id}`;
-      const updated = yield* findChallenge(challenge.id);
-      const deliveryId = yield* schedule(updated, target.position, request.input.action, time);
-      const body = {
-        deliveryId,
-        challenge: yield* snapshot(config, yield* findChallenge(challenge.id), time),
-      };
-      const response: OperationResult = { outcome: "delivery_queued", replayed: false, body };
-      return yield* saveResult(config.settings.crypto, op, {
-        challengeId: challenge.id,
-        response,
-        active: true,
-        time,
-      });
-    }),
-  );
+  Effect.gen(function* () {
+    yield* requireActive(operation);
+    if (operation.current_attempt_id === null || (yield* invalidRecipient(operation.id)))
+      return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
+    const current = yield* findAttempt(operation.current_attempt_id);
+    const target = yield* selectTarget(
+      operation,
+      current,
+      input,
+      yield* availableProviders(config, operation, time),
+    );
+    const admission = yield* quotaRetryAt([admissionLimit(operation.recipient_token)], time);
+    const blocked = userSendBlock(
+      withAdmissionCooldown(operation, admission),
+      time,
+      target.retryAt,
+    );
+    if (blocked !== undefined) return yield* Effect.fail(new DomainError(blocked));
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed' WHERE operation_id = ${operation.id} AND state = 'pending'`;
+    yield* sql`UPDATE otp_router.delivery_operations SET routing_revision = routing_revision + 1, automatic_stopped = false, next_user_send_at = ${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)} WHERE id = ${operation.id}`;
+    const attemptId = yield* schedule(
+      yield* findOperation(operation.id),
+      target.position,
+      input.action,
+      time,
+    );
+    yield* countQuotas([admissionLimit(operation.recipient_token)], attemptId, time);
+    return attemptId;
+  });

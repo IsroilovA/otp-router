@@ -1,3 +1,5 @@
+import { terminate as closeOperation } from "../delivery/store.js";
+import { verifierInput } from "./crypto.js";
 import { changed } from "./changes.js";
 import { domainTransaction } from "./transaction.js";
 import { randomUUID } from "node:crypto";
@@ -5,15 +7,11 @@ import { PgClient } from "@effect/sql-pg";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";
-import {
-  DomainError,
-  type ChallengeMutation,
-  type OperationResult,
-  type VerifyInput,
-} from "./contracts.js";
-import { digest, equalDigest, verifierInput } from "./crypto.js";
+import { type ChallengeMutation, type OperationResult, type VerifyInput } from "./contracts.js";
+import { DomainError } from "../errors.js";
+import { digest, equalDigest } from "../crypto.js";
 import { lockOperation, operation, replay, saveResult } from "./idempotency.js";
-import { checkQuotas, countQuotas, lockQuotas, recipientLimit } from "./quotas.js";
+import { checkQuotas, countQuotas, lockQuotas, recipientLimit } from "../delivery/quotas.js";
 import {
   eraseSecrets,
   expire,
@@ -56,7 +54,11 @@ export const verifyChallenge = (
       if (initial === undefined)
         return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
       const limits = [
-        recipientLimit(initial.recipient_token, "guess", config.settings.recipientGuessLimit15m),
+        recipientLimit(
+          initial.delivery.recipient_token,
+          "guess",
+          config.settings.recipientGuessLimit15m,
+        ),
       ];
       yield* lockQuotas(limits);
       const locked = yield* findChallenge(request.challengeId, true);
@@ -64,10 +66,12 @@ export const verifyChallenge = (
       const challenge = yield* expire(locked, time);
       yield* checkBinding(challenge, request.input);
       yield* requireActive(challenge);
-      if (request.input.code.length !== challenge.snapshot.codeLength)
+      if (request.input.code.length !== challenge.code_length)
         return yield* Effect.fail(new DomainError({ code: "invalid_request" }));
       yield* checkQuotas(limits, time);
       const secret = yield* findSecrets(challenge.id);
+      if (config.settings.crypto.verification === undefined)
+        return yield* Effect.die(new Error("Verification key missing"));
       const candidate = digest(
         config.settings.crypto.verification,
         verifierInput(
@@ -80,7 +84,8 @@ export const verifyChallenge = (
       const sql = yield* PgClient.PgClient;
       if (equalDigest(candidate.value, secret.verifier.value)) {
         const verificationId = randomUUID();
-        yield* sql`UPDATE otp_router.challenges SET verification_state = 'verified', verification_id = ${verificationId}, verified_at = ${time}, terminal_at = ${time}, routing_revision = routing_revision + 1, automatic_stopped = true WHERE id = ${challenge.id} AND verification_state = 'active'`;
+        yield* sql`UPDATE otp_router.challenges SET verification_state = 'verified', verification_id = ${verificationId}, verified_at = ${time}, terminal_at = ${time} WHERE id = ${challenge.id} AND verification_state = 'active'`;
+        yield* closeOperation(challenge.delivery, "closed", time);
         yield* eraseSecrets(challenge.id);
         yield* changed(challenge.id);
         const response: OperationResult = {
@@ -104,7 +109,7 @@ export const verifyChallenge = (
       yield* sql`UPDATE otp_router.challenges SET incorrect_guesses = incorrect_guesses + 1 WHERE id = ${challenge.id} AND verification_state = 'active'`;
       yield* countQuotas(limits, randomUUID(), time);
       yield* changed(challenge.id);
-      const active = challenge.incorrect_guesses + 1 < challenge.snapshot.maxIncorrectGuesses;
+      const active = challenge.incorrect_guesses + 1 < challenge.max_incorrect_guesses;
       if (!active) yield* terminate(challenge, "locked", time);
       const response: OperationResult = {
         outcome: "incorrect_code",

@@ -1,6 +1,6 @@
 # Verification and security
 
-The router generates a cryptographically random numeric code and binds its verifier to the deployment, challenge, purpose, and application-supplied context. Preserve leading zeros. The adopting backend authorizes the business action and consumes the verification result once; the router does not issue login tokens.
+For managed challenges, the router generates a cryptographically random numeric code and binds its verifier to the deployment, challenge, purpose, and application-supplied context. Preserve leading zeros. The adopting backend authorizes the business action and consumes the verification result once; the router does not issue login tokens.
 
 ## Verification and abuse limits
 
@@ -18,7 +18,7 @@ Configuration schemas define defaults and supported bounds. Providers may narrow
 
 ## Secrets and keys
 
-Store the recipient and recoverable code encrypted with authenticated encryption. Store a keyed verifier separately. Bind ciphertext to its deployment, challenge, and field so it cannot be moved between records. Use independent keys for encryption, verification, request fingerprints, and recipient lookup.
+Store the recipient and recoverable code encrypted with authenticated encryption. Store a keyed verifier separately. Bind ciphertext to its deployment, delivery operation, and field so it cannot be moved between records. Use independent keys for encryption, verification, request fingerprints, and recipient lookup.
 
 Load secrets from the environment or a secret store. Never put OTPs, credentials, full recipients, context IDs, routing context, message text, raw provider payloads, or authorization headers in logs or metrics. Persist provider diagnostics only from the adapter's declared allowlist. Keep internal health and metrics endpoints private.
 
@@ -39,3 +39,11 @@ Keep the recipient-lookup key stable. Replacing it changes quota identities. Sto
 Outbound webhook authentication uses a dedicated 32-byte signing secret and the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers. It must be independent of API keys, encryption/verification keys, and provider callback secrets. Event bodies omit recipients, codes, context IDs, and raw provider data. Receivers authenticate exact bytes and timestamp before durable ingestion. Retained failed notifications contain only these safe snapshots and persist until diagnosis/replay succeeds. See [webhooks](webhooks.md).
 
 API credentials rotate independently through a brief overlap of two equally privileged keys. Rotation must not change idempotency identities or quotas.
+
+## External code handoff
+
+External callers own generation and verification. The router accepts numeric codes satisfying every saved provider's length constraints, attaches once and preserves the absolute UTC deadline. Preparation is bounded by the shared 30-second recipient admission window and rolling creation limit. Both capabilities share send quotas; guess limits remain managed-only.
+
+Delivery-only deployments need encryption, fingerprint and stable recipient keys, but no unused verification key. Attachment fingerprints have a separate cryptographic purpose from request fingerprints and managed verifiers. Closing/expiry deletes encrypted recipient/code and attachment fingerprints, and clears request-code fingerprints. Closed replay returns a retained redacted receipt without new effects; different code bytes are no longer compared once their fingerprint is erased. External replay records retain seven days and while active. Old preparation requests carry expired deadlines and cannot recreate work after retention.
+
+A safe status/event contains no raw recipient, code or external authentication proof. The caller must authorize operation references and preserve its association to upstream flows. Closing an operation cannot recall messages already reserved/in flight and does not prove authentication.

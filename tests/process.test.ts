@@ -173,9 +173,9 @@ const provider = {
   resolveTemplate: (locales) => Effect.succeed({ locale: locales[0] ?? "en", template: null }),
   send: (input) => Effect.promise(async () => {
     if (process.env.OTP_TEST_BEFORE_SEND === "1") await new Promise(() => {});
-    await appendFile(sink, JSON.stringify({ deliveryId: input.deliveryId, code: input.code }) + "\\n", { encoding: "utf8", mode: 0o600 });
+    await appendFile(sink, JSON.stringify({ attemptId: input.attemptId, code: input.code }) + "\\n", { encoding: "utf8", mode: 0o600 });
     if (process.env.OTP_TEST_BLOCK === "1") await new Promise(() => {});
-    return { providerRequestId: "process:" + input.deliveryId };
+    return { providerRequestId: "process:" + input.attemptId };
   }),
 };
 
@@ -191,7 +191,7 @@ export default defineConfig({
     },
     defaultLocale: "en",
     fallbackLocales: [],
-    policies: { default: { providerInstanceIds: ["process-fake"], lifetimeSeconds: 300, resendCooldownSeconds: 30 } },
+    policies: { default: { providerInstanceIds: ["process-fake"], managed: { lifetimeSeconds: 300 }, resendCooldownSeconds: 30 } },
     purposes: { login: ["default"] },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1000,
@@ -213,7 +213,7 @@ export default defineConfig({
 `;
 };
 
-const SinkEntry = Schema.Struct({ deliveryId: Schema.String, code: Schema.String });
+const SinkEntry = Schema.Struct({ attemptId: Schema.String, code: Schema.String });
 type SinkEntry = typeof SinkEntry.Type;
 
 const readSink = async (sinkPath: string): Promise<ReadonlyArray<SinkEntry>> => {
@@ -415,8 +415,8 @@ describe("built process", () => {
       "process-flow-1",
       "+998901234567",
     );
-    const deliveryId = await psql(
-      `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
+    const attemptId = await psql(
+      `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}') AND reason = 'initial'`,
     );
     expect(created.state).toBe("queued");
     expect(await readSink(fixture.sinkPath)).toHaveLength(0);
@@ -427,10 +427,10 @@ describe("built process", () => {
     );
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor("the deterministic provider send", async () =>
-      (await readSink(fixture.sinkPath)).some((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).some((entry) => entry.attemptId === attemptId),
     );
     const entry = (await readSink(fixture.sinkPath)).find(
-      (candidate) => candidate.deliveryId === deliveryId,
+      (candidate) => candidate.attemptId === attemptId,
     );
     if (entry === undefined) throw new Error("Provider sink omitted the delivery");
     await waitFor(
@@ -470,8 +470,8 @@ describe("built process", () => {
       "process-flow-crash",
       "+998901234568",
     );
-    const deliveryId = await psql(
-      `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
+    const attemptId = await psql(
+      `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}') AND reason = 'initial'`,
     );
     workerProcess = startProcess(
       ["apps/server/dist/main.js", "--config", fixture.configurationPath],
@@ -479,16 +479,16 @@ describe("built process", () => {
     );
     await waitForReady(workerInternalPort, workerProcess);
     await waitFor("the blocked provider invocation", async () =>
-      (await readSink(fixture.sinkPath)).some((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).some((entry) => entry.attemptId === attemptId),
     );
     workerProcess.child.kill("SIGKILL");
     const killed = await workerProcess.exit;
     expect(killed.signal).toBe("SIGKILL");
     workerProcess = undefined;
 
-    expect(await psql(`SELECT state FROM otp_router.deliveries WHERE id = '${deliveryId}'`)).toBe(
-      "dispatching",
-    );
+    expect(
+      await psql(`SELECT state FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`),
+    ).toBe("dispatching");
     expect(
       await psql(
         "UPDATE pgboss.job SET started_on = clock_timestamp() - interval '100 seconds' WHERE name = 'otp-delivery-v1' AND state = 'active' RETURNING state",
@@ -515,7 +515,7 @@ describe("built process", () => {
     expect(await readSink(fixture.sinkPath)).toHaveLength(before + 1);
     expect(
       await psql(
-        `SELECT state || ':' || acceptance || ':' || diagnostic_code FROM otp_router.deliveries WHERE id = '${deliveryId}'`,
+        `SELECT state || ':' || acceptance || ':' || diagnostic_code FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`,
       ),
     ).toBe("uncertain:unknown:worker_recovery");
     expect(
@@ -535,8 +535,8 @@ describe("built process", () => {
       "reservation-crash",
       "+998901234572",
     );
-    const deliveryId = await psql(
-      `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
+    const attemptId = await psql(
+      `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}') AND reason = 'initial'`,
     );
     const database = ManagedRuntime.make(
       PgClient.layer({ url: Redacted.make(fixture.postgres.databaseUrl), maxConnections: 1 }),
@@ -579,18 +579,20 @@ describe("built process", () => {
       await database.dispose();
     }
     expect(
-      (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
     ).toHaveLength(0);
-    expect(await psql(`SELECT state FROM otp_router.deliveries WHERE id = '${deliveryId}'`)).toBe(
-      "pending",
-    );
+    expect(
+      await psql(`SELECT state FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`),
+    ).toBe("pending");
     expect(
       await psql(
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("0");
     expect(
-      await psql(`SELECT count(*) FROM otp_router.quota_events WHERE event_id = '${deliveryId}'`),
+      await psql(
+        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+      ),
     ).toBe("0");
     await psql(
       "UPDATE pgboss.job SET started_on = clock_timestamp() - interval '100 seconds' WHERE name = 'otp-delivery-v1' AND state = 'active'",
@@ -607,15 +609,17 @@ describe("built process", () => {
         (await challengeStatus(apiPort, created.challengeId, signal)).state === "accepted",
     );
     expect(
-      (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
     ).toHaveLength(1);
     expect(
       await psql(
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
-      await psql(`SELECT count(*) FROM otp_router.quota_events WHERE event_id = '${deliveryId}'`),
+      await psql(
+        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+      ),
     ).toBe("2");
   }, 30_000);
 
@@ -629,8 +633,8 @@ describe("built process", () => {
       "before-network-crash",
       "+998901234573",
     );
-    const deliveryId = await psql(
-      `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
+    const attemptId = await psql(
+      `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}') AND reason = 'initial'`,
     );
     workerProcess = startProcess(
       ["apps/server/dist/main.js", "--config", fixture.configurationPath],
@@ -649,7 +653,7 @@ describe("built process", () => {
     expect((await workerProcess.exit).signal).toBe("SIGKILL");
     workerProcess = undefined;
     expect(
-      (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
     ).toHaveLength(0);
     await psql(
       "UPDATE pgboss.job SET started_on = clock_timestamp() - interval '100 seconds' WHERE name = 'otp-delivery-v1' AND state = 'active'",
@@ -666,15 +670,17 @@ describe("built process", () => {
         (await challengeStatus(apiPort, created.challengeId, signal)).state === "uncertain",
     );
     expect(
-      (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
     ).toHaveLength(0);
     expect(
       await psql(
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
-      await psql(`SELECT count(*) FROM otp_router.quota_events WHERE event_id = '${deliveryId}'`),
+      await psql(
+        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+      ),
     ).toBe("2");
   }, 30_000);
 
@@ -688,8 +694,8 @@ describe("built process", () => {
       "process-accepted-crash",
       "+998901234571",
     );
-    const deliveryId = await psql(
-      `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
+    const attemptId = await psql(
+      `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}') AND reason = 'initial'`,
     );
     const database = ManagedRuntime.make(
       PgClient.layer({
@@ -727,7 +733,7 @@ describe("built process", () => {
           )) === "1",
       );
       expect(
-        (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+        (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
       ).toHaveLength(1);
       workerProcess.child.kill("SIGKILL");
       expect((await workerProcess.exit).signal).toBe("SIGKILL");
@@ -737,12 +743,12 @@ describe("built process", () => {
       await blocker;
       await database.dispose();
     }
-    expect(await psql(`SELECT state FROM otp_router.deliveries WHERE id = '${deliveryId}'`)).toBe(
-      "dispatching",
-    );
+    expect(
+      await psql(`SELECT state FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`),
+    ).toBe("dispatching");
     expect(
       await psql(
-        `SELECT count(*) FROM otp_router.provider_correlations WHERE delivery_id = '${deliveryId}' AND reference = 'process:${deliveryId}'`,
+        `SELECT count(*) FROM otp_router.provider_correlations WHERE attempt_id = '${attemptId}' AND reference = 'process:${attemptId}'`,
       ),
     ).toBe("0");
     await psql(
@@ -760,15 +766,17 @@ describe("built process", () => {
         (await challengeStatus(apiPort, created.challengeId, signal)).state === "uncertain",
     );
     expect(
-      (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
     ).toHaveLength(1);
     expect(
       await psql(
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
-      await psql(`SELECT count(*) FROM otp_router.quota_events WHERE event_id = '${deliveryId}'`),
+      await psql(
+        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+      ),
     ).toBe("2");
   }, 30_000);
 
@@ -827,20 +835,20 @@ describe("built process", () => {
       );
       const created = results[0];
       if (created === undefined) throw new Error("No create result");
-      const deliveryId = await psql(
-        `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
+      const attemptId = await psql(
+        `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}') AND reason = 'initial'`,
       );
       expect(new Set(results.map((result) => result.challengeId)).size).toBe(1);
       expect(
         await psql(
-          `SELECT count(*) FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}'`,
+          `SELECT count(*) FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}')`,
         ),
       ).toBe("1");
       await waitFor("multiprocess send", async () =>
-        (await readSink(fixture.sinkPath)).some((entry) => entry.deliveryId === deliveryId),
+        (await readSink(fixture.sinkPath)).some((entry) => entry.attemptId === attemptId),
       );
       const sent = (await readSink(fixture.sinkPath)).find(
-        (entry) => entry.deliveryId === deliveryId,
+        (entry) => entry.attemptId === attemptId,
       );
       if (sent === undefined) throw new Error("No sink entry");
       const responses = await Promise.all(
@@ -869,7 +877,7 @@ describe("built process", () => {
         ),
       ).toBe("0");
       expect(
-        (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+        (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
       ).toHaveLength(1);
     } finally {
       await stopProcess(other);
@@ -913,11 +921,11 @@ describe("built process", () => {
       `shutdown-flow-${runId}`,
       "+998901234569",
     );
-    const deliveryId = await psql(
-      `SELECT id FROM otp_router.deliveries WHERE challenge_id = '${created.challengeId}' AND reason = 'initial'`,
+    const attemptId = await psql(
+      `SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${created.challengeId}') AND reason = 'initial'`,
     );
     await waitFor("blocked shutdown send", async () =>
-      (await readSink(fixture.sinkPath)).some((entry) => entry.deliveryId === deliveryId),
+      (await readSink(fixture.sinkPath)).some((entry) => entry.attemptId === attemptId),
     );
     const socket = connect(apiPort, "127.0.0.1");
     const continued = new Promise<void>((resolveContinue, reject) => {
@@ -952,11 +960,11 @@ describe("built process", () => {
       expect(result.code).toBe(0);
       expect(performance.now() - started).toBeLessThan(3_000);
       expect(
-        (await readSink(fixture.sinkPath)).filter((entry) => entry.deliveryId === deliveryId),
+        (await readSink(fixture.sinkPath)).filter((entry) => entry.attemptId === attemptId),
       ).toHaveLength(1);
-      expect(await psql(`SELECT state FROM otp_router.deliveries WHERE id = '${deliveryId}'`)).toBe(
-        "dispatching",
-      );
+      expect(
+        await psql(`SELECT state FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`),
+      ).toBe("dispatching");
       expect(apiProcess.output()).not.toContain(API_KEY);
       expect(apiProcess.output()).not.toContain("+998901234569");
     } finally {

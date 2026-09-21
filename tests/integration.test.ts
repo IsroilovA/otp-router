@@ -1,3 +1,4 @@
+import { ageAdmission } from "./fixture.js";
 import { ProviderCallbacksLive } from "../packages/engine/src/delivery/provider-callbacks.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -10,13 +11,13 @@ import {
 } from "../packages/engine/src/challenges/contracts.js";
 import { challengeStatus } from "../packages/engine/src/challenges/status.js";
 import { createChallenge } from "../packages/engine/src/challenges/create.js";
-import { decrypt, operationIdentity } from "../packages/engine/src/challenges/crypto.js";
+import { decrypt, operationIdentity } from "../packages/engine/src/crypto.js";
 import { verifyChallenge } from "../packages/engine/src/challenges/verify.js";
 import { RouterConfig } from "../packages/engine/src/config/runtime.js";
 import { type RuntimeConfiguration } from "../packages/engine/src/config/config.js";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { ingestEvents } from "../packages/engine/src/delivery/callbacks.js";
-import { requestDelivery } from "../packages/engine/src/delivery/actions.js";
+import { requestDelivery } from "../packages/engine/src/challenges/deliver.js";
 import { dispatch, dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
 import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
@@ -90,7 +91,7 @@ const sendOutcome = (
   switch (outcome) {
     case "accepted":
       return Effect.succeed({
-        providerRequestId: `${id}:${input.deliveryId}`,
+        providerRequestId: `${id}:${input.attemptId}`,
       });
     case "rejected":
       return Effect.fail(
@@ -131,7 +132,7 @@ const sendOutcome = (
     case "blocked-accepted":
       return Effect.promise(() => control.release?.promise ?? Promise.resolve()).pipe(
         Effect.as({
-          providerRequestId: `${id}:${input.deliveryId}`,
+          providerRequestId: `${id}:${input.attemptId}`,
         }),
       );
   }
@@ -195,9 +196,7 @@ const configuration = {
     policies: {
       default: {
         providerInstanceIds: ["fake-primary", "fake-secondary"],
-        codeLength: 6,
-        lifetimeSeconds: 300,
-        maxIncorrectGuesses: 3,
+        managed: { codeLength: 6, lifetimeSeconds: 300, maxIncorrectGuesses: 3 },
         maxSends: 6,
         resendCooldownSeconds: 30,
         manualSelectionEnabled: true,
@@ -253,7 +252,7 @@ const deliveryFromCreated = async (result: OperationResult): Promise<string> => 
     await harness.run(
       single(
         Schema.Struct({ id: Schema.String }),
-        harness.pg`SELECT id FROM otp_router.deliveries WHERE challenge_id = ${id} AND reason = 'initial'`,
+        harness.pg`SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${id}) AND reason = 'initial'`,
       ),
     )
   ).id;
@@ -370,7 +369,7 @@ const waitForChallengeRowWaiter = async (): Promise<void> => {
   for (let attempt = 0; attempt < 1_000; attempt += 1) {
     const waiting = await query(
       Counts,
-      "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE '%FROM otp_router.challenges%FOR UPDATE%'",
+      "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE '%FROM otp_router.delivery_operations%FOR UPDATE%'",
     );
     if (waiting[0]?.count !== 0) return;
     await Effect.runPromise(Effect.yieldNow);
@@ -378,15 +377,22 @@ const waitForChallengeRowWaiter = async (): Promise<void> => {
   throw new Error("Verification did not reach the challenge row lock");
 };
 
+const advanceAdmission = () =>
+  currentRuntime().run(
+    currentRuntime()
+      .pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '31 seconds' WHERE kind = 'admission'`,
+  );
+
 const readCode = async (challengeId: string): Promise<string> => {
   const harness = currentRuntime();
-  const Secrets = Schema.Struct({ code: Schema.Unknown });
+  const Secrets = Schema.Struct({ operation_id: Schema.String, code: Schema.Unknown });
   const secret = await harness.run(
     single(
       Secrets,
-      harness.pg.unsafe("SELECT code FROM otp_router.challenge_secrets WHERE challenge_id = $1", [
-        challengeId,
-      ]),
+      harness.pg.unsafe(
+        "SELECT operation_id,code FROM otp_router.delivery_secrets WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id = $1)",
+        [challengeId],
+      ),
     ),
   );
   const Ciphertext = Schema.Struct({
@@ -398,7 +404,7 @@ const readCode = async (challengeId: string): Promise<string> => {
   });
   const encrypted = Schema.decodeUnknownSync(Ciphertext)(secret.code);
   return Effect.runPromise(
-    decrypt(harness.configuration.settings.crypto, challengeId, "code", encrypted),
+    decrypt(harness.configuration.settings.crypto, secret.operation_id, "code", encrypted),
   );
 };
 
@@ -410,6 +416,7 @@ beforeAll(async () => {
       { apiKeys: [apiKey] },
       {
         router: runtime.router,
+        delivery: runtime.delivery,
         webhooks: {
           handshake: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
           ingest: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
@@ -444,7 +451,7 @@ describe("PostgreSQL integration", () => {
     expect(rejected).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
     expect(await count("challenges")).toBe(0);
     expect(await count("quota_events")).toBe(0);
-    expect(await count("deliveries")).toBe(0);
+    expect(await count("delivery_attempts")).toBe(0);
     const created = await create();
     const challengeId = Schema.decodeUnknownSync(Snapshot)(created.body).challengeId;
     const invalidGuess = await Effect.runPromise(
@@ -514,6 +521,7 @@ describe("PostgreSQL integration", () => {
     const defective = makeWebHandler(
       { apiKeys: [apiKey] },
       {
+        delivery: harness.delivery,
         router: {
           ...harness.router,
           create: () => Effect.die(new Error("private-provider-payload")),
@@ -550,7 +558,7 @@ describe("PostgreSQL integration", () => {
       expect(body.error.requestId.length).toBeGreaterThan(0);
       expect(text).not.toContain("private-provider-payload");
       expect(await count("challenges")).toBe(0);
-      expect(await count("deliveries")).toBe(0);
+      expect(await count("delivery_attempts")).toBe(0);
       expect(await count("idempotency_records")).toBe(0);
     } finally {
       await defective.dispose();
@@ -561,6 +569,7 @@ describe("PostgreSQL integration", () => {
     const nextApiKey = "integration-next-api-key-that-is-at-least-32-bytes";
     const dependencies = {
       router: currentRuntime().router,
+      delivery: currentRuntime().delivery,
       webhooks: {
         handshake: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
         ingest: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
@@ -594,7 +603,7 @@ describe("PostgreSQL integration", () => {
       expect(Schema.decodeUnknownSync(Snapshot)(await postRotationReplay.json())).toEqual(original);
       expect((await afterRotation.handler(request(apiKey))).status).toBe(401);
       expect(await count("challenges")).toBe(1);
-      expect(await count("deliveries")).toBe(1);
+      expect(await count("delivery_attempts")).toBe(1);
     } finally {
       await overlap.dispose();
       await afterRotation.dispose();
@@ -610,7 +619,7 @@ describe("PostgreSQL integration", () => {
     ]);
     expect(challengeIdFrom(left)).toBe(challengeIdFrom(right));
     expect(await count("challenges")).toBe(1);
-    expect(await count("deliveries")).toBe(1);
+    expect(await count("delivery_attempts")).toBe(1);
     expect(await count("idempotency_records")).toBe(1);
 
     const conflict = await Effect.runPromise(
@@ -725,13 +734,14 @@ describe("PostgreSQL integration", () => {
     async (operation) => {
       const harness = currentRuntime();
       const created = await create("quota-lock-existing");
+      await advanceAdmission();
       const challengeId = challengeIdFrom(created);
       const code = await readCode(challengeId);
       const job = await fetchJob();
       const tokenRows = await harness.run(
         rows(
           Schema.Struct({ recipient_token: Schema.String }),
-          harness.pg`SELECT recipient_token FROM otp_router.challenges WHERE id::text = ${challengeId}`,
+          harness.pg`SELECT recipient_token FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id::text = ${challengeId}`,
         ),
       );
       const recipientToken = tokenRows[0]?.recipient_token;
@@ -781,7 +791,7 @@ describe("PostgreSQL integration", () => {
       );
       expect(primary.sends).toHaveLength(0);
       expect(await count("challenges")).toBe(1);
-      expect(await count("deliveries")).toBe(1);
+      expect(await count("delivery_attempts")).toBe(1);
       expect(await count("idempotency_records")).toBe(1);
       expect(
         await query(
@@ -790,13 +800,13 @@ describe("PostgreSQL integration", () => {
             incorrect_guesses: Schema.Int,
             send_count: Schema.Int,
           }),
-          `SELECT verification_state, incorrect_guesses, send_count FROM otp_router.challenges WHERE id = '${challengeId}'`,
+          `SELECT verification_state, incorrect_guesses, send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
         ),
       ).toEqual([{ verification_state: "active", incorrect_guesses: 0, send_count: 0 }]);
       expect(
         await query(
           Schema.Struct({ state: Schema.String }),
-          `SELECT state FROM otp_router.deliveries WHERE id = '${job.data.deliveryId}'`,
+          `SELECT state FROM otp_router.delivery_attempts WHERE id = '${job.data.attemptId}'`,
         ),
       ).toEqual([{ state: "pending" }]);
       expect(
@@ -873,7 +883,7 @@ describe("PostgreSQL integration", () => {
         }),
       ),
       harness.run(
-        recordOutcome(harness.configuration, oldJob.data.deliveryId, {
+        recordOutcome(harness.configuration, oldJob.data.attemptId, {
           state: "failed",
           acceptance: "not_accepted",
           diagnosticCode: "RecipientUnavailable",
@@ -905,7 +915,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Counts,
-        "SELECT count(*)::integer AS count FROM otp_router.deliveries WHERE state IN ('pending','dispatching')",
+        "SELECT count(*)::integer AS count FROM otp_router.delivery_attempts WHERE state IN ('pending','dispatching')",
       ),
     ).toEqual([{ count: 0 }]);
   });
@@ -1013,7 +1023,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ state: Schema.String }),
-        "SELECT state FROM otp_router.deliveries",
+        "SELECT state FROM otp_router.delivery_attempts",
       ),
     ).toEqual([{ state: "suppressed" }]);
     const job = await fetchJob();
@@ -1049,8 +1059,9 @@ describe("PostgreSQL integration", () => {
 
     await currentRuntime().run(
       currentRuntime()
-        .pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+        .pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(currentRuntime());
     const accepted = await Effect.runPromise(
       currentRuntime().router.deliver({ ...request, requestId: randomUUID() }),
     );
@@ -1073,8 +1084,9 @@ describe("PostgreSQL integration", () => {
       harness.pg`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES ('provider:fake-primary','send',${eventId},clock_timestamp())`,
     );
     await harness.run(
-      harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+      harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(harness);
     const operationKey = "quota-retry-deliver";
     const request = {
       key: operationKey,
@@ -1128,15 +1140,17 @@ describe("PostgreSQL integration", () => {
         ),
       ),
     );
-    expect(attempts.filter((attempt) => attempt._tag === "Success")).toHaveLength(2);
+    expect(attempts.filter((attempt) => attempt._tag === "Success")).toHaveLength(1);
     expect(attempts.filter((attempt) => attempt._tag === "Failure")).toMatchObject([
       { failure: { _tag: "DomainError", code: "rate_limited" } },
+      { failure: { _tag: "DomainError", code: "rate_limited" } },
     ]);
-    expect(await count("challenges")).toBe(2);
+    expect(await count("challenges")).toBe(1);
   });
 
   it("keeps recipient quota usage after challenge history is deleted", async () => {
     const first = await create("quota-history-1");
+    await advanceAdmission();
     const second = await create("quota-history-2");
     await execute(
       `DELETE FROM otp_router.challenges WHERE id IN ('${challengeIdFrom(first)}', '${challengeIdFrom(second)}')`,
@@ -1179,12 +1193,12 @@ describe("PostgreSQL integration", () => {
     expect(primary.sends).toHaveLength(1);
     const delivery = await query(
       Schema.Struct({ state: Schema.String, acceptance: Schema.NullOr(Schema.String) }),
-      "SELECT state, acceptance FROM otp_router.deliveries",
+      "SELECT state, acceptance FROM otp_router.delivery_attempts",
     );
     expect(delivery).toEqual([{ state: "accepted", acceptance: "accepted" }]);
     const challenge = await query(
       Schema.Struct({ send_count: Schema.Int }),
-      `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeIdFrom(created)}'`,
+      `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
     );
     expect(challenge[0]?.send_count).toBe(1);
   });
@@ -1201,19 +1215,19 @@ describe("PostgreSQL integration", () => {
 
     expect(primary.sends).toHaveLength(1);
     expect(primary.sends[0]).toMatchObject({
-      deliveryId: await deliveryFromCreated(created),
+      attemptId: await deliveryFromCreated(created),
       providerIdempotencyKey: await deliveryFromCreated(created),
     });
     expect(
       await query(
         Schema.Struct({ state: Schema.String, acceptance: Schema.String }),
-        "SELECT state, acceptance FROM otp_router.deliveries",
+        "SELECT state, acceptance FROM otp_router.delivery_attempts",
       ),
     ).toEqual([{ state: "uncertain", acceptance: "unknown" }]);
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
   });
@@ -1265,13 +1279,13 @@ describe("PostgreSQL integration", () => {
       expect(
         await query(
           Schema.Struct({ state: Schema.String, acceptance: Schema.String }),
-          "SELECT state, acceptance FROM otp_router.deliveries",
+          "SELECT state, acceptance FROM otp_router.delivery_attempts",
         ),
       ).toEqual([{ state: "uncertain", acceptance: "unknown" }]);
       expect(
         await query(
           Schema.Struct({ send_count: Schema.Int }),
-          "SELECT send_count FROM otp_router.challenges",
+          "SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges",
         ),
       ).toEqual([{ send_count: 1 }]);
     },
@@ -1300,7 +1314,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ primary_timeout: Schema.Int, secondary_timeout: Schema.Int }),
-        "SELECT (snapshot->'providers'->0->>'sendTimeoutMs')::integer AS primary_timeout, (snapshot->'providers'->1->>'sendTimeoutMs')::integer AS secondary_timeout FROM otp_router.challenges",
+        "SELECT (snapshot->'providers'->0->>'sendTimeoutMs')::integer AS primary_timeout, (snapshot->'providers'->1->>'sendTimeoutMs')::integer AS secondary_timeout FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges",
       ),
     ).toEqual([
       {
@@ -1322,7 +1336,7 @@ describe("PostgreSQL integration", () => {
           acceptance: Schema.String,
           diagnostic_code: Schema.String,
         }),
-        "SELECT state, acceptance, diagnostic_code FROM otp_router.deliveries",
+        "SELECT state, acceptance, diagnostic_code FROM otp_router.delivery_attempts",
       ),
     ).toEqual([
       {
@@ -1334,7 +1348,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
     expect(
@@ -1343,7 +1357,7 @@ describe("PostgreSQL integration", () => {
         "SELECT count(*)::integer AS count FROM otp_router.quota_events WHERE identity = 'deployment' AND kind = 'send'",
       ),
     ).toEqual([{ count: 1 }]);
-    expect(await count("deliveries")).toBe(1);
+    expect(await count("delivery_attempts")).toBe(1);
   });
 
   it("does not invoke a provider when the dispatch transaction consumes the remaining budget", async () => {
@@ -1352,7 +1366,7 @@ describe("PostgreSQL integration", () => {
     const job = await fetchJob();
     await execute(`CREATE FUNCTION otp_router.hold_dispatch() RETURNS trigger LANGUAGE plpgsql AS $$
       BEGIN PERFORM pg_advisory_xact_lock(983451); RETURN NEW; END $$`);
-    await execute(`CREATE TRIGGER hold_dispatch BEFORE UPDATE ON otp_router.deliveries FOR EACH ROW
+    await execute(`CREATE TRIGGER hold_dispatch BEFORE UPDATE ON otp_router.delivery_attempts FOR EACH ROW
       WHEN (NEW.state = 'dispatching') EXECUTE FUNCTION otp_router.hold_dispatch()`);
     const entered = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -1372,7 +1386,7 @@ describe("PostgreSQL integration", () => {
         if (attempt === 1000) throw new Error("Dispatch did not reach its reservation barrier");
         const waiting = await query(
           Counts,
-          "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE wait_event = 'advisory' AND query LIKE 'UPDATE otp_router.deliveries%'",
+          "SELECT count(*)::integer AS count FROM pg_stat_activity WHERE wait_event = 'advisory' AND query LIKE 'UPDATE otp_router.delivery_attempts%'",
         );
         if ((waiting[0]?.count ?? 0) > 0) break;
         await Effect.runPromise(Effect.yieldNow);
@@ -1384,20 +1398,20 @@ describe("PostgreSQL integration", () => {
       expect(
         await query(
           Schema.Struct({ state: Schema.String, diagnostic_code: Schema.String }),
-          `SELECT state, diagnostic_code FROM otp_router.deliveries WHERE id = '${job.data.deliveryId}'`,
+          `SELECT state, diagnostic_code FROM otp_router.delivery_attempts WHERE id = '${job.data.attemptId}'`,
         ),
       ).toEqual([{ state: "failed", diagnostic_code: "delivery_window_too_short" }]);
       expect(
         await query(
           Schema.Struct({ send_count: Schema.Int }),
-          `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeIdFrom(created)}'`,
+          `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
         ),
       ).toEqual([{ send_count: 1 }]);
     } finally {
       release.resolve();
       await Promise.allSettled([blocker, sending]);
       vi.restoreAllMocks();
-      await execute("DROP TRIGGER hold_dispatch ON otp_router.deliveries");
+      await execute("DROP TRIGGER hold_dispatch ON otp_router.delivery_attempts");
       await execute("DROP FUNCTION otp_router.hold_dispatch()");
     }
   });
@@ -1406,13 +1420,13 @@ describe("PostgreSQL integration", () => {
     await create();
     const job = await fetchJob();
     await execute(
-      `UPDATE otp_router.deliveries SET state = 'dispatching', acceptance = 'unknown', reserved_at = clock_timestamp() WHERE id = '${job.data.deliveryId}'`,
+      `UPDATE otp_router.delivery_attempts SET state = 'dispatching', acceptance = 'unknown', reserved_at = clock_timestamp() WHERE id = '${job.data.attemptId}'`,
     );
     await currentRuntime().run(dispatch(currentRuntime().configuration, job.data));
     expect(primary.sends).toHaveLength(0);
     const delivery = await query(
       Schema.Struct({ state: Schema.String, diagnostic_code: Schema.NullOr(Schema.String) }),
-      "SELECT state, diagnostic_code FROM otp_router.deliveries",
+      "SELECT state, diagnostic_code FROM otp_router.delivery_attempts",
     );
     expect(delivery).toEqual([{ state: "uncertain", diagnostic_code: "worker_recovery" }]);
   });
@@ -1422,11 +1436,11 @@ describe("PostgreSQL integration", () => {
     await create("fallback-definitive");
     await dispatchNext();
     expect(primary.sends).toHaveLength(1);
-    expect(await count("deliveries")).toBe(2);
+    expect(await count("delivery_attempts")).toBe(2);
     expect(
       await query(
         Schema.Struct({ reason: Schema.String, state: Schema.String }),
-        "SELECT reason, state FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT reason, state FROM otp_router.delivery_attempts ORDER BY route_position",
       ),
     ).toEqual([
       { reason: "initial", state: "failed" },
@@ -1438,11 +1452,11 @@ describe("PostgreSQL integration", () => {
     primary.outcome = "unknown";
     await create("fallback-uncertain");
     await dispatchNext();
-    expect(await count("deliveries")).toBe(1);
+    expect(await count("delivery_attempts")).toBe(1);
     expect(
       await query(
         Schema.Struct({ state: Schema.String, acceptance: Schema.String }),
-        "SELECT state, acceptance FROM otp_router.deliveries",
+        "SELECT state, acceptance FROM otp_router.delivery_attempts",
       ),
     ).toEqual([{ state: "uncertain", acceptance: "unknown" }]);
   });
@@ -1463,7 +1477,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ provider_instance_id: Schema.String, reason: Schema.String }),
-        "SELECT provider_instance_id, reason FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT provider_instance_id, reason FROM otp_router.delivery_attempts ORDER BY route_position",
       ),
     ).toEqual([
       { provider_instance_id: "fake-secondary", reason: "initial" },
@@ -1493,15 +1507,16 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ provider_instance_id: Schema.String, reason: Schema.String }),
-        "SELECT provider_instance_id, reason FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT provider_instance_id, reason FROM otp_router.delivery_attempts ORDER BY route_position",
       ),
     ).toEqual([
       { provider_instance_id: "fake-primary", reason: "initial" },
       { provider_instance_id: "fake-secondary", reason: "fallback" },
     ]);
     await harness.run(
-      harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+      harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(harness);
     const request = {
       key: "select-throttled-primary",
       challengeId,
@@ -1540,7 +1555,7 @@ describe("PostgreSQL integration", () => {
           failure_category: Schema.NullOr(Schema.String),
           diagnostic_code: Schema.NullOr(Schema.String),
         }),
-        "SELECT provider_instance_id, state, failure_category, diagnostic_code FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT provider_instance_id, state, failure_category, diagnostic_code FROM otp_router.delivery_attempts ORDER BY route_position",
       ),
     ).toEqual([
       {
@@ -1573,7 +1588,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 0 }]);
     expect(
@@ -1589,7 +1604,7 @@ describe("PostgreSQL integration", () => {
           state: Schema.String,
           diagnostic_code: Schema.NullOr(Schema.String),
         }),
-        "SELECT provider_instance_id, state, diagnostic_code FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT provider_instance_id, state, diagnostic_code FROM otp_router.delivery_attempts ORDER BY route_position",
       ),
     ).toEqual([
       {
@@ -1609,7 +1624,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
   });
@@ -1623,7 +1638,7 @@ describe("PostgreSQL integration", () => {
 
     expect(primary.sends).toHaveLength(1);
     expect(secondary.sends).toHaveLength(0);
-    expect(await count("deliveries")).toBe(1);
+    expect(await count("delivery_attempts")).toBe(1);
     const status = await Effect.runPromise(currentRuntime().router.status(challengeId));
     expect(status.body).toMatchObject({
       state: "failed",
@@ -1659,7 +1674,7 @@ describe("PostgreSQL integration", () => {
         ),
       ).toMatchObject({ _tag: "Failure", failure: { code: "delivery_unavailable" } });
     }
-    expect(await count("deliveries")).toBe(1);
+    expect(await count("delivery_attempts")).toBe(1);
     expect(await count("challenge_secrets")).toBe(1);
 
     const verified = await Effect.runPromise(
@@ -1682,8 +1697,9 @@ describe("PostgreSQL integration", () => {
     const reserved = await harness.run(dispatchGate(harness.configuration, oldJob.data));
     expect(reserved?.providerId).toBe("fake-primary");
     await harness.run(
-      harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+      harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(harness);
     const next = await Effect.runPromise(
       harness.router.deliver({
         key: "next-while-old-in-flight",
@@ -1692,10 +1708,10 @@ describe("PostgreSQL integration", () => {
         input: { action: "next" },
       }),
     );
-    if (!("deliveryId" in next.body)) throw new Error("Expected a delivery result");
+    if (!("attemptId" in next.body)) throw new Error("Expected a delivery result");
 
     await harness.run(
-      recordOutcome(harness.configuration, oldJob.data.deliveryId, {
+      recordOutcome(harness.configuration, oldJob.data.attemptId, {
         state: "failed",
         acceptance: "not_accepted",
         failureCategory: "InvalidRecipient",
@@ -1705,14 +1721,14 @@ describe("PostgreSQL integration", () => {
     );
     const routing = await query(
       Schema.Struct({ routing_revision: Schema.Int }),
-      `SELECT routing_revision FROM otp_router.deliveries WHERE id = '${next.body.deliveryId}'`,
+      `SELECT routing_revision FROM otp_router.delivery_attempts WHERE id = '${next.body.attemptId}'`,
     );
     const routingRevision = routing[0]?.routing_revision;
     if (routingRevision === undefined) throw new Error("Expected the newer routing revision");
     await harness.run(
       dispatch(harness.configuration, {
         version: 1,
-        deliveryId: next.body.deliveryId,
+        attemptId: next.body.attemptId,
         routingRevision,
       }),
     );
@@ -1726,7 +1742,7 @@ describe("PostgreSQL integration", () => {
           state: Schema.String,
           diagnostic_code: Schema.NullOr(Schema.String),
         }),
-        "SELECT reason, state, diagnostic_code FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT reason, state, diagnostic_code FROM otp_router.delivery_attempts ORDER BY route_position",
       ),
     ).toEqual([
       { reason: "initial", state: "failed", diagnostic_code: "integration_fake_invalid_recipient" },
@@ -1766,7 +1782,7 @@ describe("PostgreSQL integration", () => {
     const originalCode = primary.sends[0]?.code;
     if (originalCode === undefined) throw new Error("Expected the initial send code");
     expect(primary.sends[0]).toMatchObject({
-      deliveryId: initialDeliveryId,
+      attemptId: initialDeliveryId,
       providerIdempotencyKey: initialDeliveryId,
     });
     expect(primary.sends[0]?.remainingDeliveryMs).toBeGreaterThan(0);
@@ -1782,12 +1798,13 @@ describe("PostgreSQL integration", () => {
     expect(wrong.body).toMatchObject({ error: { code: "incorrect_code" } });
     const beforeResend = await query(
       Schema.Struct({ expires_at: Schema.Date, incorrect_guesses: Schema.Int }),
-      `SELECT expires_at, incorrect_guesses FROM otp_router.challenges WHERE id = '${challengeId}'`,
+      `SELECT expires_at, incorrect_guesses FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
     );
     expect(beforeResend[0]?.incorrect_guesses).toBe(1);
     await execute(
-      `UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
+      `UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${challengeId}')`,
     );
+    await ageAdmission(currentRuntime());
     const resendRequest = {
       key: "explicit-resend",
       challengeId,
@@ -1796,24 +1813,24 @@ describe("PostgreSQL integration", () => {
     };
     const resend = await harness.run(requestDelivery(config, resendRequest));
     expect(resend.outcome).toBe("delivery_queued");
-    if (!("deliveryId" in resend.body)) throw new Error("Expected a delivery result");
+    if (!("attemptId" in resend.body)) throw new Error("Expected a delivery result");
     const replayed = await harness.run(
       requestDelivery(config, { ...resendRequest, requestId: randomUUID() }),
     );
     expect(replayed).toMatchObject({ replayed: true, body: resend.body });
-    expect(await count("deliveries")).toBe(2);
+    expect(await count("delivery_attempts")).toBe(2);
     expect(primary.sends).toHaveLength(1);
     await dispatchNext(config);
     expect(primary.sends.map((input) => input.code)).toEqual([originalCode, originalCode]);
     expect(primary.sends[1]).toMatchObject({
-      deliveryId: resend.body.deliveryId,
-      providerIdempotencyKey: resend.body.deliveryId,
+      attemptId: resend.body.attemptId,
+      providerIdempotencyKey: resend.body.attemptId,
     });
-    expect(resend.body.deliveryId).not.toBe(initialDeliveryId);
+    expect(resend.body.attemptId).not.toBe(initialDeliveryId);
     expect(
       await query(
         Schema.Struct({ expires_at: Schema.Date, incorrect_guesses: Schema.Int }),
-        `SELECT expires_at, incorrect_guesses FROM otp_router.challenges WHERE id = '${challengeId}'`,
+        `SELECT expires_at, incorrect_guesses FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual(beforeResend);
     await Effect.runPromise(
@@ -1863,7 +1880,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
 
@@ -1885,7 +1902,7 @@ describe("PostgreSQL integration", () => {
     primary.outcome = "blocked-accepted";
     primary.started = Promise.withResolvers<void>();
     primary.release = Promise.withResolvers<void>();
-    const providerReference = `fake-primary:${job.data.deliveryId}`;
+    const providerReference = `fake-primary:${job.data.attemptId}`;
     const sending = currentRuntime().run(dispatch(currentRuntime().configuration, job.data));
     await primary.started.promise;
     await currentRuntime().run(
@@ -1904,7 +1921,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ state: Schema.String, acceptance: Schema.String }),
-        `SELECT state, acceptance FROM otp_router.deliveries WHERE id = '${await deliveryFromCreated(created)}'`,
+        `SELECT state, acceptance FROM otp_router.delivery_attempts WHERE id = '${await deliveryFromCreated(created)}'`,
       ),
     ).toEqual([{ state: "delivered", acceptance: "accepted" }]);
     expect(
@@ -1945,7 +1962,10 @@ describe("PostgreSQL integration", () => {
         Effect.scoped,
       ),
     );
-    const server = makeWebHandler({ apiKeys: [apiKey] }, { router: harness.router, webhooks });
+    const server = makeWebHandler(
+      { apiKeys: [apiKey] },
+      { router: harness.router, delivery: harness.delivery, webhooks },
+    );
     try {
       const response = await server.handler(
         new Request("http://router.test/webhooks/fake-primary"),
@@ -1965,7 +1985,7 @@ describe("PostgreSQL integration", () => {
     await currentRuntime().run(
       ingestEvents(config, "fake-primary", [
         {
-          ...callbackEvent("diagnostic", `fake-primary:${job.deliveryId}`, "failed"),
+          ...callbackEvent("diagnostic", `fake-primary:${job.attemptId}`, "failed"),
           diagnosticCode: "callback_failed",
         },
       ]),
@@ -1973,7 +1993,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ diagnostic_code: Schema.String }),
-        `SELECT diagnostic_code FROM otp_router.deliveries WHERE id = '${job.deliveryId}'`,
+        `SELECT diagnostic_code FROM otp_router.delivery_attempts WHERE id = '${job.attemptId}'`,
       ),
     ).toEqual([{ diagnostic_code: "callback_failed" }]);
     await currentRuntime().run(
@@ -1998,8 +2018,9 @@ describe("PostgreSQL integration", () => {
     const initialDeliveryId = await deliveryFromCreated(created);
     await dispatchNext();
     await execute(
-      `UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
+      `UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${challengeId}')`,
     );
+    await ageAdmission(currentRuntime());
     await Effect.runPromise(
       currentRuntime().router.deliver({
         key: "resend-before-callback",
@@ -2022,7 +2043,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ reason: Schema.String, state: Schema.String }),
-        "SELECT reason, state FROM otp_router.deliveries ORDER BY reason",
+        "SELECT reason, state FROM otp_router.delivery_attempts ORDER BY reason",
       ),
     ).toEqual([
       { reason: "initial", state: "delivered" },
@@ -2037,8 +2058,9 @@ describe("PostgreSQL integration", () => {
     const initialDeliveryId = await deliveryFromCreated(created);
     await dispatchNext();
     await execute(
-      `UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
+      `UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${challengeId}')`,
     );
+    await ageAdmission(currentRuntime());
     await Effect.runPromise(
       currentRuntime().router.deliver({
         key: "next-before-stale-failure",
@@ -2059,7 +2081,7 @@ describe("PostgreSQL integration", () => {
           reason: Schema.String,
           state: Schema.String,
         }),
-        "SELECT provider_instance_id, reason, state FROM otp_router.deliveries ORDER BY route_position",
+        "SELECT provider_instance_id, reason, state FROM otp_router.delivery_attempts ORDER BY route_position",
       ),
     ).toEqual([
       { provider_instance_id: "fake-primary", reason: "initial", state: "failed" },
@@ -2072,15 +2094,15 @@ describe("PostgreSQL integration", () => {
     const right = await create("deployment-cap-right", "+998909876543");
     const limited = withSettings({ deploymentSendLimit15m: 1 });
     const jobs: readonly DeliveryJobType[] = [
-      { version: 1, deliveryId: await deliveryFromCreated(left), routingRevision: 1 },
-      { version: 1, deliveryId: await deliveryFromCreated(right), routingRevision: 1 },
+      { version: 1, attemptId: await deliveryFromCreated(left), routingRevision: 1 },
+      { version: 1, attemptId: await deliveryFromCreated(right), routingRevision: 1 },
     ];
     await Promise.all(jobs.map((job) => currentRuntime().run(dispatch(limited, job))));
     expect(primary.sends).toHaveLength(1);
     expect(
       await query(
         Schema.Struct({ state: Schema.String, count: Schema.Int }),
-        "SELECT state, count(*)::integer AS count FROM otp_router.deliveries GROUP BY state ORDER BY state",
+        "SELECT state, count(*)::integer AS count FROM otp_router.delivery_attempts GROUP BY state ORDER BY state",
       ),
     ).toEqual([
       { state: "accepted", count: 1 },
@@ -2117,7 +2139,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ provider_instance_id: Schema.String }),
-        `SELECT provider_instance_id FROM otp_router.deliveries WHERE id = '${await deliveryFromCreated(created)}'`,
+        `SELECT provider_instance_id FROM otp_router.delivery_attempts WHERE id = '${await deliveryFromCreated(created)}'`,
       ),
     ).toEqual([{ provider_instance_id: "fake-secondary" }]);
 
@@ -2139,8 +2161,9 @@ describe("PostgreSQL integration", () => {
     expect(await count("challenges")).toBe(1);
 
     await harness.run(
-      harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+      harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(harness);
 
     const selected = await harness.run(
       requestDelivery(config, {
@@ -2150,17 +2173,18 @@ describe("PostgreSQL integration", () => {
         input: { action: "select", choice: { type: "channel", channel: "sms" } },
       }),
     );
-    if (!("deliveryId" in selected.body)) throw new Error("Expected a delivery result");
+    if (!("attemptId" in selected.body)) throw new Error("Expected a delivery result");
     expect(
       await query(
         Schema.Struct({ provider_instance_id: Schema.String }),
-        `SELECT provider_instance_id FROM otp_router.deliveries WHERE id = '${selected.body.deliveryId}'`,
+        `SELECT provider_instance_id FROM otp_router.delivery_attempts WHERE id = '${selected.body.attemptId}'`,
       ),
     ).toEqual([{ provider_instance_id: "fake-secondary" }]);
 
     await harness.run(
-      harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+      harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(harness);
     expect(
       await harness.run(
         Effect.result(
@@ -2180,6 +2204,7 @@ describe("PostgreSQL integration", () => {
 
   it("blocks a correct code at the recipient guess cap without extending usage", async () => {
     const first = await create("guess-cap-first");
+    await advanceAdmission();
     const second = await create("guess-cap-second");
     const firstId = challengeIdFrom(first);
     const secondId = challengeIdFrom(second);
@@ -2337,7 +2362,7 @@ describe("PostgreSQL integration", () => {
           secondary_locale: Schema.String,
           secondary_template: Schema.Unknown,
         }),
-        "SELECT snapshot->'providers'->0->>'resolvedLocale' AS primary_locale, snapshot->'providers'->0->'template' AS primary_template, snapshot->'providers'->1->>'resolvedLocale' AS secondary_locale, snapshot->'providers'->1->'template' AS secondary_template FROM otp_router.challenges",
+        "SELECT snapshot->'providers'->0->>'resolvedLocale' AS primary_locale, snapshot->'providers'->0->'template' AS primary_template, snapshot->'providers'->1->>'resolvedLocale' AS secondary_locale, snapshot->'providers'->1->'template' AS secondary_template FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges",
       ),
     ).toEqual([
       {
@@ -2351,8 +2376,9 @@ describe("PostgreSQL integration", () => {
     await dispatchNext(config);
     await currentRuntime().run(
       currentRuntime()
-        .pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id::text = ${challengeId}`,
+        .pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
     );
+    await ageAdmission(currentRuntime());
     await currentRuntime().run(
       requestDelivery(config, {
         key: "locale-snapshot-resend",
@@ -2376,7 +2402,7 @@ describe("PostgreSQL integration", () => {
     const created = await create();
     const challengeId = challengeIdFrom(created);
     await execute(
-      `UPDATE otp_router.challenges SET expires_at = clock_timestamp() - interval '1 second', next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
+      `UPDATE otp_router.delivery_operations SET created_at = clock_timestamp() - interval '1 day', expires_at = clock_timestamp() - interval '1 second', next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${challengeId}')`,
     );
     const result = await Effect.runPromise(
       Effect.result(
@@ -2401,7 +2427,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ state: Schema.String }),
-        "SELECT state FROM otp_router.deliveries",
+        "SELECT state FROM otp_router.delivery_attempts",
       ),
     ).toEqual([{ state: "suppressed" }]);
     expect(await count("challenge_secrets")).toBe(0);
@@ -2411,7 +2437,7 @@ describe("PostgreSQL integration", () => {
     const created = await create();
     const challengeId = challengeIdFrom(created);
     await execute(
-      `UPDATE otp_router.challenges SET expires_at = clock_timestamp() - interval '1 second' WHERE id = '${challengeId}'`,
+      `UPDATE otp_router.delivery_operations SET created_at = clock_timestamp() - interval '1 day', expires_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = '${challengeId}')`,
     );
     const result = await Effect.runPromise(
       Effect.result(
@@ -2436,7 +2462,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ state: Schema.String }),
-        "SELECT state FROM otp_router.deliveries",
+        "SELECT state FROM otp_router.delivery_attempts",
       ),
     ).toEqual([{ state: "suppressed" }]);
     expect(await count("challenge_secrets")).toBe(0);
@@ -2452,13 +2478,16 @@ describe("PostgreSQL integration", () => {
     const holder = harness.run(
       harness.pg.withTransaction(
         harness.pg
-          .unsafe("SELECT id FROM otp_router.challenges WHERE id = $1 FOR UPDATE", [challengeId])
+          .unsafe(
+            "SELECT id FROM otp_router.delivery_operations WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id = $1) FOR UPDATE",
+            [challengeId],
+          )
           .pipe(
             Effect.tap(() => Effect.sync(() => locked.resolve())),
             Effect.andThen(Effect.promise(() => release.promise)),
             Effect.andThen(
               harness.pg.unsafe(
-                "UPDATE otp_router.challenges SET expires_at = clock_timestamp() WHERE id = $1",
+                "UPDATE otp_router.delivery_operations SET expires_at = clock_timestamp() WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = $1)",
                 [challengeId],
               ),
             ),
@@ -2540,8 +2569,9 @@ it.each([
     await dispatchNext(config);
     if (phase === "next") {
       await harness.run(
-        harness.pg`UPDATE otp_router.challenges SET next_user_send_at = clock_timestamp() WHERE id = ${challengeId}`,
+        harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
       );
+      await ageAdmission(harness);
       await harness.run(
         requestDelivery(config, {
           key: "skip-capped-next",
@@ -2560,7 +2590,7 @@ it.each([
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM otp_router.challenges WHERE id = '${challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual([{ send_count: sends }]);
   },
@@ -2591,7 +2621,7 @@ it("retains the published forecast while revalidating changed shared restriction
     failure: { code: "rate_limited", retryAt: retryAt.toISOString() },
   });
   expect(primary.sends).toHaveLength(1);
-  expect(await count("deliveries")).toBe(1);
+  expect(await count("delivery_attempts")).toBe(1);
   await harness.run(
     harness.pg`UPDATE otp_router.provider_restrictions SET retry_at = clock_timestamp() WHERE provider_instance_id = 'fake-primary'`,
   );

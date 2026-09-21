@@ -1,6 +1,12 @@
 import { Effect } from "effect";
-import type { ErrorCode } from "../challenges/contracts.js";
-export type ApplicationOperation = "create" | "verify" | "cancel" | "deliver" | "status";
+import type { ErrorCode } from "../errors.js";
+export type ApplicationOperation =
+  | "external_delivery"
+  | "create"
+  | "verify"
+  | "cancel"
+  | "deliver"
+  | "status";
 export type FailureCategory =
   | "database_connection"
   | "database_authentication"
@@ -19,8 +25,8 @@ export type FailureCategory =
 export interface Diagnostic {
   readonly event: "application_operation" | "provider_send" | "callback" | "recovery";
   readonly requestId?: string;
-  readonly challengeId?: string;
-  readonly deliveryId?: string;
+  readonly operationId?: string;
+  readonly attemptId?: string;
   readonly providerInstanceId?: string;
   readonly outcome: string;
   readonly reason?: ErrorCode;

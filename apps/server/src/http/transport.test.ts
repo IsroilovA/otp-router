@@ -1,3 +1,4 @@
+import { Delivery } from "@otp-router/engine/delivery";
 import { ErrorBody } from "./responses.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Effect, Schema } from "effect";
@@ -10,7 +11,7 @@ import {
   Router,
   type Snapshot,
   type VerifyInput,
-} from "@otp-router/engine";
+} from "@otp-router/engine/challenges";
 import { openApiDocument } from "./api.js";
 import { makeWebHandler } from "./transport.js";
 import { WebhookError, WebhookHandler } from "./webhooks.js";
@@ -18,6 +19,7 @@ import { WebhookError, WebhookHandler } from "./webhooks.js";
 const API_KEY = "test-api-key-with-at-least-thirty-two-bytes";
 
 const snapshot: Snapshot = {
+  operationId: "operation_1",
   challengeId: "challenge_1",
   revision: 1,
   state: "queued",
@@ -84,7 +86,7 @@ describe("HTTP transport", () => {
       deliveryRequests.push(request);
       return Effect.succeed({
         outcome: "delivery_queued",
-        body: { deliveryId: "delivery_2", challenge: snapshot },
+        body: { attemptId: "delivery_2", challenge: snapshot },
         replayed: false,
       });
     },
@@ -114,7 +116,18 @@ describe("HTTP transport", () => {
 
   const server = makeWebHandler(
     { apiKeys: [API_KEY], webhookBodyLimitBytes: 64 },
-    { router, webhooks },
+    {
+      router,
+      webhooks,
+      delivery: Delivery.of({
+        prepare: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        create: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        status: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        submitCode: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        deliver: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        close: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+      }),
+    },
   );
 
   beforeAll(() => {

@@ -36,10 +36,16 @@ The independent notification queue uses a 10-second request timeout, a 30-second
 
 After exhaustion, the event and safe notification diagnostics remain indefinitely for investigation/replay. Delivered events are cleaned seven days after acknowledgement; pending/failed events survive challenge-history cleanup. When no destination is configured, events still persist for seven days but no notification is scheduled; enabling a destination affects subsequent transitions.
 
-Inspect `otp_router.notifications` (`state`, `attempts`, `next_attempt_at`, `lease_until`, `last_status`, `last_failure`) joined by `event_id` to `otp_router.challenge_events`. Diagnoses are `http_error`, `transport_error`, or `worker_recovery`; no response bodies or transport errors are retained. Monitor failed rows and overdue pending/leased rows. After fixing the receiver, replay one failed event:
+Inspect `otp_router.notifications` (`state`, `attempts`, `next_attempt_at`, `lease_until`, `last_status`, `last_failure`) joined by `event_id` to `otp_router.events`. Diagnoses are `http_error`, `transport_error`, or `worker_recovery`; no response bodies or transport errors are retained. Monitor failed rows and overdue pending/leased rows. After fixing the receiver, replay one failed event:
 
 ```sh
 node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/router.config.ts" --replay-webhook EVENT_UUID
 ```
 
 Replay resets its notification attempt budget and requeues its original ID/body. It never changes the challenge or sends an OTP. Run a worker to deliver it. During signing-secret rotation, have the receiver temporarily accept old and new secrets, then update every router role. Retried old events use the current secret. Destination changes also apply to outstanding notifications, so coordinate them across roles.
+
+## Event kinds
+
+The shared event store and worker publish `challenge.updated` with a `challenge` snapshot and `delivery.updated` with a `delivery` snapshot. Each has eventId, occurredAt and its subject's increasing revision. Delivery revisions and challenge revisions are independent. Receivers deduplicate by event ID and apply snapshots by `(type, subject ID, revision)`; they must not compare revisions across subjects or kinds.
+
+A managed operation can produce both event kinds. External delivery snapshots never have a verify action or verified state. Queued work means durable handoff; accepted means provider evidence; neither proves recipient verification. The receiver example authenticates, records and projects both typed bodies in one transaction.

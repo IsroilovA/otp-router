@@ -5,7 +5,7 @@ import type { RuntimeConfiguration } from "../config/config.js";
 import { scheduleNotification } from "../notifications/schedule.js";
 import { databaseTime } from "../database/transaction.js";
 import type { ChallengeEvent, Snapshot } from "./contracts.js";
-import { canonical } from "./crypto.js";
+import { canonical } from "../crypto.js";
 import { Changes } from "./changes.js";
 import { findChallenge } from "./store.js";
 import { buildSnapshot } from "./snapshot.js";
@@ -27,7 +27,7 @@ export const publish = (config: RuntimeConfiguration, id: string, time: Date) =>
       challenge: next,
     };
     yield* sql`UPDATE otp_router.challenges SET public_revision = ${next.revision}, public_snapshot = ${sql.json(next)} WHERE id = ${id}`;
-    yield* sql`INSERT INTO otp_router.challenge_events(id,challenge_id,revision,occurred_at,body) VALUES (${event.eventId},${id},${next.revision},${time},${JSON.stringify(event)})`;
+    yield* sql`INSERT INTO otp_router.events(id,subject_id,kind,revision,occurred_at,body) VALUES (${event.eventId},${id},'challenge.updated',${next.revision},${time},${JSON.stringify(event)})`;
     if (config.settings.webhook !== undefined) {
       yield* scheduleNotification(event.eventId, time);
     }

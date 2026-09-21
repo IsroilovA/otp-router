@@ -90,3 +90,9 @@ Start with `docker compose -f apps/server/compose.yaml ps` and `docker compose -
 | 409 `idempotency_conflict` | Retry with the original validated body or use a fresh key only for an intended new action. |
 
 Distribution is private. Pin deployment artifacts and preserve exact dependency versions in the lockfile. Verify real provider accounts with explicit authorization and designated recipients before enabling traffic.
+
+## Both capabilities
+
+Restore invalidation closes every prepared/active delivery operation and atomically cancels linked managed challenges. Prepared references have expiry jobs and bounded admission/retention just like attached operations. Key reference checks cover delivery ciphertext, attachment/request fingerprints and managed verifiers. Delivery-only configuration can omit verification keys only when no retained verifier references require them.
+
+Cleanup and notification replay operate across `delivery.updated` and `challenge.updated`. The schema now separates `delivery_operations`, `delivery_attempts`, `delivery_secrets`, challenge verification records and a shared immutable `events` store. This initial-development schema change requires a fresh database; there is no compatibility migration.

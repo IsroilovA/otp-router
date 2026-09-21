@@ -54,15 +54,17 @@ Each named policy requires a nonempty, ordered `providerInstanceIds` list with n
 
 | Policy field | Default | Bounds or behavior |
 | --- | --- | --- |
-| `codeLength` | 6 | 6–8 digits; provider constraints may narrow this. |
-| `lifetimeSeconds` | 300 | 60–600 seconds, fixed at creation. |
-| `maxIncorrectGuesses` | 5 | 1–5 across all delivery actions. |
+| `maxLifetimeSeconds` | 900 | 60–3600 seconds; maximum external absolute deadline measured at admission. |
+| `managed` | Omitted | Enable managed generation/verification with `{}` or explicit fields below; requires a verification key. |
+| `managed.codeLength` | 6 | 6–8 digits; provider constraints may narrow this. |
+| `managed.lifetimeSeconds` | 300 | 60–600 seconds, fixed at creation. |
+| `managed.maxIncorrectGuesses` | 5 | 1–5 across all delivery actions. |
 | `maxSends` | 6 | 1–10, including automatic fallback and explicit sends. |
 | `resendCooldownSeconds` | 30 | 30–300, strictly shorter than the lifetime. |
 | `manualSelectionEnabled` | `false` | Allows caller choice of a provider or channel. |
 | `manualProviderIds` | Omitted | Restricts manual selection to these policy providers; omission permits all policy providers when manual selection is enabled. |
 
-All provider timeouts and minimum delivery windows must fit the policy lifetime. Configure templates for the default locale and chosen fallbacks before startup. Configuration is immutable while running; use the [drain procedure](operations.md#configuration-changes) for incompatible changes.
+Common delivery policy is reused by both APIs. Managed settings do not constrain external deadlines. All provider timeouts and minimum delivery windows must fit each enabled capability's lifetime. Configure templates for the default locale and chosen fallbacks before startup. Configuration is immutable while running; use the [drain procedure](operations.md#configuration-changes) for incompatible changes.
 
 ## Database identity
 
@@ -81,7 +83,9 @@ All modes except `--openapi` require `--config /path/to/router.config.ts`. Use o
 | `--check-schema` | Apply migrations, initialize database identity and queues, check compatibility, then exit; no HTTP listener or sends. |
 | `--openapi` | Print generated OpenAPI JSON without loading configuration or connecting to PostgreSQL. |
 | `--replay-webhook <eventId>` | Queue a retained failed notification again with its original event ID/body; never resend an OTP. |
-| `--invalidate-restored` | Cancel restored active challenges; requires all traffic and workers stopped. |
+| `--invalidate-restored` | Close restored prepared/active operations and cancel their managed challenges; requires all traffic and workers stopped. |
 | `--adopt-recipient-key` | Adopt a replacement recipient key only after the incident procedure succeeds. |
 
 Configuration modules and custom providers are trusted executable code; their initialization can have side effects even during validation.
+
+Delivery-only deployments omit `crypto.verification` and `policy.managed`. Recipient admission is limited to one preparation/new operation or accepted user send per 30 seconds across both APIs, in addition to the rolling creation/send limits. Dispatch extends admission cooldown; automatic fallback bypasses it.

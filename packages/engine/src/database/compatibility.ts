@@ -12,18 +12,21 @@ export const validateStoredKeys = (settings: Settings) =>
         key_id: Schema.String,
       }),
       sql`
-    SELECT DISTINCT 'encryption' AS purpose, phone->>'keyId' AS key_id FROM otp_router.challenge_secrets
-    UNION SELECT DISTINCT 'encryption', code->>'keyId' FROM otp_router.challenge_secrets
+    SELECT DISTINCT 'encryption' AS purpose, phone->>'keyId' AS key_id FROM otp_router.delivery_secrets
+    UNION SELECT DISTINCT 'encryption', code->>'keyId' FROM otp_router.delivery_secrets WHERE code IS NOT NULL
     UNION SELECT DISTINCT 'verification', verifier->>'keyId' FROM otp_router.challenge_secrets
+    UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.delivery_secrets WHERE code_fingerprint IS NOT NULL
+    UNION SELECT DISTINCT 'fingerprint', fingerprint->>'keyId' FROM otp_router.delivery_idempotency
+    UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.delivery_idempotency WHERE code_fingerprint IS NOT NULL
     UNION SELECT DISTINCT 'fingerprint', fingerprint->>'keyId' FROM otp_router.idempotency_records
     UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.idempotency_records WHERE code_fingerprint IS NOT NULL`,
     );
     for (const reference of references)
-      if (settings.crypto[reference.purpose].keys[reference.key_id] === undefined)
+      if (settings.crypto[reference.purpose]?.keys[reference.key_id] === undefined)
         return yield* Effect.fail(new ConfigurationError({ reason: "retained_key_missing" }));
     const snapshots = yield* rows(
       Schema.Struct({ version: Schema.String }),
-      sql`SELECT DISTINCT snapshot->>'version' AS version FROM otp_router.challenges WHERE verification_state = 'active'`,
+      sql`SELECT DISTINCT snapshot->>'version' AS version FROM otp_router.delivery_operations WHERE state IN ('prepared','active')`,
     );
     if (snapshots.some((snapshot) => snapshot.version !== "1"))
       return yield* Effect.fail(new ConfigurationError({ reason: "unsupported_snapshot_version" }));
@@ -63,7 +66,7 @@ export const validateDeploymentIdentity = (settings: Settings, adoptRecipientKey
           );
         const unsafe = yield* rows(
           Schema.Struct({ blocked: Schema.Boolean }),
-          sql`SELECT EXISTS (SELECT 1 FROM otp_router.challenges WHERE verification_state = 'active') OR EXISTS (SELECT 1 FROM otp_router.quota_events WHERE occurred_at > clock_timestamp() - interval '24 hours') AS blocked`,
+          sql`SELECT EXISTS (SELECT 1 FROM otp_router.delivery_operations WHERE state IN ('prepared','active')) OR EXISTS (SELECT 1 FROM otp_router.quota_events WHERE occurred_at > clock_timestamp() - interval '24 hours') AS blocked`,
         );
         if (unsafe[0]?.blocked !== false)
           return yield* Effect.fail(

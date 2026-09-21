@@ -45,3 +45,5 @@ A selector receives the normalized recipient, purpose, locale, and bounded routi
 Selectors run outside database transactions and may execute more than once for competing requests. They must not send messages or perform paid or business actions. Bound their complete execution with one timeout. Failure, timeout, or an invalid route rejects creation without substituting a default route.
 
 Completed creation replays bypass the selector. Later delivery actions use the saved route and current eligibility checks.
+
+Provider send input identifies `operationId` and `attemptId`. These replace challenge identity and the old ambiguous delivery ID. An adapter handles managed and external operations identically, preserves leading-zero codes and disables send retries.

@@ -1,30 +1,30 @@
-import { changed } from "../challenges/changes.js";
+import { changed } from "./changes.js";
 import { randomUUID } from "node:crypto";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 import { enqueueDelivery } from "../queue/jobs.js";
-import type { Challenge, Delivery } from "../challenges/records.js";
+import type { Operation, Attempt } from "./records.js";
 
 export const schedule = (
-  challenge: Challenge,
+  operation: Operation,
   position: number,
-  reason: Delivery["reason"],
+  reason: Attempt["reason"],
   time: Date,
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const provider = challenge.snapshot.providers[position];
+    const provider = operation.snapshot.providers[position];
     if (provider === undefined)
       return yield* Effect.die(new Error("Invalid persisted route position"));
-    const id = reason === "initial" ? challenge.current_delivery_id : randomUUID();
-    yield* sql`INSERT INTO otp_router.deliveries(id,challenge_id,provider_instance_id,route_position,routing_revision,reason,due_at,state) VALUES (${id},${challenge.id},${provider.providerInstanceId},${position},${challenge.routing_revision},${reason},${time},'pending')`;
-    yield* sql`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,delivery_id) VALUES (${provider.providerInstanceId},${id},${id})`;
-    yield* sql`UPDATE otp_router.challenges SET current_delivery_id = ${id} WHERE id = ${challenge.id}`;
+    const id = randomUUID();
+    yield* sql`INSERT INTO otp_router.delivery_attempts(id,operation_id,provider_instance_id,route_position,routing_revision,reason,due_at,state) VALUES (${id},${operation.id},${provider.providerInstanceId},${position},${operation.routing_revision},${reason},${time},'pending')`;
+    yield* sql`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,attempt_id) VALUES (${provider.providerInstanceId},${id},${id})`;
+    yield* sql`UPDATE otp_router.delivery_operations SET current_attempt_id = ${id} WHERE id = ${operation.id}`;
     yield* enqueueDelivery({
       version: 1,
-      deliveryId: id,
-      routingRevision: challenge.routing_revision,
+      attemptId: id,
+      routingRevision: operation.routing_revision,
     });
-    yield* changed(challenge.id);
+    yield* changed(operation.id);
     return id;
   });

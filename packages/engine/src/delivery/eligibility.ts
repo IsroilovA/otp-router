@@ -1,11 +1,12 @@
-import { commonSendLimits, providerSendLimits, quotaRetryAt } from "../challenges/quotas.js";
+import { commonSendLimits, providerSendLimits, quotaRetryAt } from "../delivery/quotas.js";
 import { deliveryWindowFits } from "../providers/timing.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { DomainError, type Choice } from "../challenges/contracts.js";
-import type { Challenge, SavedProvider } from "../challenges/records.js";
+import { type Choice } from "./input.js";
+import { DomainError } from "../errors.js";
+import type { Operation, SavedProvider } from "./records.js";
 
 const providerCompatible = (config: RuntimeConfiguration, saved: SavedProvider) => {
   const provider = config.providers.get(saved.providerInstanceId);
@@ -23,7 +24,7 @@ export interface ProviderAvailability {
 }
 export const availableProviders = (
   config: RuntimeConfiguration,
-  challenge: Pick<Challenge, "snapshot" | "expires_at" | "recipient_token">,
+  operation: Pick<Operation, "snapshot" | "expires_at" | "recipient_token">,
   time: Date,
 ) =>
   Effect.gen(function* () {
@@ -33,12 +34,12 @@ export const availableProviders = (
       sql`SELECT provider_instance_id,retry_at FROM otp_router.provider_restrictions WHERE retry_at > ${time}`,
     );
     const commonRetry = yield* quotaRetryAt(
-      commonSendLimits(config.settings, challenge.recipient_token),
+      commonSendLimits(config.settings, operation.recipient_token),
       time,
     );
-    const candidates = challenge.snapshot.providers.flatMap((provider, position) =>
+    const candidates = operation.snapshot.providers.flatMap((provider, position) =>
       providerCompatible(config, provider) &&
-      deliveryWindowFits(provider, challenge.expires_at.getTime() - time.getTime())
+      deliveryWindowFits(provider, operation.expires_at.getTime() - time.getTime())
         ? [{ provider, position }]
         : [],
     );
@@ -68,7 +69,7 @@ export const nextProvider = (available: readonly ProviderAvailability[], positio
   chooseAvailable(available.filter((option) => option.position > position));
 
 export const resolveChoice = (
-  snapshot: Pick<Challenge["snapshot"], "manualSelectionEnabled" | "manualProviderIds">,
+  snapshot: Pick<Operation["snapshot"], "manualSelectionEnabled" | "manualProviderIds">,
   choice: Choice | undefined,
   available: readonly ProviderAvailability[],
 ) => {
@@ -95,13 +96,13 @@ export const resolveChoice = (
 };
 
 export const userSendBlock = (
-  challenge: Challenge,
+  operation: Operation,
   time: Date,
   retryAt: string | undefined,
 ): { readonly code: "rate_limited" | "cooldown_active"; readonly retryAt?: string } | undefined => {
-  if (challenge.send_count >= challenge.snapshot.maxSends) return { code: "rate_limited" };
+  if (operation.send_count >= operation.snapshot.maxSends) return { code: "rate_limited" };
   const cooldown =
-    time < challenge.next_user_send_at ? challenge.next_user_send_at.toISOString() : undefined;
+    time < operation.next_user_send_at ? operation.next_user_send_at.toISOString() : undefined;
   if (retryAt !== undefined)
     return {
       code: "rate_limited",
@@ -109,3 +110,16 @@ export const userSendBlock = (
     };
   return cooldown === undefined ? undefined : { code: "cooldown_active", retryAt: cooldown };
 };
+
+export const withAdmissionCooldown = (
+  operation: Operation,
+  retryAt: string | undefined,
+): Operation =>
+  retryAt === undefined
+    ? operation
+    : {
+        ...operation,
+        next_user_send_at: new Date(
+          Math.max(operation.next_user_send_at.getTime(), Date.parse(retryAt)),
+        ),
+      };

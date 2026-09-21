@@ -3,6 +3,7 @@ import { PrometheusMetrics } from "effect/unstable/observability";
 
 export const count = (
   event:
+    | "external_delivery"
     | "create"
     | "verify"
     | "cancel"

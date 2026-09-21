@@ -178,7 +178,7 @@ const send = (
       phone_number: input.recipient,
       code: input.code,
       ttl,
-      payload: input.deliveryId,
+      payload: input.attemptId,
     };
     if (config.senderUsername !== undefined) body["sender_username"] = config.senderUsername;
     if (config.callbackUrl !== undefined) body["callback_url"] = config.callbackUrl;

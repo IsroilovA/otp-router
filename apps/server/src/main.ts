@@ -76,7 +76,7 @@ const serve = Effect.gen(function* () {
       return;
     }
     if (process.argv.includes("--invalidate-restored")) {
-      yield* engine.invalidateRestoredChallenges;
+      yield* engine.invalidateRestoredOperations;
       yield* Effect.logInfo(
         "restored_challenges_invalidated_keep_traffic_stopped_until_quota_reconciliation",
       );

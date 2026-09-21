@@ -42,6 +42,7 @@ export default defineConfig({
       fallbackLocales: ["en"],
       policies: {
         login: {
+          managed: {},
           providerInstanceIds: [telegram, whatsapp, sms],
           manualSelectionEnabled: true,
         },

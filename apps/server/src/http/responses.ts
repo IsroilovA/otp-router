@@ -1,3 +1,7 @@
+import {
+  Snapshot as DeliverySnapshot,
+  type OperationResult as ExternalResult,
+} from "@otp-router/engine/delivery";
 import { Schema } from "effect";
 import {
   ErrorCode as DomainErrorCode,
@@ -5,7 +9,7 @@ import {
   VerificationResult,
   DeliveryResult,
   type OperationResult,
-} from "@otp-router/engine";
+} from "@otp-router/engine/challenges";
 export const ErrorCode = Schema.Union([
   DomainErrorCode,
   Schema.Literals(["unauthorized", "request_too_large", "internal_error"]),
@@ -20,7 +24,13 @@ export const ErrorBody = Schema.Struct({
     reason: Schema.optionalKey(Schema.Literal("locked")),
   }),
 });
-export const ResponseBody = Schema.Union([Snapshot, VerificationResult, DeliveryResult, ErrorBody]);
+export const ResponseBody = Schema.Union([
+  DeliverySnapshot,
+  Snapshot,
+  VerificationResult,
+  DeliveryResult,
+  ErrorBody,
+]);
 
 export const statusForError = (code: ErrorCode): number => {
   switch (code) {
@@ -28,12 +38,16 @@ export const statusForError = (code: ErrorCode): number => {
       return 400;
     case "unauthorized":
       return 401;
+    case "operation_not_found":
     case "challenge_not_found":
       return 404;
     case "idempotency_conflict":
     case "request_in_progress":
+    case "managed_operation":
+    case "operation_state_conflict":
     case "challenge_state_conflict":
       return 409;
+    case "operation_unavailable":
     case "challenge_unavailable":
       return 410;
     case "request_too_large":
@@ -54,8 +68,11 @@ export const statusForError = (code: ErrorCode): number => {
   }
 };
 
-export const statusForOutcome = (outcome: OperationResult["outcome"]): number => {
+export const statusForOutcome = (
+  outcome: OperationResult["outcome"] | ExternalResult["outcome"],
+): number => {
   switch (outcome) {
+    case "prepared":
     case "created":
       return 201;
     case "completed":

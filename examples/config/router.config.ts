@@ -42,6 +42,7 @@ export default defineConfig({
       fallbackLocales: [],
       policies: {
         login: {
+          managed: {},
           providerInstanceIds: [fakeProviderId],
         },
       },

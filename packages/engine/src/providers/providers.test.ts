@@ -2,8 +2,8 @@ import { createHash, createHmac } from "node:crypto";
 import { expect, it } from "@effect/vitest";
 import { Context, Effect, Exit, Fiber, Layer, Redacted, Schema } from "effect";
 import {
-  ChallengeIdSchema,
-  DeliveryIdSchema,
+  OperationIdSchema,
+  AttemptIdSchema,
   IsoDateTimeSchema,
   LocaleSchema,
   NormalizedPhoneSchema,
@@ -35,12 +35,10 @@ const jsonResponse = (status: number, body: Schema.Json): HttpResponse => ({
 
 const instanceId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("provider-1");
 const locale = Schema.decodeUnknownSync(LocaleSchema)("en");
-const deliveryId = Schema.decodeUnknownSync(DeliveryIdSchema)(
-  "018f47cb-5395-7c24-9d99-920f5538b168",
-);
+const attemptId = Schema.decodeUnknownSync(AttemptIdSchema)("018f47cb-5395-7c24-9d99-920f5538b168");
 const sendInput = (template: Schema.Json = null): ProviderSendInput => ({
-  challengeId: Schema.decodeUnknownSync(ChallengeIdSchema)("018f47cb-5395-7c24-9d99-920f5538b167"),
-  deliveryId,
+  operationId: Schema.decodeUnknownSync(OperationIdSchema)("018f47cb-5395-7c24-9d99-920f5538b167"),
+  attemptId,
   recipient: Schema.decodeUnknownSync(NormalizedPhoneSchema)("+998901234567"),
   code: Schema.decodeUnknownSync(OtpCodeSchema)("012345"),
   remainingDeliveryMs: 60_000,
@@ -85,7 +83,7 @@ it.effect("normalizes every consequential fake send outcome", () =>
     ] as const;
     const accepted = yield* build(FakeProvider, fakeConfig("accepted"));
     expect(yield* accepted.send(sendInput())).toEqual({
-      providerRequestId: `fake:${deliveryId}`,
+      providerRequestId: `fake:${attemptId}`,
     });
     for (const [outcome, tag, acceptance] of expectations) {
       const provider = yield* build(FakeProvider, fakeConfig(outcome));
@@ -232,7 +230,7 @@ it.effect("sends Telegram codes once and treats unclassified rejection as uncert
       ttl: 60,
       phone_number: "+998901234567",
       code: "012345",
-      payload: deliveryId,
+      payload: attemptId,
       callback_url: "https://router.example/callbacks/telegram",
     });
 

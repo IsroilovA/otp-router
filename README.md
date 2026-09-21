@@ -1,10 +1,10 @@
 # OTP Router
 
-A private, unreleased OTP engine with a self-hosted HTTP server as its first consumer. Applications configure an ordered route through Telegram, WhatsApp, SMS, or custom providers. Expect breaking configuration and schema changes while development continues.
+A private, unreleased engine for managed phone OTP challenges and delivery of externally generated, externally verified codes, with a self-hosted HTTP server. Applications configure an ordered route through Telegram, WhatsApp, SMS, or custom providers. Expect breaking configuration and schema changes while development continues.
 
-Creation commits the challenge, revisioned public snapshot, event, and queued work before returning. Workers send afterward. Confirmed failures can advance the route; uncertain delivery waits for an explicit user action. Resends reuse the code and original expiry.
+Managed creation atomically composes a challenge with an independent delivery operation. External callers can prepare a fixed-deadline operation, attach a code once, resend/select, and close. Submission commits snapshots, events and queued work before returning. Workers send afterward. Confirmed failures can advance the route; uncertain delivery waits for an explicit user action. Resends reuse the code and original expiry.
 
-Start with the [running guide](docs/running.md) and [provider setup](docs/provider-setup.md). The local example uses a fake provider and sends no messages.
+Start with the [running guide](docs/running.md) and [provider setup](docs/provider-setup.md). The local examples use fake providers and send no messages. See the [standalone external-code example](examples/external-code/README.md).
 
 ## Documentation
 
