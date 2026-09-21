@@ -151,8 +151,11 @@ export const overallState = (
   return { state: "failed", reason };
 };
 
-const preparedSnapshot = (operation: Operation, time: Date) =>
-  ({
+const preparedSnapshot = (operation: Operation, time: Date) => {
+  const unavailable = deny(
+    operation.state === "prepared" ? "code_required" : "operation_unavailable",
+  );
+  return {
     operationId: operation.id,
     revision: operation.public_revision + 1,
     state:
@@ -170,8 +173,9 @@ const preparedSnapshot = (operation: Operation, time: Date) =>
       submitCode:
         operation.state === "prepared" ? { allowed: true } : deny("operation_unavailable"),
       close: { allowed: true },
-      resend: deny("code_required"),
-      next: deny("code_required"),
-      select: { ...deny("code_required"), choices: [] },
+      resend: unavailable,
+      next: unavailable,
+      select: { ...unavailable, choices: [] },
     },
-  }) satisfies Snapshot;
+  } satisfies Snapshot;
+};

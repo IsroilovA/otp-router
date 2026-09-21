@@ -84,7 +84,7 @@ Creation accepts an international phone number, purpose, context ID, and policy.
 Creation, reconciliation GET, cancellation, delivery-result `challenge`, and webhook `challenge` use the same snapshot schema:
 
 ```json
-{"challengeId":"6bd2b39a-11ac-4fc7-bc02-d928d6929532","revision":1,"state":"queued","reason":null,"channel":null,"provider":null,"expiresAt":"2026-09-21T12:05:00.000Z","serverTime":"2026-09-21T12:00:00.000Z","actions":{"verify":{"allowed":true},"resend":{"allowed":false,"reason":"cooldown_active","availableAt":"2026-09-21T12:00:30.000Z"},"next":{"allowed":false,"reason":"no_next_provider"},"select":{"allowed":false,"reason":"manual_selection_disabled","choices":[]},"cancel":{"allowed":true}}}
+{"challengeId":"6bd2b39a-11ac-4fc7-bc02-d928d6929532","operationId":"5b0a690c-97d5-4566-9f16-2b68ba8b75c8","revision":1,"state":"queued","reason":null,"channel":null,"provider":null,"expiresAt":"2026-09-21T12:05:00.000Z","serverTime":"2026-09-21T12:00:00.000Z","actions":{"verify":{"allowed":true},"resend":{"allowed":false,"reason":"cooldown_active","availableAt":"2026-09-21T12:00:30.000Z"},"next":{"allowed":false,"reason":"no_next_provider"},"select":{"allowed":false,"reason":"manual_selection_disabled","choices":[]},"cancel":{"allowed":true}}}
 ```
 
 | State | Meaning |

@@ -133,6 +133,11 @@ describe("independent durable external code delivery", () => {
     const prepared = await prepare();
     expect(prepared.body.state).toBe("prepared");
     expect(prepared.body.actions).not.toHaveProperty("verify");
+    expect(prepared.body.actions).toMatchObject({
+      resend: { allowed: false, reason: "code_required" },
+      next: { allowed: false, reason: "code_required" },
+      select: { allowed: false, reason: "code_required", choices: [] },
+    });
     expect(await counts()).toMatchObject({ attempts: 0, sends: 0 });
     await app().run(validateStoredKeys(app().configuration.settings));
     const attached = await Effect.runPromise(
@@ -174,6 +179,15 @@ describe("independent durable external code delivery", () => {
         app().delivery.submitCode(submit(operationId)).pipe(Effect.result),
       );
       expect(result).toMatchObject({ _tag: "Failure", failure: { code: "operation_unavailable" } });
+      const snapshot = (await Effect.runPromise(app().delivery.status(operationId))).body;
+      expect(snapshot).toMatchObject({
+        state: terminal === "close" ? "closed" : "expired",
+        actions: {
+          resend: { allowed: false, reason: "operation_unavailable" },
+          next: { allowed: false, reason: "operation_unavailable" },
+          select: { allowed: false, reason: "operation_unavailable", choices: [] },
+        },
+      });
       expect(await counts()).toEqual({ attempts: 0, secrets: 0, fingerprints: 0, sends: 0 });
     },
   );
