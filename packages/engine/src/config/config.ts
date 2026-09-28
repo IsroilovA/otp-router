@@ -165,7 +165,7 @@ export const loadConfiguration = (configuration: Configuration) =>
         if (provider !== undefined) yield* provider.resolveTemplate(locales);
       }
     }
-    yield* validateReferences(settings, configuration);
+    yield* validateReferences(settings, configuration, providers);
     return {
       settings,
       providers,
@@ -191,6 +191,18 @@ const validatePolicyProviders = (policy: Policy, providers: ReadonlyMap<string, 
     }
   });
 
+const validProviderConstraints = (provider: ReadyProvider): boolean => {
+  const { minCodeLength, maxCodeLength, minDeliveryWindowMs } = provider.constraints;
+  return (
+    Number.isSafeInteger(minCodeLength) &&
+    minCodeLength > 0 &&
+    Number.isSafeInteger(maxCodeLength) &&
+    maxCodeLength >= minCodeLength &&
+    Number.isSafeInteger(minDeliveryWindowMs) &&
+    minDeliveryWindowMs >= 0
+  );
+};
+
 const buildProviders = (configuration: Configuration) =>
   Effect.gen(function* () {
     const providers = new Map<string, ReadyProvider>();
@@ -199,10 +211,11 @@ const buildProviders = (configuration: Configuration) =>
       if (
         providers.has(provider.instanceId) ||
         !Schema.is(Schema.Literal(1))(provider.contractVersion) ||
-        !Number.isFinite(provider.sendTimeoutMs) ||
+        !Number.isSafeInteger(provider.sendTimeoutMs) ||
         provider.sendTimeoutMs <= 0 ||
-        !Number.isFinite(provider.defaultSendTimeoutMs) ||
-        provider.defaultSendTimeoutMs <= 0
+        !Number.isSafeInteger(provider.defaultSendTimeoutMs) ||
+        provider.defaultSendTimeoutMs <= 0 ||
+        !validProviderConstraints(provider)
       )
         return yield* invalid("invalid_provider_registration");
       providers.set(provider.instanceId, provider);
@@ -210,13 +223,22 @@ const buildProviders = (configuration: Configuration) =>
     return providers;
   });
 
-const validateReferences = (settings: Settings, configuration: Configuration) =>
+const validateReferences = (
+  settings: Settings,
+  configuration: Configuration,
+  providers: ReadonlyMap<string, ReadyProvider>,
+) =>
   Effect.gen(function* () {
     for (const ids of Object.values(settings.purposes))
       for (const id of ids)
         if (settings.policies[id] === undefined) return yield* invalid("unknown_policy");
     for (const id of Object.keys(configuration.selectors ?? {}))
       if (settings.policies[id] === undefined) return yield* invalid("unknown_selector_policy");
+    for (const id of [
+      ...Object.keys(settings.providerSendLimits15m),
+      ...Object.keys(settings.providerLabels),
+    ])
+      if (!providers.has(id)) return yield* invalid("unknown_provider");
   });
 
 const validateManagedPolicy = (policy: Policy, hasVerification: boolean) =>

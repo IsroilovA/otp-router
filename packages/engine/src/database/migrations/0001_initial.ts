@@ -14,7 +14,7 @@ export default Effect.gen(function* () {
     public_revision integer NOT NULL DEFAULT 0 CHECK (public_revision >= 0), public_snapshot jsonb,
     processing_started boolean NOT NULL DEFAULT false,
     routing_revision integer NOT NULL DEFAULT 1 CHECK (routing_revision > 0),
-    automatic_stopped boolean NOT NULL DEFAULT false, current_attempt_id uuid,
+    automatic_stopped boolean NOT NULL DEFAULT false, recipient_invalid boolean NOT NULL DEFAULT false, current_attempt_id uuid,
     initial_position integer NOT NULL CHECK (initial_position >= 0), next_user_send_at timestamptz NOT NULL,
     CHECK ((state IN ('prepared','active')) = (terminal_at IS NULL)),
     CHECK (expires_at > created_at)

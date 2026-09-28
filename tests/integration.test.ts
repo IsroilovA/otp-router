@@ -1,8 +1,10 @@
+import { makeTelegramDefinition } from "../packages/engine/src/providers/telegram.js";
+import type { HttpRequest } from "../packages/engine/src/providers/transport.js";
 import { ageAdmission } from "./fixture.js";
 import { ProviderCallbacksLive } from "../packages/engine/src/delivery/provider-callbacks.js";
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Cause, Effect, Exit, Layer, Schema } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
 import {
   Snapshot,
   VerificationResult,
@@ -25,14 +27,12 @@ import { WebhookError, WebhookHandler } from "../apps/server/src/http/webhooks.j
 import { WebhooksLive } from "../apps/server/src/http/webhook-service.js";
 import {
   ProviderContractVersion,
-  ProviderConfigurationRejected,
   ProviderInstance,
   ProviderInstanceIdSchema,
-  ProviderThrottled,
-  InvalidRecipient,
   IsoDateTimeSchema,
-  RecipientUnavailable,
-  UnknownProviderOutcome,
+  ProviderRejected,
+  ProviderUncertain,
+  type CorrelationReference,
   type ProviderSendInput,
   type ProviderSendError,
   type NormalizedDeliveryEvent,
@@ -43,7 +43,7 @@ import {
   DeliveryJob,
   deliveryQueue,
   type DeliveryJob as DeliveryJobType,
-} from "../packages/engine/src/queue/jobs.js";
+} from "../packages/engine/src/queue/contracts.js";
 import {
   challengeIdFrom,
   startPostgres,
@@ -95,37 +95,36 @@ const sendOutcome = (
       });
     case "rejected":
       return Effect.fail(
-        new RecipientUnavailable({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "recipient_unavailable",
           diagnosticCode: "integration_fake_rejected",
         }),
       );
     case "throttled":
       return Effect.fail(
-        new ProviderThrottled({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "throttled",
           diagnosticCode: "integration_fake_throttled",
           retryAt: Schema.decodeUnknownSync(IsoDateTimeSchema)("2099-01-01T00:00:00.000Z"),
         }),
       );
     case "configuration-rejected":
       return Effect.fail(
-        new ProviderConfigurationRejected({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "configuration",
           diagnosticCode: "integration_fake_configuration_rejected",
         }),
       );
     case "invalid-recipient":
       return Effect.fail(
-        new InvalidRecipient({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "invalid_recipient",
           diagnosticCode: "integration_fake_invalid_recipient",
         }),
       );
     case "unknown":
       return Effect.fail(
-        new UnknownProviderOutcome({
-          acceptance: "unknown",
+        new ProviderUncertain({
           diagnosticCode: "integration_fake_unknown",
         }),
       );
@@ -147,7 +146,7 @@ const providerLayer = (id: string, channel: string, control: ProviderControl) =>
     contractVersion: ProviderContractVersion,
     channel,
     enabled: true,
-    settingsFingerprint: `${id}-settings-v1`,
+    compatibilityRevision: `${id}-settings-v1`,
     constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
     defaultSendTimeoutMs: 5_000,
     sendTimeoutMs: 5_000,
@@ -288,9 +287,13 @@ const execute = (text: string): Promise<void> => {
 
 const callbackEvent = (
   deduplicationKey: string,
-  correlationReference: string,
+  correlationReference: CorrelationReference,
   status: NormalizedDeliveryEvent["status"],
 ): NormalizedDeliveryEvent => ({ deduplicationKey, correlationReference, status });
+const providerRequestReference = (providerRequestId: string): CorrelationReference => ({
+  _tag: "ProviderRequest",
+  providerRequestId,
+});
 
 const withSettings = (changes: Partial<RuntimeConfiguration["settings"]>): RuntimeConfiguration => {
   const base = currentRuntime().configuration;
@@ -333,7 +336,7 @@ const withThreeProviders = (): RuntimeConfiguration => {
   providers.set("fake-tertiary", {
     ...second,
     instanceId: tertiaryId,
-    settingsFingerprint: "fake-tertiary-settings-v1",
+    compatibilityRevision: "fake-tertiary-settings-v1",
     send: (input) =>
       Effect.sync(() => {
         tertiary.sends.push(input);
@@ -886,7 +889,7 @@ describe("PostgreSQL integration", () => {
         recordOutcome(harness.configuration, oldJob.data.attemptId, {
           state: "failed",
           acceptance: "not_accepted",
-          diagnosticCode: "RecipientUnavailable",
+          diagnosticCode: "integration_fake_rejected",
         }),
       ),
     ]);
@@ -1248,8 +1251,8 @@ describe("PostgreSQL integration", () => {
           }).pipe(
             Effect.andThen(
               Effect.fail(
-                new RecipientUnavailable({
-                  acceptance: "not_accepted",
+                new ProviderRejected({
+                  reason: "recipient_unavailable",
                   diagnosticCode: "integration_fake_rejected",
                 }),
               ),
@@ -1268,7 +1271,7 @@ describe("PostgreSQL integration", () => {
       if (Exit.isSuccess(exit)) throw new Error("Expected the provider cause to propagate");
       expect(Cause.findErrorOption(exit.cause)).toMatchObject({
         _tag: "Some",
-        value: { _tag: "RecipientUnavailable" },
+        value: { _tag: "ProviderRejected", reason: "recipient_unavailable" },
       });
       expect(
         failureKind === "defect" ? Cause.hasDies(exit.cause) : Cause.hasInterrupts(exit.cause),
@@ -1431,6 +1434,72 @@ describe("PostgreSQL integration", () => {
     expect(delivery).toEqual([{ state: "uncertain", diagnostic_code: "worker_recovery" }]);
   });
 
+  it.each([
+    [200, "PHONE_NUMBER_NOT_FOUND"],
+    [400, "PHONE_NUMBER_NOT_AVAILABLE"],
+    [400, "SOME_NEW_ERROR"],
+  ] as const)(
+    "falls back from Telegram API rejection %s/%s without changing the code or deadline",
+    async (status, error) => {
+      const harness = currentRuntime();
+      const requests: HttpRequest[] = [];
+      const telegram = makeTelegramDefinition({
+        execute: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return {
+              status,
+              headers: {},
+              body: new TextEncoder().encode(JSON.stringify({ ok: false, error })),
+            };
+          }),
+      });
+      const providerConfig = Schema.decodeUnknownSync(telegram.configSchema)({
+        apiToken: "test-token",
+      });
+      const context = await Effect.runPromise(
+        Effect.scoped(
+          Layer.build(
+            telegram.make({
+              instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-primary"),
+              enabled: true,
+              compatibilityRevision: "telegram-test-v1",
+              config: providerConfig,
+              templates: {},
+            }),
+          ),
+        ),
+      );
+      const providers = new Map(harness.configuration.providers);
+      providers.set("fake-primary", Context.get(context, ProviderInstance));
+      const config = { ...harness.configuration, providers };
+      const created = await createDirect(config, "telegram-rejection-fallback");
+      const code = await readCode(created.body.challengeId);
+      await dispatchNext(config);
+      expect(requests).toHaveLength(1);
+      expect(
+        await query(
+          Schema.Struct({ state: Schema.String, acceptance: Schema.NullOr(Schema.String) }),
+          "SELECT state, acceptance FROM otp_router.delivery_attempts ORDER BY route_position",
+        ),
+      ).toEqual([
+        { state: "failed", acceptance: "not_accepted" },
+        { state: "pending", acceptance: null },
+      ]);
+      await dispatchNext(config);
+      expect(secondary.sends).toHaveLength(1);
+      expect(secondary.sends[0]).toMatchObject({ code, expiresAt: created.body.expiresAt });
+      expect(
+        await query(
+          Schema.Struct({ send_count: Schema.Int, recipient_invalid: Schema.Boolean }),
+          "SELECT send_count, recipient_invalid FROM otp_router.delivery_operations",
+        ),
+      ).toEqual([{ send_count: 2, recipient_invalid: false }]);
+      expect(await count("delivery_attempts")).toBe(2);
+      expect(requests).toHaveLength(1);
+    },
+  );
+
   it("falls back after definitive rejection but preserves an uncertain outcome", async () => {
     primary.outcome = "rejected";
     await create("fallback-definitive");
@@ -1459,6 +1528,67 @@ describe("PostgreSQL integration", () => {
         "SELECT state, acceptance FROM otp_router.delivery_attempts",
       ),
     ).toEqual([{ state: "uncertain", acceptance: "unknown" }]);
+  });
+
+  it("reconciles a lost response through an echoed attempt and its provider request alias", async () => {
+    const harness = currentRuntime();
+    primary.outcome = "unknown";
+    await create("lost-response-echo");
+    await dispatchNext();
+    const attemptId = primary.sends[0]?.attemptId;
+    if (attemptId === undefined) throw new Error("Expected the uncertain send");
+    const requestId = "lost-response-provider-id";
+
+    // The provider-ID report arrives before any response or echoed reference can bind it.
+    await harness.run(
+      ingestEvents(harness.configuration, "fake-primary", [
+        callbackEvent("orphan-delivered", providerRequestReference(requestId), "delivered"),
+      ]),
+    );
+    expect(
+      await query(
+        Schema.Struct({ state: Schema.String }),
+        `SELECT state FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`,
+      ),
+    ).toEqual([{ state: "uncertain" }]);
+
+    const echoed: NormalizedDeliveryEvent = {
+      deduplicationKey: "echo-accepted",
+      correlationReference: { _tag: "Attempt", attemptId },
+      providerRequestId: requestId,
+      status: "accepted",
+    };
+    // An identical reference on another instance cannot claim the original attempt.
+    await harness.run(ingestEvents(harness.configuration, "fake-secondary", [echoed]));
+    expect(
+      await query(
+        Schema.Struct({ state: Schema.String }),
+        `SELECT state FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`,
+      ),
+    ).toEqual([{ state: "uncertain" }]);
+    await harness.run(ingestEvents(harness.configuration, "fake-primary", [echoed]));
+    await harness.run(ingestEvents(harness.configuration, "fake-primary", [echoed]));
+    expect(
+      await query(
+        Schema.Struct({ state: Schema.String, acceptance: Schema.String }),
+        `SELECT state, acceptance FROM otp_router.delivery_attempts WHERE id = '${attemptId}'`,
+      ),
+    ).toEqual([{ state: "delivered", acceptance: "accepted" }]);
+    expect(
+      await query(
+        Schema.Struct({ processed: Schema.Boolean }),
+        "SELECT processed FROM otp_router.callback_inbox WHERE provider_instance_id = 'fake-primary'",
+      ),
+    ).toEqual([{ processed: true }, { processed: true }]);
+    expect(await count("delivery_attempts")).toBe(1);
+    expect(
+      await query(
+        Schema.Struct({ send_count: Schema.Int }),
+        "SELECT send_count FROM otp_router.delivery_operations",
+      ),
+    ).toEqual([{ send_count: 1 }]);
+    expect(primary.sends).toHaveLength(1);
+    expect(secondary.sends).toHaveLength(0);
   });
 
   it("falls forward from an initially selected middle provider without route wraparound", async () => {
@@ -1561,7 +1691,7 @@ describe("PostgreSQL integration", () => {
       {
         provider_instance_id: "fake-primary",
         state: "failed",
-        failure_category: "ProviderConfigurationRejected",
+        failure_category: "configuration",
         diagnostic_code: "integration_fake_configuration_rejected",
       },
       {
@@ -1650,6 +1780,40 @@ describe("PostgreSQL integration", () => {
       },
     });
 
+    const rejectedAttempt = primary.sends[0]?.attemptId;
+    if (rejectedAttempt === undefined) throw new Error("Expected the rejected send");
+    await currentRuntime().run(
+      ingestEvents(currentRuntime().configuration, "fake-primary", [
+        {
+          deduplicationKey: "later-failure-after-invalid-recipient",
+          correlationReference: { _tag: "Attempt", attemptId: rejectedAttempt },
+          status: "failed",
+        },
+      ]),
+    );
+    expect(
+      await query(
+        Schema.Struct({ failure_category: Schema.NullOr(Schema.String) }),
+        `SELECT failure_category FROM otp_router.delivery_attempts WHERE id = '${rejectedAttempt}'`,
+      ),
+    ).toEqual([{ failure_category: "invalid_recipient" }]);
+
+    await currentRuntime().run(
+      ingestEvents(currentRuntime().configuration, "fake-primary", [
+        callbackEvent(
+          "delivered-after-invalid-recipient",
+          { _tag: "Attempt", attemptId: rejectedAttempt },
+          "delivered",
+        ),
+      ]),
+    );
+    expect(
+      await query(
+        Schema.Struct({ recipient_invalid: Schema.Boolean }),
+        "SELECT recipient_invalid FROM otp_router.delivery_operations",
+      ),
+    ).toEqual([{ recipient_invalid: true }]);
+
     for (const [operationKey, input] of [
       ["invalid-recipient-resend", { action: "resend" }],
       ["invalid-recipient-next", { action: "next" }],
@@ -1714,7 +1878,7 @@ describe("PostgreSQL integration", () => {
       recordOutcome(harness.configuration, oldJob.data.attemptId, {
         state: "failed",
         acceptance: "not_accepted",
-        failureCategory: "InvalidRecipient",
+        failureCategory: "invalid_recipient",
         diagnosticCode: "integration_fake_invalid_recipient",
         stop: true,
       }),
@@ -1930,7 +2094,7 @@ describe("PostgreSQL integration", () => {
     await primary.started.promise;
     await currentRuntime().run(
       ingestEvents(currentRuntime().configuration, "fake-primary", [
-        callbackEvent("early-delivered", providerReference, "delivered"),
+        callbackEvent("early-delivered", providerRequestReference(providerReference), "delivered"),
       ]),
     );
     expect(
@@ -2008,7 +2172,11 @@ describe("PostgreSQL integration", () => {
     await currentRuntime().run(
       ingestEvents(config, "fake-primary", [
         {
-          ...callbackEvent("diagnostic", `fake-primary:${job.attemptId}`, "failed"),
+          ...callbackEvent(
+            "diagnostic",
+            providerRequestReference(`fake-primary:${job.attemptId}`),
+            "failed",
+          ),
           diagnosticCode: "callback_failed",
         },
       ]),
@@ -2022,7 +2190,7 @@ describe("PostgreSQL integration", () => {
     await currentRuntime().run(
       ingestEvents(config, "fake-primary", [
         {
-          ...callbackEvent("unsafe-diagnostic", "orphan", "failed"),
+          ...callbackEvent("unsafe-diagnostic", providerRequestReference("orphan"), "failed"),
           diagnosticCode: "secret payload 123456",
         },
       ]),
@@ -2054,7 +2222,7 @@ describe("PostgreSQL integration", () => {
     );
     const event = callbackEvent(
       "duplicate-delivered",
-      `fake-primary:${initialDeliveryId}`,
+      providerRequestReference(`fake-primary:${initialDeliveryId}`),
       "delivered",
     );
     await currentRuntime().run(
@@ -2094,7 +2262,11 @@ describe("PostgreSQL integration", () => {
     );
     await currentRuntime().run(
       ingestEvents(currentRuntime().configuration, "fake-primary", [
-        callbackEvent("stale-failure", `fake-primary:${initialDeliveryId}`, "failed"),
+        callbackEvent(
+          "stale-failure",
+          providerRequestReference(`fake-primary:${initialDeliveryId}`),
+          "failed",
+        ),
       ]),
     );
     expect(

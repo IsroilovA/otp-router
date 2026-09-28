@@ -1,33 +1,29 @@
+import { defineProvider } from "./define.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 import {
+  AttemptIdSchema,
+  ProviderRejected,
   CallbackAuthenticationError,
   CallbackFormatError,
   ProviderContractVersion,
-  ProviderInstance,
-  UnknownProviderOutcome,
+  ProviderUncertain,
   type CallbackInput,
   type CallbackResult,
   type NormalizedDeliveryEvent,
   type ProviderDefinition,
   type ProviderSendError,
   type ProviderSendInput,
-  type ReadyProvider,
   type SendAccepted,
 } from "./contract.js";
 import {
   callbackTimestamp,
   getHeader,
-  readyMetadata,
   decodeUtf8,
   encodeJson,
-  makeTemplateResolver,
   parseJson,
   validateSendInput,
   validateTemplate,
-  validateTimeout,
-  validateProviderConfiguration,
-  validateAllTemplates,
 } from "./internal.js";
 import { fetchTransport, type HttpTransport } from "./transport.js";
 
@@ -51,8 +47,34 @@ const MetaSendResponseSchema = Schema.Struct({
   messages: Schema.Tuple([Schema.Struct({ id: Schema.NonEmptyString })]),
 });
 
+const MetaErrorSchema = Schema.Struct({ error: Schema.Struct({ code: Schema.Int }) });
+
+// Meta's Cloud API error-code reference documents these rejection conditions.
+// Internal/unknown codes and generic HTTP statuses do not prove non-acceptance.
+const mapMetaError = (code: number): ProviderSendError => {
+  switch (code) {
+    case 190:
+    case 131008:
+    case 132001:
+      return new ProviderRejected({
+        reason: "configuration",
+        diagnosticCode: "meta_configuration_rejected",
+      });
+    case 130429:
+      return new ProviderRejected({ reason: "throttled", diagnosticCode: "meta_throttled" });
+    case 131026:
+      return new ProviderRejected({
+        reason: "recipient_unavailable",
+        diagnosticCode: "meta_recipient_unavailable",
+      });
+    default:
+      return new ProviderUncertain({ diagnosticCode: "meta_rejected_unknown" });
+  }
+};
+
 const MetaStatusSchema = Schema.Struct({
   id: Schema.NonEmptyString,
+  biz_opaque_callback_data: Schema.optional(AttemptIdSchema),
   status: Schema.Literals(["sent", "delivered", "read", "failed", "deleted"]),
   timestamp: Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9]+$/))),
 });
@@ -155,7 +177,11 @@ const decodeMetaEvents = (
       const providerEventTime = yield* callbackTimestamp(seconds);
       events.push({
         deduplicationKey: `${status.id}:${status.status}:${status.timestamp}`,
-        correlationReference: status.id,
+        correlationReference:
+          status.biz_opaque_callback_data === undefined
+            ? { _tag: "ProviderRequest", providerRequestId: status.id }
+            : { _tag: "Attempt", attemptId: status.biz_opaque_callback_data },
+        providerRequestId: status.id,
         status: normalizeStatus(status.status),
         providerEventTime,
         ...(status.status === "failed" ? { diagnosticCode: "meta_delivery_failed" } : {}),
@@ -205,6 +231,7 @@ const send = (
     const template = yield* validateTemplate(MetaTemplateSchema, input.template);
     const body: Schema.Json = {
       messaging_product: "whatsapp",
+      biz_opaque_callback_data: input.attemptId,
       recipient_type: "individual",
       to: input.recipient.slice(1),
       type: "template",
@@ -235,24 +262,23 @@ const send = (
       .pipe(
         Effect.mapError(
           () =>
-            new UnknownProviderOutcome({
-              acceptance: "unknown",
+            new ProviderUncertain({
               diagnosticCode: "transport_failure",
             }),
         ),
       );
     if (response.status < 200 || response.status >= 300) {
-      return yield* new UnknownProviderOutcome({
-        acceptance: "unknown",
-        diagnosticCode: "meta_rejected_unknown",
-      });
+      const json = yield* parseJson(response.body);
+      const error = yield* Schema.decodeUnknownEffect(MetaErrorSchema)(json).pipe(
+        Effect.mapError(() => new ProviderUncertain({ diagnosticCode: "meta_rejected_unknown" })),
+      );
+      return yield* mapMetaError(error.error.code);
     }
     const json = yield* parseJson(response.body);
     const parsed = yield* Schema.decodeUnknownEffect(MetaSendResponseSchema)(json).pipe(
       Effect.mapError(
         () =>
-          new UnknownProviderOutcome({
-            acceptance: "unknown",
+          new ProviderUncertain({
             diagnosticCode: "invalid_provider_response",
           }),
       ),
@@ -273,6 +299,9 @@ const metadata = {
     "invalid_provider_response",
     "invalid_template_snapshot",
     "meta_delivery_failed",
+    "meta_configuration_rejected",
+    "meta_throttled",
+    "meta_recipient_unavailable",
     "meta_rejected_unknown",
     "transport_failure",
     "unsupported_code_length",
@@ -282,29 +311,15 @@ const metadata = {
 
 export const makeMetaDefinition = (
   transport: HttpTransport = fetchTransport,
-): ProviderDefinition<MetaConfiguration, typeof MetaConfigurationSchema.Encoded> => ({
-  ...metadata,
-  configSchema: MetaConfigurationSchema,
-  templateSchema: MetaTemplateSchema,
-  make: (options) =>
-    Layer.effect(
-      ProviderInstance,
-      Effect.gen(function* () {
-        yield* validateProviderConfiguration(MetaConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(
-          options.sendTimeoutMs,
-          metadata.defaultSendTimeoutMs,
-        );
-        yield* validateAllTemplates(MetaTemplateSchema, options.templates);
-        const ready: ReadyProvider = {
-          ...readyMetadata(metadata, options, sendTimeoutMs),
-          resolveTemplate: makeTemplateResolver(MetaTemplateSchema, options.templates),
-          send: (input) => send(transport, options.config, input),
-          callback: (input) => callback(input, options.config),
-        };
-        return ready;
-      }),
-    ),
-});
+): ProviderDefinition<MetaConfiguration, typeof MetaConfigurationSchema.Encoded> =>
+  defineProvider({
+    ...metadata,
+    configSchema: MetaConfigurationSchema,
+    templateSchema: MetaTemplateSchema,
+    create: (config) => ({
+      send: (input) => send(transport, config, input),
+      callback: (input) => callback(input, config),
+    }),
+  });
 
 export const MetaProvider = makeMetaDefinition();

@@ -12,7 +12,9 @@ Keep health/metrics private. Stop traffic and new job claims before draining wor
 
 For incompatible changes, stop creation and let active operations finish or expire under the old configuration. Keep verification, callbacks, and workers available during the drain. Stop old workers before starting replacement configuration. Use rolling deployments only when schemas, jobs, plugins, and settings remain compatible.
 
-Use a new provider instance ID for a different account. Update the non-secret settings fingerprint for incompatible delivery changes and retain callback credentials while history needs them, unless compromise requires revocation. Emergency disables require stopping workers and restarting with the affected instance disabled.
+Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials while history needs them, unless compromise requires revocation. Emergency disables require stopping workers and restarting with the affected instance disabled.
+
+During unreleased development, all router schema changes are folded into the initial schema. There are no incremental upgrade migrations or backfills, and existing development databases are not upgraded in place. After a schema change, use a new empty database, or explicitly recreate a confirmed disposable database after preserving anything needed. Never mix workers from incompatible builds against the same database; no reset is performed automatically.
 
 ## API-key rotation
 

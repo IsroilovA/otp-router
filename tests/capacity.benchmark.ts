@@ -149,7 +149,7 @@ const provider = {
   contractVersion: ProviderContractVersion,
   channel: "fake",
   enabled: true,
-  settingsFingerprint: "benchmark-fake-v1",
+  compatibilityRevision: "benchmark-fake-v1",
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   defaultSendTimeoutMs: 1000,
   sendTimeoutMs: 1000,
@@ -630,7 +630,7 @@ const cleanupRecoveryOnly = async (args: ReadonlyArray<string>): Promise<Cleanup
   workerProcess = undefined;
   const forcedExpired = Number(
     await psql(
-      "WITH forced AS (UPDATE otp_router.delivery_operations SET expires_at=clock_timestamp()-interval '2 minutes' WHERE context_id LIKE 'cleanup-cohort-%' RETURNING 1) SELECT count(*) FROM forced",
+      "WITH forced AS (UPDATE otp_router.delivery_operations SET created_at=clock_timestamp()-interval '3 minutes', expires_at=clock_timestamp()-interval '2 minutes' WHERE context_id LIKE 'cleanup-cohort-%' RETURNING 1) SELECT count(*) FROM forced",
     ),
   );
   expect(forcedExpired).toBe(CLEANUP_BACKLOG_SIZE);
@@ -742,7 +742,7 @@ describe("local capacity benchmark", () => {
     const baselineBacklog = await queuedCount();
     const forcedExpired = Number(
       await psql(
-        "WITH forced AS (UPDATE otp_router.delivery_operations SET expires_at=clock_timestamp()-interval '2 minutes' WHERE id IN (SELECT id FROM otp_router.challenges WHERE verification_state='active' ORDER BY created_at DESC LIMIT 250) RETURNING 1) SELECT count(*) FROM forced",
+        "WITH forced AS (UPDATE otp_router.delivery_operations SET created_at=clock_timestamp()-interval '3 minutes', expires_at=clock_timestamp()-interval '2 minutes' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE verification_state='active' ORDER BY created_at DESC LIMIT 250) RETURNING 1) SELECT count(*) FROM forced",
       ),
     );
     expect(forcedExpired).toBe(CLEANUP_BACKLOG_SIZE);

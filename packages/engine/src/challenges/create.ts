@@ -9,7 +9,7 @@ import { normalizePhone, prepareRoute } from "../delivery/prepare.js";
 import { admitOperation, attachCode } from "../delivery/lifecycle.js";
 import type { PrepareInput } from "../delivery/contracts.js";
 import { verifierInput } from "./crypto.js";
-import type { CreateInput, Mutation, OperationResult } from "./contracts.js";
+import { type CreateInput, type Mutation, CreateResult } from "./contracts.js";
 import { operation, lockOperation, replay, saveResult } from "./idempotency.js";
 import { findChallenge } from "./store.js";
 import { snapshot } from "./publication.js";
@@ -23,7 +23,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
       config,
       Effect.gen(function* () {
         yield* lockOperation(op);
-        return yield* replay(config.settings.crypto, op);
+        return yield* replay(config.settings.crypto, op, CreateResult);
       }),
     );
     if (previous !== undefined) return previous;
@@ -36,7 +36,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
       config,
       Effect.gen(function* () {
         yield* lockOperation(op);
-        const existing = yield* replay(config.settings.crypto, op);
+        const existing = yield* replay(config.settings.crypto, op, CreateResult);
         if (existing !== undefined) return existing;
         const time = yield* databaseTime;
         const prepared: PrepareInput = {
@@ -51,7 +51,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
         yield* sql`INSERT INTO otp_router.challenge_secrets(challenge_id,verifier) VALUES (${id},${sql.json(digest(verification, verifierInput(config.settings.crypto, { id, purpose: input.purpose, contextId: input.contextId }, code)))})`;
         yield* attachCode(config, delivery, code);
         const body = yield* snapshot(config, yield* findChallenge(id), time);
-        const response: OperationResult = { outcome: "created", body, replayed: false };
+        const response: CreateResult = { outcome: "created", body, replayed: false };
         return yield* saveResult(config.settings.crypto, op, {
           challengeId: id,
           response,

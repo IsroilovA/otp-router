@@ -2,7 +2,7 @@ import { expect, it } from "@effect/vitest";
 import { vi } from "vitest";
 import { Cause, Effect, Exit, Result, Schema, SchemaIssue } from "effect";
 import { SqlError } from "effect/unstable/sql";
-import { QueueOperationError } from "../queue/jobs.js";
+import { QueueOperationError } from "../queue/contracts.js";
 import { type OperationResult } from "./contracts.js";
 import { DomainError } from "../errors.js";
 import { observeOperation } from "../diagnostics/operation.js";

@@ -1,12 +1,10 @@
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { type RoutingSelector, SelectorFailure } from "@otp-router/engine/config";
 import {
   ProviderContractVersion,
-  type ProviderDefinition,
-  ProviderInstance,
+  defineProvider,
   type ProviderSendInput,
   type SendAccepted,
-  TemplateResolutionError,
 } from "@otp-router/engine/providers";
 
 const TextConfigurationSchema = Schema.Struct({ prefix: Schema.String });
@@ -31,30 +29,12 @@ const send = (config: TextConfiguration, input: ProviderSendInput): Effect.Effec
     };
   });
 
-export const TextProvider: ProviderDefinition<
-  TextConfiguration,
-  typeof TextConfigurationSchema.Encoded
-> = {
+export const TextProvider = defineProvider({
   ...metadata,
   configSchema: TextConfigurationSchema,
   templateSchema: null,
-  make: (options) =>
-    Layer.succeed(ProviderInstance, {
-      ...metadata,
-      instanceId: options.instanceId,
-      pluginId: metadata.id,
-      enabled: options.enabled,
-      settingsFingerprint: options.settingsFingerprint,
-      sendTimeoutMs: options.sendTimeoutMs ?? metadata.defaultSendTimeoutMs,
-      resolveTemplate: (locales) => {
-        const locale = locales[0];
-        return locale === undefined
-          ? Effect.fail(new TemplateResolutionError({ diagnosticCode: "missing_template" }))
-          : Effect.succeed({ locale, template: {} });
-      },
-      send: (input) => send(options.config, input),
-    }),
-};
+  create: (config) => ({ send: (input) => send(config, input) }),
+});
 
 export const textSelector: RoutingSelector = ({ recipient }) =>
   recipient.startsWith("+")

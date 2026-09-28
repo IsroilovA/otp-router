@@ -1,6 +1,6 @@
 # Managed and external capabilities
 
-The private engine package supports embedded use; the HTTP server exposes the same capabilities. [Package exports](../packages/engine/package.json) and their TypeScript contracts define supported interfaces. Use the [custom adapter](../examples/custom-adapter/README.md) and [external-code](../examples/external-code/README.md) examples for integration.
+The self-hosted HTTP server exposes managed verification and external-code delivery. Integrate through the [HTTP contract](api.md). The private engine package shares behavior between HTTP handlers, workers, and callbacks; it is not a separately released SDK. [Package exports](../packages/engine/package.json) also support trusted deployment extensions, as shown in the [custom adapter](../examples/custom-adapter/README.md).
 
 ## Managed verification
 
@@ -17,6 +17,6 @@ External callers own code generation, verification, authorization, and associati
 
 ## Integration obligations
 
-Embedded callers own resource scopes, worker startup, readiness, and shutdown. Imports must have no resource side effects. API-only processes still require a worker elsewhere for delivery and cleanup.
+Deployments own worker startup, readiness, and shutdown. API-only processes require a worker elsewhere for delivery and cleanup. Importing engine packages starts no resources.
 
 Use [public events](webhooks.md) for committed changes and status reads for reconciliation. Replayed results may describe an earlier state; follow [idempotency](api.md#idempotency). Operational recovery follows the [operations guide](operations.md).

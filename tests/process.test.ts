@@ -164,7 +164,7 @@ const provider = {
   contractVersion: ProviderContractVersion,
   channel: "fake",
   enabled: true,
-  settingsFingerprint: "process-fake-v1",
+  compatibilityRevision: "process-fake-v1",
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   defaultSendTimeoutMs: 1000,
   sendTimeoutMs: 60000,

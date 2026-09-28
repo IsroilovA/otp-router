@@ -1,33 +1,21 @@
+import { defineProvider } from "./define.js";
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 import {
   CallbackAuthenticationError,
   CallbackFormatError,
-  InvalidRecipient,
+  CorrelationReferenceSchema,
   IsoDateTimeSchema,
-  ProviderConfigurationRejected,
   ProviderContractVersion,
-  ProviderInstance,
-  ProviderThrottled,
-  RecipientUnavailable,
-  TemporaryProviderFailure,
-  UnknownProviderOutcome,
+  ProviderUncertain,
+  ProviderRejected,
   type CallbackInput,
   type CallbackResult,
   type NormalizedDeliveryEvent,
-  type ProviderDefinition,
   type ProviderSendError,
-  type ReadyProvider,
   type SendAccepted,
 } from "./contract.js";
-import {
-  readyMetadata,
-  decodeUtf8,
-  resolveNoTemplate,
-  validateSendInput,
-  validateTimeout,
-  validateProviderConfiguration,
-} from "./internal.js";
+import { decodeUtf8, validateSendInput } from "./internal.js";
 
 const FakeOutcomeSchema = Schema.Literals([
   "accepted",
@@ -51,7 +39,7 @@ const FakeCallbackSchema = Schema.Struct({
   events: Schema.Array(
     Schema.Struct({
       id: Schema.NonEmptyString,
-      correlationReference: Schema.NonEmptyString,
+      correlationReference: CorrelationReferenceSchema,
       status: Schema.Literals(["accepted", "delivered", "failed", "cancelled"]),
       providerEventTime: Schema.optional(IsoDateTimeSchema),
       diagnosticCode: Schema.optional(Schema.NonEmptyString),
@@ -74,43 +62,42 @@ const sendForOutcome = (
       return Effect.succeed({ providerRequestId });
     case "recipient_unavailable":
       return Effect.fail(
-        new RecipientUnavailable({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "recipient_unavailable",
           diagnosticCode: "fake_recipient_unavailable",
         }),
       );
     case "invalid_recipient":
       return Effect.fail(
-        new InvalidRecipient({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "invalid_recipient",
           diagnosticCode: "fake_invalid_recipient",
         }),
       );
     case "throttled":
       return Effect.fail(
-        new ProviderThrottled({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "throttled",
           diagnosticCode: "fake_throttled",
         }),
       );
     case "configuration_rejected":
       return Effect.fail(
-        new ProviderConfigurationRejected({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "configuration",
           diagnosticCode: "fake_configuration_rejected",
         }),
       );
     case "temporary_rejected":
       return Effect.fail(
-        new TemporaryProviderFailure({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "temporary",
           diagnosticCode: "fake_temporary_rejected",
         }),
       );
     case "unknown":
       return Effect.fail(
-        new UnknownProviderOutcome({
-          acceptance: "unknown",
+        new ProviderUncertain({
           diagnosticCode: "fake_unknown",
         }),
       );
@@ -190,32 +177,15 @@ const metadata = {
   idempotency: { supported: false },
 } as const;
 
-export const FakeProvider: ProviderDefinition<
-  FakeConfiguration,
-  typeof FakeConfigurationSchema.Encoded
-> = {
+export const FakeProvider = defineProvider({
   ...metadata,
   configSchema: FakeConfigurationSchema,
   templateSchema: null,
-  make: (options) =>
-    Layer.effect(
-      ProviderInstance,
-      Effect.gen(function* () {
-        yield* validateProviderConfiguration(FakeConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(
-          options.sendTimeoutMs,
-          metadata.defaultSendTimeoutMs,
-        );
-        const ready: ReadyProvider = {
-          ...readyMetadata(metadata, options, sendTimeoutMs),
-          resolveTemplate: resolveNoTemplate,
-          send: (input) =>
-            validateSendInput(input, constraints).pipe(
-              Effect.andThen(sendForOutcome(options.config.outcome, `fake:${input.attemptId}`)),
-            ),
-          callback: (input) => decodeCallback(input, Redacted.value(options.config.callbackSecret)),
-        };
-        return ready;
-      }),
-    ),
-};
+  create: (config) => ({
+    send: (input) =>
+      validateSendInput(input, constraints).pipe(
+        Effect.andThen(sendForOutcome(config.outcome, `fake:${input.attemptId}`)),
+      ),
+    callback: (input) => decodeCallback(input, Redacted.value(config.callbackSecret)),
+  }),
+});

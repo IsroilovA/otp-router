@@ -51,6 +51,6 @@ node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/rou
 
 Configuration checking validates local settings without core database access. Schema checking applies migrations and binds database identity; it changes the database. Neither sends a message. See [configuration](configuration.md) and [recovery procedures](operations.md).
 
-Stop the host process before `pnpm db:down`; the latter preserves its development volume. Follow [HTTP integration](api.md#integration-flow) to exercise the service, or use the [external-code example](../examples/external-code/README.md). The fake provider never exposes a usable OTP.
+Stop the host process before `pnpm db:down`; the latter preserves its development volume. Follow the [HTTP walkthrough](../examples/http/README.md) to exercise both server flows. The fake provider never exposes a usable OTP.
 
 The service image uses [apps/server/Dockerfile](../apps/server/Dockerfile). Install custom adapters into a deployment image as shown by the [adapter example](../examples/custom-adapter/README.md).

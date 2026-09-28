@@ -2,15 +2,15 @@ import { SqlClient } from "effect/unstable/sql";
 import { Effect, Layer, Schema } from "effect";
 import { RouterConfig } from "../config/runtime.js";
 import { rows } from "../database/query.js";
-import { OwnerProjection } from "../delivery/projection.js";
+import { DeliveryOwner } from "../delivery/owner.js";
 import { findChallenge, eraseSecrets } from "./store.js";
 import { publish } from "./publication.js";
-export const OwnerProjectionLive = Layer.effect(
-  OwnerProjection,
+export const DeliveryOwnerLive = Layer.effect(
+  DeliveryOwner,
   Effect.gen(function* () {
     const config = yield* RouterConfig;
     return {
-      publish: (operationId, time, delivery) =>
+      synchronize: (operationId, time) =>
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           const row = (yield* rows(
@@ -27,8 +27,10 @@ export const OwnerProjectionLive = Layer.effect(
             yield* sql`UPDATE otp_router.challenges SET verification_state = ${challenge.delivery.state === "expired" ? "expired" : "cancelled"}, terminal_at = ${time} WHERE id = ${row.id} AND verification_state = 'active'`;
             yield* eraseSecrets(row.id);
           }
-          yield* publish(config, row.id, delivery, time);
+          return row.id;
         }),
+      publish: (ownerId, time, delivery) =>
+        publish(config, ownerId, delivery, time).pipe(Effect.asVoid),
     };
   }),
 );

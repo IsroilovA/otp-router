@@ -10,7 +10,8 @@ import { migrate } from "../packages/engine/src/database/migrations.js";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { transaction } from "../packages/engine/src/database/transaction.js";
 import { FakeProvider, ProviderInstanceIdSchema } from "../packages/engine/src/providers/index.js";
-import { enqueueDelivery, deliveryQueue } from "../packages/engine/src/queue/jobs.js";
+import { deliveryQueue } from "../packages/engine/src/queue/contracts.js";
+import { enqueueDelivery } from "../packages/engine/src/queue/jobs.js";
 import {
   startPostgres,
   startRuntime,
@@ -41,7 +42,7 @@ const configuration: Configuration = {
     FakeProvider.make({
       instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
       enabled: true,
-      settingsFingerprint: "fake",
+      compatibilityRevision: "fake",
       config: { outcome: "accepted", callbackSecret: Redacted.make("secret") },
       templates: {},
     }),

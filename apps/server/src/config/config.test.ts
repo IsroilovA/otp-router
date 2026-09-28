@@ -35,7 +35,7 @@ const entry: ConfigurationInput = {
       FakeProvider.make({
         instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
         enabled: true,
-        settingsFingerprint: "config-test",
+        compatibilityRevision: "config-test",
         config: { outcome: "accepted", callbackSecret: Redacted.make("callback") },
         templates: {},
       }),

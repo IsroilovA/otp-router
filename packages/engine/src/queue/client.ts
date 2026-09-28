@@ -1,11 +1,58 @@
 import { Context, Data, Effect, Layer, Redacted } from "effect";
-import { PgBoss } from "pg-boss";
+import { SqlClient } from "effect/unstable/sql";
+import { PgBoss, type SendOptions } from "pg-boss";
+import { makeConsumers } from "./consumers.js";
+import {
+  cleanupQueue,
+  deliveryQueue,
+  expiryQueue,
+  notificationQueue,
+  QueueOperationError,
+  type DeliveryJob,
+  type QueueName,
+} from "./contracts.js";
 
 export class QueueLifecycleError extends Data.TaggedError("QueueLifecycleError")<{
   readonly operation: "create" | "start" | "stop";
 }> {}
 
-export class Queue extends Context.Service<Queue, PgBoss>()("otp-router/Queue") {}
+const enqueue = (boss: PgBoss, name: QueueName, job: object, options: SendOptions = {}) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    // Capture the current transaction connection here; this adapter never escapes this call.
+    const runtime = yield* Effect.context<never>();
+    yield* Effect.tryPromise({
+      try: () =>
+        boss.send(name, job, {
+          retryLimit: 20,
+          retryDelay: 5,
+          expireInSeconds: 90,
+          deleteAfterSeconds: 86400,
+          ...options,
+          db: {
+            executeSql: async (text, values) => ({
+              rows: Array.from(
+                await Effect.runPromiseWith(runtime)(
+                  sql.unsafe<Record<string, unknown>>(text, values).withoutTransform,
+                ),
+              ),
+            }),
+          },
+        }),
+      catch: () => new QueueOperationError(),
+    }).pipe(Effect.uninterruptible);
+  });
+
+const initialize = (boss: PgBoss) =>
+  Effect.tryPromise({
+    try: async () => {
+      await boss.createQueue(deliveryQueue);
+      await boss.createQueue(notificationQueue, { policy: "short" });
+      await boss.createQueue(expiryQueue, { policy: "short" });
+      await boss.createQueue(cleanupQueue);
+    },
+    catch: () => new QueueOperationError(),
+  }).pipe(Effect.uninterruptible);
 
 const makeQueue = (url: Redacted.Redacted<string>) =>
   Effect.gen(function* () {
@@ -48,8 +95,30 @@ const makeQueue = (url: Redacted.Redacted<string>) =>
       try: () => client.start(),
       catch: () => new QueueLifecycleError({ operation: "start" }),
     }).pipe(Effect.uninterruptible);
-    return client;
+    return {
+      initialize: initialize(client),
+      enqueueDelivery: (job: DeliveryJob) => enqueue(client, deliveryQueue, job),
+      enqueueNotification: (eventId: string, time: Date) =>
+        enqueue(
+          client,
+          notificationQueue,
+          { eventId },
+          { startAfter: time, singletonKey: eventId },
+        ),
+      enqueueExpiry: (operationId: string, time: Date) =>
+        enqueue(
+          client,
+          expiryQueue,
+          { operationId },
+          { startAfter: time, singletonKey: operationId },
+        ),
+      openConsumers: (shutdownGraceMs: number) => makeConsumers(client, shutdownGraceMs),
+    };
   });
+
+export class Queue extends Context.Service<Queue, Effect.Success<ReturnType<typeof makeQueue>>>()(
+  "otp-router/Queue",
+) {}
 
 export const makeQueueLayer = (url: Redacted.Redacted<string>) =>
   Layer.effect(Queue, makeQueue(url));

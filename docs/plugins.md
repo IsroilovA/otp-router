@@ -1,15 +1,15 @@
 # Provider and selector contracts
 
-Extensions are trusted deployment code. Supported [provider contracts](../packages/engine/src/providers/contract.ts) and [selector types](../packages/engine/src/config/config.ts) define interfaces; the [custom adapter example](../examples/custom-adapter/README.md) demonstrates consumption through package exports.
+Extensions are trusted deployment code. Supported [provider contracts](../packages/engine/src/providers/contract.ts) and [selector types](../packages/engine/src/config/config.ts) define interfaces. Build adapters with the exported `defineProvider` helper, which validates local settings and template configuration when the provider instance is constructed. The [custom adapter example](../examples/custom-adapter/README.md) demonstrates this through package exports.
 
 ## Providers
 
 - Validate local settings and templates before accepting traffic. Instance IDs identify accounts; follow [configuration changes](operations.md#configuration-changes) when changing identity or incompatible settings.
 - Preserve the supplied code, recipient, and deadline. Never verify challenges, choose fallback providers, or log send inputs.
-- Success means acceptance, not delivery. Normalize failures with acceptance certainty and declared safe diagnostics; keep defects and interruption distinct. Raw payloads and undeclared diagnostic text must not escape the adapter.
+- Success means acceptance, not delivery. Return `ProviderRejected` with a reason only when provider evidence proves the send was not accepted; return `ProviderUncertain` when acceptance remains unknown. Use `unspecified` when rejection is established but its cause cannot be classified. Declare safe diagnostic codes and keep defects and interruption distinct. Raw payloads and undeclared diagnostic text must not escape the adapter.
 - A timeout or generic server error cannot establish rejection. Disable transport retries, including when the provider supports idempotency. Honor the remaining delivery budget and propagate interruption to transport cancellation.
-- Authenticate raw callbacks before decoding; derive deduplication identity from authenticated evidence, not receipt time. Correlate using opaque delivery references or provider request IDs. Early reports must remain reconcilable.
-- Callbacks cannot authorize a send or verify a code. Automatic polling, paid preflight, and remote cancellation are outside the contract.
+- Authenticate raw callbacks before decoding; derive deduplication identity from authenticated evidence, not receipt time. Each normalized event uses a typed correlation reference: the router's attempt ID when the provider echoes it, or the provider request ID otherwise. An event correlated by attempt may also carry the provider request ID, allowing later reports that contain only that ID to resolve even if the send response was lost. Early reports must remain reconcilable.
+- Callbacks report evidence; the router decides whether that evidence permits [fallback](routing.md). They never verify a code. Automatic polling, paid preflight, and remote cancellation are outside the contract.
 
 ## Templates and locales
 

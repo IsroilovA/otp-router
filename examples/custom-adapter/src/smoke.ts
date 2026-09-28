@@ -36,7 +36,7 @@ const run = Effect.scoped(
       TextProvider.make({
         instanceId: providerId,
         enabled: true,
-        settingsFingerprint: "smoke",
+        compatibilityRevision: "smoke",
         config: { prefix: "OTP " },
         templates: {},
       }),

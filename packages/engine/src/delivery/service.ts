@@ -17,7 +17,7 @@ import {
   CloseRequest,
   type OperationResult,
 } from "./contracts.js";
-import type { OwnerProjection } from "./projection.js";
+import type { DeliveryOwner } from "./owner.js";
 import { domainTransaction, deliveryTransaction } from "./transaction.js";
 import { prepareRoute, normalizePhone } from "./prepare.js";
 import { admitOperation, attachCode } from "./lifecycle.js";
@@ -135,14 +135,14 @@ export const DeliveryLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* RouterConfig;
     const context = yield* Effect.context<
-      PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection
+      PgClient.PgClient | SqlClient.SqlClient | Queue | DeliveryOwner
     >();
     const run = <E extends DomainError | InfrastructureError>(
       operation: ApplicationOperation,
       effect: Effect.Effect<
         OperationResult,
         E,
-        PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection
+        PgClient.PgClient | SqlClient.SqlClient | Queue | DeliveryOwner
       >,
       requestId?: string,
     ) => observeOperation(operation, effect.pipe(Effect.provide(context)), requestId);

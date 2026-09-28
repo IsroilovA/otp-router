@@ -14,6 +14,7 @@ import {
   type ProviderSendInput,
   type ReadyProvider,
 } from "./contract.js";
+import { defineProvider } from "./define.js";
 import { FakeProvider, signFakeCallback, type FakeOutcome } from "./fake.js";
 import { makeMetaDefinition } from "./meta.js";
 import { makePlayMobileDefinition, PlayMobileTemplateSchema } from "./play-mobile.js";
@@ -56,7 +57,7 @@ const build = <Configuration, Encoded>(
     .make({
       instanceId,
       enabled: true,
-      settingsFingerprint: "settings-v1",
+      compatibilityRevision: "settings-v1",
       config,
       templates,
     })
@@ -74,21 +75,28 @@ const fakeConfig = (outcome: FakeOutcome) => ({
 it.effect("normalizes every consequential fake send outcome", () =>
   Effect.gen(function* () {
     const expectations = [
-      ["recipient_unavailable", "RecipientUnavailable", "not_accepted"],
-      ["invalid_recipient", "InvalidRecipient", "not_accepted"],
-      ["throttled", "ProviderThrottled", "not_accepted"],
-      ["configuration_rejected", "ProviderConfigurationRejected", "not_accepted"],
-      ["temporary_rejected", "TemporaryProviderFailure", "not_accepted"],
-      ["unknown", "UnknownProviderOutcome", "unknown"],
+      ["recipient_unavailable", "recipient_unavailable"],
+      ["invalid_recipient", "invalid_recipient"],
+      ["throttled", "throttled"],
+      ["configuration_rejected", "configuration"],
+      ["temporary_rejected", "temporary"],
     ] as const;
     const accepted = yield* build(FakeProvider, fakeConfig("accepted"));
     expect(yield* accepted.send(sendInput())).toEqual({
       providerRequestId: `fake:${attemptId}`,
     });
-    for (const [outcome, tag, acceptance] of expectations) {
+    const uncertain = yield* build(FakeProvider, fakeConfig("unknown"));
+    expect(yield* Effect.result(uncertain.send(sendInput()))).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "ProviderUncertain" },
+    });
+    for (const [outcome, reason] of expectations) {
       const provider = yield* build(FakeProvider, fakeConfig(outcome));
       const result = yield* Effect.result(provider.send(sendInput()));
-      expect(result).toMatchObject({ _tag: "Failure", failure: { _tag: tag, acceptance } });
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ProviderRejected", reason },
+      });
     }
   }),
 );
@@ -105,7 +113,7 @@ it.effect("keeps fake sends interruptible and authenticates callback batches", (
         events: [
           {
             id: "event-1",
-            correlationReference: "delivery-1",
+            correlationReference: { _tag: "Attempt", attemptId },
             status: "delivered",
           },
         ],
@@ -197,53 +205,95 @@ it.effect("does not retry an interrupted or failed provider transport", () =>
       apiToken: "telegram-secret",
     });
     const provider = yield* build(definition, config);
-    const result = yield* Effect.result(provider.send(sendInput()));
+    const result = yield* Effect.result(
+      provider.send(sendInput((yield* provider.resolveTemplate([locale])).template)),
+    );
     expect(result).toMatchObject({
       _tag: "Failure",
-      failure: { _tag: "UnknownProviderOutcome", acceptance: "unknown" },
+      failure: { _tag: "ProviderUncertain" },
     });
     expect(calls).toBe(1);
   }),
 );
 
-it.effect("sends Telegram codes once and treats unclassified rejection as uncertain", () =>
-  Effect.gen(function* () {
-    const requests: HttpRequest[] = [];
-    let response = jsonResponse(200, { ok: true, result: { request_id: "tg-request-1" } });
-    const transport: HttpTransport = {
-      execute: (request) =>
-        Effect.sync(() => {
-          requests.push(request);
-          return response;
-        }),
-    };
-    const definition = makeTelegramDefinition(transport);
-    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-      apiToken: "telegram-secret",
-      callbackUrl: "https://router.example/callbacks/telegram",
-    });
-    const provider = yield* build(definition, config);
-    expect(yield* provider.send(sendInput())).toMatchObject({ providerRequestId: "tg-request-1" });
-    expect(requests).toHaveLength(1);
-    const sent = JSON.parse(decode(requests[0]?.body ?? new Uint8Array())) as unknown;
-    expect(sent).toMatchObject({
-      ttl: 60,
-      phone_number: "+998901234567",
-      code: "012345",
-      payload: attemptId,
-      callback_url: "https://router.example/callbacks/telegram",
-    });
+it.effect(
+  "sends Telegram codes once and distinguishes API rejection from uncertain acceptance",
+  () =>
+    Effect.gen(function* () {
+      const requests: HttpRequest[] = [];
+      let response = jsonResponse(200, { ok: true, result: { request_id: "tg-request-1" } });
+      const transport: HttpTransport = {
+        execute: (request) =>
+          Effect.sync(() => {
+            requests.push(request);
+            return response;
+          }),
+      };
+      const definition = makeTelegramDefinition(transport);
+      const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
+        apiToken: "telegram-secret",
+        callbackUrl: "https://router.example/callbacks/telegram",
+      });
+      const provider = yield* build(definition, config);
+      expect(
+        yield* provider.send(sendInput((yield* provider.resolveTemplate([locale])).template)),
+      ).toMatchObject({ providerRequestId: "tg-request-1" });
+      expect(requests).toHaveLength(1);
+      const sent = JSON.parse(decode(requests[0]?.body ?? new Uint8Array())) as unknown;
+      expect(sent).toMatchObject({
+        ttl: 60,
+        phone_number: "+998901234567",
+        code: "012345",
+        payload: attemptId,
+        callback_url: "https://router.example/callbacks/telegram",
+      });
 
-    response = jsonResponse(400, { ok: false, error: "SOME_NEW_ERROR" });
-    const failure = yield* Effect.result(provider.send(sendInput()));
-    expect(failure).toMatchObject({
-      _tag: "Failure",
-      failure: { _tag: "UnknownProviderOutcome", acceptance: "unknown" },
-    });
-    expect(requests).toHaveLength(2);
-    expect(JSON.stringify(failure)).not.toContain("012345");
-    expect(JSON.stringify(failure)).not.toContain("telegram-secret");
-  }),
+      const request = sendInput((yield* provider.resolveTemplate([locale])).template);
+      const rejections = [
+        [200, "PHONE_NUMBER_NOT_FOUND", "recipient_unavailable", "telegram_recipient_unavailable"],
+        [
+          400,
+          "PHONE_NUMBER_NOT_AVAILABLE",
+          "recipient_unavailable",
+          "telegram_recipient_unavailable",
+        ],
+        [200, "SOME_NEW_ERROR", "unspecified", "telegram_rejected"],
+        [400, "SOME_NEW_ERROR", "unspecified", "telegram_rejected"],
+        [400, "PHONE_NUMBER_INVALID", "unspecified", "telegram_rejected"],
+        [401, "ACCESS_TOKEN_INVALID", "configuration", "access_token_invalid"],
+      ] as const;
+      for (const [status, error, reason, diagnosticCode] of rejections) {
+        response = jsonResponse(status, { ok: false, error });
+        const failure = yield* Effect.result(provider.send(request));
+        expect(failure).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "ProviderRejected", reason, diagnosticCode },
+        });
+        expect(JSON.stringify(failure)).not.toContain(error);
+        expect(JSON.stringify(failure)).not.toContain("012345");
+        expect(JSON.stringify(failure)).not.toContain("telegram-secret");
+      }
+      // An API-shaped body cannot make a timeout, server failure, or existing send safe to repeat.
+      const uncertainResponses = [
+        jsonResponse(500, { ok: false, error: "SOME_NEW_ERROR" }),
+        jsonResponse(503, { ok: false, error: "PHONE_NUMBER_NOT_AVAILABLE" }),
+        jsonResponse(408, { ok: false, error: "SOME_NEW_ERROR" }),
+        jsonResponse(200, { ok: false, error: "MESSAGE_ALREADY_SENT" }),
+        jsonResponse(400, { ok: false, error: "MESSAGE_ALREADY_SENT" }),
+        jsonResponse(400, { ok: true, result: { request_id: "contradictory" } }),
+        jsonResponse(400, { error: "PHONE_NUMBER_NOT_FOUND" }),
+        jsonResponse(200, { ok: false, error: "" }),
+        { status: 502, headers: {}, body: encoder.encode("upstream unavailable") },
+      ];
+      for (const uncertainResponse of uncertainResponses) {
+        response = uncertainResponse;
+        expect(yield* Effect.result(provider.send(request))).toMatchObject({
+          _tag: "Failure",
+          failure: { _tag: "ProviderUncertain" },
+        });
+      }
+      expect(requests).toHaveLength(1 + rejections.length + uncertainResponses.length);
+    }),
 );
 
 it.effect("authenticates and normalizes Telegram delivery reports", () =>
@@ -261,7 +311,7 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
     const body = encoder.encode(
       JSON.stringify({
         request_id: "tg-request-1",
-        payload: "delivery-1",
+        payload: attemptId,
         delivery_status: { status: "delivered", updated_at: Number(timestamp) },
       }),
     );
@@ -280,7 +330,7 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
     });
     expect(result).toMatchObject({
       _tag: "Events",
-      events: [{ correlationReference: "delivery-1", status: "delivered" }],
+      events: [{ correlationReference: { _tag: "Attempt", attemptId }, status: "delivered" }],
     });
     const invalidBody = encoder.encode(
       JSON.stringify({
@@ -335,6 +385,7 @@ it.effect("maps one Meta authentication template send and verifies both callback
     const sent = JSON.parse(decode(requests[0]?.body ?? new Uint8Array())) as unknown;
     expect(sent).toMatchObject({
       to: "998901234567",
+      biz_opaque_callback_data: attemptId,
       template: {
         name: "login_code",
         components: [
@@ -386,13 +437,18 @@ it.effect("maps one Meta authentication template send and verifies both callback
     });
     expect(events).toMatchObject({
       _tag: "Events",
-      events: [{ correlationReference: "wamid.1", status: "delivered" }],
+      events: [
+        {
+          correlationReference: { _tag: "ProviderRequest", providerRequestId: "wamid.1" },
+          status: "delivered",
+        },
+      ],
     });
   }),
 );
 
 it.effect(
-  "renders a single-segment Play Mobile request and preserves internal-error uncertainty",
+  "renders Play Mobile requests and distinguishes request rejection from internal uncertainty",
   () =>
     Effect.gen(function* () {
       const requests: HttpRequest[] = [];
@@ -433,12 +489,229 @@ it.effect(
       expect(failure).toMatchObject({
         _tag: "Failure",
         failure: {
-          _tag: "UnknownProviderOutcome",
-          acceptance: "unknown",
+          _tag: "ProviderUncertain",
           diagnosticCode: "play_mobile_internal_error",
         },
       });
       expect(JSON.stringify(failure)).not.toContain("secret text");
-      expect(requests).toHaveLength(2);
+      for (const errorCode of ["202", "204"]) {
+        response = jsonResponse(400, {
+          error_code: errorCode,
+          error_description: "secret request details",
+        });
+        const rejected = yield* Effect.result(provider.send(sendInput(resolved.template)));
+        expect(rejected).toMatchObject({
+          _tag: "Failure",
+          failure: {
+            _tag: "ProviderRejected",
+            reason: "configuration",
+            diagnosticCode: "request_configuration_rejected",
+          },
+        });
+        expect(JSON.stringify(rejected)).not.toContain("secret request details");
+      }
+      expect(requests).toHaveLength(4);
     }),
+);
+
+it.effect("caps Telegram delivery TTL by saved settings and remaining lifetime", () =>
+  Effect.gen(function* () {
+    const bodies: unknown[] = [];
+    const definition = makeTelegramDefinition({
+      execute: (request) =>
+        Effect.sync(() => {
+          bodies.push(JSON.parse(decode(request.body)) as unknown);
+          return jsonResponse(200, { ok: true, result: { request_id: "bounded-ttl" } });
+        }),
+    });
+    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
+      apiToken: "token",
+      deliveryTtlSeconds: 45,
+    });
+    const provider = yield* build(definition, config);
+    const saved = yield* provider.resolveTemplate([locale]);
+    const changed = yield* build(definition, { ...config, deliveryTtlSeconds: 90 });
+    yield* changed.send({ ...sendInput(saved.template), remainingDeliveryMs: 300_000 });
+    yield* changed.send({ ...sendInput(saved.template), remainingDeliveryMs: 34_900 });
+    const expired = yield* Effect.result(
+      changed.send({ ...sendInput(saved.template), remainingDeliveryMs: 29_999 }),
+    );
+    expect(bodies).toMatchObject([{ ttl: 45 }, { ttl: 34 }]);
+    expect(expired).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "ProviderRejected", diagnosticCode: "delivery_window_too_short" },
+    });
+    for (const ttl of [29, 3_601, Number.NaN]) {
+      expect(
+        Exit.isFailure(
+          Schema.decodeUnknownExit(definition.configSchema)({
+            apiToken: "token",
+            deliveryTtlSeconds: ttl,
+          }),
+        ),
+      ).toBe(true);
+    }
+  }),
+);
+
+it.effect("reconciles Meta lost responses with authenticated echoed attempt references", () =>
+  Effect.gen(function* () {
+    const requests: HttpRequest[] = [];
+    const definition = makeMetaDefinition({
+      execute: (request) => {
+        requests.push(request);
+        return Effect.fail(new HttpTransportError({ reason: "request_failed" }));
+      },
+    });
+    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
+      accessToken: "token",
+      appSecret: "secret",
+      verifyToken: "verify",
+      phoneNumberId: "123",
+      apiVersion: "v23.0",
+    });
+    const template = { name: "auth", languageCode: "en", codeButtonIndex: 0 };
+    const provider = yield* build(definition, config, { en: template });
+    expect(yield* Effect.result(provider.send(sendInput(template)))).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "ProviderUncertain" },
+    });
+    expect(requests).toHaveLength(1);
+    const sent = yield* Schema.decodeUnknownEffect(
+      Schema.Struct({ biz_opaque_callback_data: AttemptIdSchema }),
+    )(JSON.parse(decode(requests[0]?.body ?? new Uint8Array())) as unknown);
+    expect(sent.biz_opaque_callback_data).toBe(attemptId);
+    const callback = provider.callback;
+    if (callback === undefined) return yield* Effect.die("Meta callback missing");
+    for (const status of ["delivered", "failed"]) {
+      const body = encoder.encode(
+        JSON.stringify({
+          object: "whatsapp_business_account",
+          entry: [
+            {
+              changes: [
+                {
+                  field: "messages",
+                  value: {
+                    statuses: [
+                      {
+                        id: "wamid.lost",
+                        status,
+                        timestamp: "1710000000",
+                        biz_opaque_callback_data: sent.biz_opaque_callback_data,
+                      },
+                    ],
+                  },
+                },
+              ],
+            },
+          ],
+        }),
+      );
+      const input = {
+        body,
+        method: "POST",
+        path: "/callbacks/meta",
+        query: {},
+        headers: {
+          "x-hub-signature-256": `sha256=${createHmac("sha256", "secret").update(body).digest("hex")}`,
+        },
+      };
+      expect(yield* callback(input)).toMatchObject({
+        _tag: "Events",
+        events: [
+          {
+            correlationReference: { _tag: "Attempt", attemptId },
+            providerRequestId: "wamid.lost",
+            status,
+          },
+        ],
+      });
+      expect(
+        yield* Effect.result(
+          callback({
+            ...input,
+            body: encoder.encode(
+              decode(body).replace(attemptId, "018f47cb-5395-7c24-9d99-920f5538b169"),
+            ),
+          }),
+        ),
+      ).toMatchObject({ _tag: "Failure", failure: { _tag: "CallbackAuthenticationError" } });
+    }
+    expect(requests).toHaveLength(1);
+  }),
+);
+
+it.effect("maps documented Meta rejections but preserves internal and unknown uncertainty", () =>
+  Effect.gen(function* () {
+    let code = 131026;
+    let calls = 0;
+    const definition = makeMetaDefinition({
+      execute: () =>
+        Effect.sync(() => {
+          calls += 1;
+          return jsonResponse(400, { error: { code, message: "sensitive provider details" } });
+        }),
+    });
+    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
+      accessToken: "token",
+      appSecret: "secret",
+      verifyToken: "verify",
+      phoneNumberId: "123",
+      apiVersion: "v23.0",
+    });
+    const template = { name: "auth", languageCode: "en", codeButtonIndex: 0 };
+    const provider = yield* build(definition, config, { en: template });
+    for (const [errorCode, reason] of [
+      [131026, "recipient_unavailable"],
+      [190, "configuration"],
+      [131008, "configuration"],
+      [132001, "configuration"],
+      [130429, "throttled"],
+    ] as const) {
+      code = errorCode;
+      const result = yield* Effect.result(provider.send(sendInput(template)));
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ProviderRejected", reason },
+      });
+      expect(JSON.stringify(result)).not.toContain("sensitive provider details");
+    }
+    for (const unknown of [131000, 999999]) {
+      code = unknown;
+      expect(yield* Effect.result(provider.send(sendInput(template)))).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "ProviderUncertain" },
+      });
+    }
+    expect(calls).toBe(7);
+  }),
+);
+
+it.effect("validates custom adapter construction through the shared definition helper", () =>
+  Effect.gen(function* () {
+    const invalid = defineProvider({
+      ...FakeProvider,
+      constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: Number.NaN },
+      templateSchema: null,
+      create: () => ({ send: () => Effect.succeed({}) }),
+    });
+    const outcome = yield* Effect.result(
+      Effect.scoped(
+        Layer.build(
+          invalid.make({
+            instanceId,
+            enabled: true,
+            compatibilityRevision: "v1",
+            config: fakeConfig("accepted"),
+            templates: {},
+          }),
+        ),
+      ),
+    );
+    expect(outcome).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "ProviderConfigurationError", diagnosticCode: "invalid_constraints" },
+    });
+  }),
 );

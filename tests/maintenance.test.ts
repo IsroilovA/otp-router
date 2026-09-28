@@ -50,7 +50,7 @@ const configuration: Configuration = {
     FakeProvider.make({
       instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
       enabled: true,
-      settingsFingerprint: "maintenance-fake-v1",
+      compatibilityRevision: "maintenance-fake-v1",
       config: { outcome: "accepted", callbackSecret: Redacted.make("callback-secret") },
       templates: {},
     }),

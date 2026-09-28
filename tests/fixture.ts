@@ -1,5 +1,5 @@
-import { OwnerProjection } from "../packages/engine/src/delivery/projection.js";
-import { OwnerProjectionLive } from "../packages/engine/src/challenges/owner-projection.js";
+import { DeliveryOwner } from "../packages/engine/src/delivery/owner.js";
+import { DeliveryOwnerLive } from "../packages/engine/src/challenges/delivery-owner.js";
 import { DeliveryLive } from "../packages/engine/src/delivery/service.js";
 import { Delivery } from "../packages/engine/src/delivery/contracts.js";
 import { execFile } from "node:child_process";
@@ -9,7 +9,7 @@ import { NodeServices } from "@effect/platform-node";
 import { SqlClient } from "effect/unstable/sql";
 import { PgClient } from "@effect/sql-pg";
 import { Redacted, Context, Effect, Exit, Layer, Scope } from "effect";
-import type { PgBoss } from "pg-boss";
+import { PgBoss } from "pg-boss";
 import { Router, type OperationResult } from "../packages/engine/src/challenges/contracts.js";
 import { RouterLive } from "../packages/engine/src/challenges/service.js";
 import { RouterConfig } from "../packages/engine/src/config/runtime.js";
@@ -147,7 +147,7 @@ export interface IntegrationRuntime {
   readonly router: Context.Service.Shape<typeof Router>;
   readonly delivery: Context.Service.Shape<typeof Delivery>;
   readonly run: <A, E>(
-    effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection>,
+    effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue | DeliveryOwner>,
   ) => Promise<A>;
   readonly reset: () => Promise<void>;
   readonly close: () => Promise<void>;
@@ -179,28 +179,42 @@ export const startRuntime = async (
     const queueContext = await Effect.runPromise(
       buildInScope(makeQueueLayer(Redacted.make(databaseUrl)), scope),
     );
-    const queue = Context.get(queueContext, Queue);
-    await Effect.runPromise(initializeQueues.pipe(Effect.provideService(Queue, queue)));
+    const queueService = Context.get(queueContext, Queue);
+    const queue = await Effect.runPromise(
+      Effect.acquireRelease(
+        Effect.sync(
+          () =>
+            new PgBoss({
+              connectionString: databaseUrl,
+              supervise: false,
+              schedule: false,
+            }),
+        ),
+        (inspector) => Effect.promise(() => inspector.stop({ close: true })),
+      ).pipe(Effect.provideService(Scope.Scope, scope)),
+    );
+    await Effect.runPromise(Effect.promise(() => queue.start()).pipe(Effect.uninterruptible));
+    await Effect.runPromise(initializeQueues.pipe(Effect.provideService(Queue, queueService)));
     const runtimeConfiguration = await Effect.runPromise(
       loadConfiguration(configuration).pipe(Effect.provideService(Scope.Scope, scope)),
     );
-    const projectionContext = await Effect.runPromise(
+    const ownerContext = await Effect.runPromise(
       buildInScope(
-        OwnerProjectionLive.pipe(Layer.provide(Layer.succeed(RouterConfig, runtimeConfiguration))),
+        DeliveryOwnerLive.pipe(Layer.provide(Layer.succeed(RouterConfig, runtimeConfiguration))),
         scope,
       ),
     );
-    const projection = Context.get(projectionContext, OwnerProjection);
+    const owner = Context.get(ownerContext, DeliveryOwner);
     const routerContext = await Effect.runPromise(
       buildInScope(
         Layer.mergeAll(RouterLive, DeliveryLive).pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(RouterConfig, runtimeConfiguration),
-              Layer.succeed(OwnerProjection, projection),
+              Layer.succeed(DeliveryOwner, owner),
               Layer.succeed(SqlClient.SqlClient, sql),
               Layer.succeed(PgClient.PgClient, pg),
-              Layer.succeed(Queue, queue),
+              Layer.succeed(Queue, queueService),
             ),
           ),
         ),
@@ -209,18 +223,14 @@ export const startRuntime = async (
     );
     const router = Context.get(routerContext, Router);
     const run = <A, E>(
-      effect: Effect.Effect<
-        A,
-        E,
-        PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection
-      >,
+      effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue | DeliveryOwner>,
     ): Promise<A> =>
       Effect.runPromise(
         effect.pipe(
           Effect.provideService(PgClient.PgClient, pg),
           Effect.provideService(SqlClient.SqlClient, sql),
-          Effect.provideService(Queue, queue),
-          Effect.provideService(OwnerProjection, projection),
+          Effect.provideService(Queue, queueService),
+          Effect.provideService(DeliveryOwner, owner),
         ),
       );
     const reset = async (): Promise<void> => {

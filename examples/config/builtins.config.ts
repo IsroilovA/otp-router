@@ -55,18 +55,19 @@ export default defineConfig({
       TelegramProvider.make({
         instanceId: telegram,
         enabled: true,
-        settingsFingerprint: "telegram-main-settings-v1",
+        compatibilityRevision: "telegram-main-settings-v1",
         config: {
           apiToken: Redacted.make(required("TELEGRAM_GATEWAY_TOKEN")),
           callbackUrl: required("TELEGRAM_CALLBACK_URL"),
           callbackMaxAgeSeconds: 300,
+          deliveryTtlSeconds: 60,
         },
         templates: {},
       }),
       MetaProvider.make({
         instanceId: whatsapp,
         enabled: true,
-        settingsFingerprint: "whatsapp-main-settings-v1",
+        compatibilityRevision: "whatsapp-main-settings-v1",
         config: {
           accessToken: Redacted.make(required("META_ACCESS_TOKEN")),
           appSecret: Redacted.make(required("META_APP_SECRET")),
@@ -85,7 +86,7 @@ export default defineConfig({
       PlayMobileProvider.make({
         instanceId: sms,
         enabled: true,
-        settingsFingerprint: "sms-main-settings-v1",
+        compatibilityRevision: "sms-main-settings-v1",
         config: {
           username: Redacted.make(required("PLAY_MOBILE_USERNAME")),
           password: Redacted.make(required("PLAY_MOBILE_PASSWORD")),

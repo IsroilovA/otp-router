@@ -1,6 +1,6 @@
 # Custom adapter consumer
 
-This workspace example imports provider contracts from `@otp-router/engine/providers` and selector types from `@otp-router/engine/config`. It compiles against emitted package declarations and executes a deterministic text sink without sending a message.
+This workspace example uses `defineProvider` from `@otp-router/engine/providers` and selector types from `@otp-router/engine/config`. The helper validates adapter settings and metadata when the deployment constructs the provider. The example compiles against emitted package declarations and executes a deterministic text sink without sending a message.
 
 From the repository root:
 

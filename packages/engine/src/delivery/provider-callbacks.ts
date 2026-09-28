@@ -1,4 +1,4 @@
-import { OwnerProjection } from "./projection.js";
+import { DeliveryOwner } from "./owner.js";
 import { count } from "../diagnostics/metrics.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Context, Data, Effect, Layer } from "effect";
@@ -26,7 +26,7 @@ export class ProviderCallbacks extends Context.Service<
 export const ProviderCallbacksLive = Layer.effect(
   ProviderCallbacks,
   Effect.gen(function* () {
-    const projection = yield* OwnerProjection;
+    const owner = yield* DeliveryOwner;
     const config = yield* RouterConfig,
       sql = yield* SqlClient.SqlClient,
       queue = yield* Queue;
@@ -60,7 +60,7 @@ export const ProviderCallbacksLive = Layer.effect(
           yield* ingestEvents(config, input.providerInstanceId, result.events).pipe(
             Effect.provideService(SqlClient.SqlClient, sql),
             Effect.provideService(Queue, queue),
-            Effect.provideService(OwnerProjection, projection),
+            Effect.provideService(DeliveryOwner, owner),
             Effect.mapError(() => new ProviderCallbackError({ code: "temporarily_unavailable" })),
           );
           yield* count("callback", "ingested");

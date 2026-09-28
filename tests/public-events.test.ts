@@ -20,12 +20,16 @@ import {
   replayNotification,
 } from "../packages/engine/src/notifications/send.js";
 import { FakeProvider } from "../packages/engine/src/providers/fake.js";
-import { ProviderInstanceIdSchema } from "../packages/engine/src/providers/contract.js";
+import {
+  AttemptIdSchema,
+  ProviderInstanceIdSchema,
+  type CorrelationReference,
+} from "../packages/engine/src/providers/contract.js";
 import {
   DeliveryJob,
   deliveryQueue,
   notificationQueue,
-} from "../packages/engine/src/queue/jobs.js";
+} from "../packages/engine/src/queue/contracts.js";
 import { startWorkers } from "../packages/engine/src/worker/run.js";
 import { RouterConfig } from "../packages/engine/src/config/runtime.js";
 
@@ -51,7 +55,7 @@ const provider = (id: string) =>
   FakeProvider.make({
     instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)(id),
     enabled: true,
-    settingsFingerprint: id,
+    compatibilityRevision: id,
     config: { outcome: "accepted", callbackSecret: Redacted.make("callback-secret") },
     templates: {},
   });
@@ -112,6 +116,10 @@ const outcome = (id: string, state: "accepted" | "failed" | "uncertain") =>
         state === "accepted" ? "accepted" : state === "failed" ? "not_accepted" : "unknown",
     }),
   );
+const attemptReference = (id: string): CorrelationReference => ({
+  _tag: "Attempt",
+  attemptId: Schema.decodeUnknownSync(AttemptIdSchema)(id),
+});
 const resend = async (id: string) => {
   const harness = app();
   await harness.run(
@@ -237,7 +245,7 @@ describe("public snapshots and transactional events", () => {
     });
     const callback = {
       deduplicationKey: "final-failure",
-      correlationReference: second.attemptId,
+      correlationReference: attemptReference(second.attemptId),
       status: "failed" as const,
     };
     await harness.run(ingestEvents(harness.configuration, "secondary", [callback]));
@@ -254,7 +262,7 @@ describe("public snapshots and transactional events", () => {
       ingestEvents(harness.configuration, "secondary", [
         {
           deduplicationKey: "late-delivery",
-          correlationReference: second.attemptId,
+          correlationReference: attemptReference(second.attemptId),
           status: "delivered",
         },
       ]),
@@ -286,7 +294,11 @@ describe("public snapshots and transactional events", () => {
     expect((await status(created.challengeId)).revision).toBe(accepted.revision);
     await harness.run(
       ingestEvents(harness.configuration, "primary", [
-        { deduplicationKey: "failed", correlationReference: "late", status: "failed" },
+        {
+          deduplicationKey: "failed",
+          correlationReference: { _tag: "ProviderRequest", providerRequestId: "late" },
+          status: "failed",
+        },
       ]),
     );
     expect(await status(created.challengeId)).toMatchObject({ state: "sending", provider: null });
@@ -570,7 +582,10 @@ it("publishes only the final snapshot when acceptance and early failure evidence
       providerRequestId: "inline-reference",
       deliveryEvent: {
         deduplicationKey: "inline-failure",
-        correlationReference: "inline-reference",
+        correlationReference: {
+          _tag: "ProviderRequest",
+          providerRequestId: "inline-reference",
+        },
         status: "failed",
       },
     }),

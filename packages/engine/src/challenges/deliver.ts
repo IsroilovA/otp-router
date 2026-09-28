@@ -4,7 +4,7 @@ import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";
 import type { DeliveryInput } from "../delivery/input.js";
 import { requestSend } from "../delivery/actions.js";
-import type { ChallengeMutation, OperationResult } from "./contracts.js";
+import { type ChallengeMutation, SendResult } from "./contracts.js";
 import { operation, lockOperation, replay, saveResult } from "./idempotency.js";
 import { findChallenge, expire, requireActive } from "./store.js";
 import { snapshot } from "./publication.js";
@@ -18,7 +18,7 @@ export const requestDelivery = (
     Effect.gen(function* () {
       const op = operation(config.settings.crypto, request, "deliver");
       yield* lockOperation(op);
-      const previous = yield* replay(config.settings.crypto, op);
+      const previous = yield* replay(config.settings.crypto, op, SendResult);
       if (previous !== undefined) return previous;
       const initial = yield* findChallenge(request.challengeId);
       yield* lockQuotas([admissionLimit(initial.delivery.recipient_token)]);
@@ -27,7 +27,7 @@ export const requestDelivery = (
       const challenge = yield* expire(locked, time);
       yield* requireActive(challenge);
       const attemptId = yield* requestSend(config, challenge.delivery, request.input, time);
-      const response: OperationResult = {
+      const response: SendResult = {
         outcome: "delivery_queued",
         replayed: false,
         body: {

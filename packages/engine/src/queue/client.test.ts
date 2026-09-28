@@ -1,8 +1,10 @@
 import { expect, it } from "@effect/vitest";
-import { Redacted, Effect, Exit, Fiber, Layer } from "effect";
-import { PgBoss } from "pg-boss";
+import { Redacted, Context, Effect, Exit, Fiber, Layer } from "effect";
+import { TestClock } from "effect/testing";
+import { PgBoss, type Job } from "pg-boss";
 import { vi } from "vitest";
-import { makeQueueLayer } from "./client.js";
+import { makeQueueLayer, Queue } from "./client.js";
+import { deliveryQueue } from "./contracts.js";
 
 const buildQueue = Layer.build(
   makeQueueLayer(Redacted.make("postgres://test:secret@localhost/test")),
@@ -42,5 +44,113 @@ it.effect("waits for in-flight startup before releasing an interrupted scope", (
     expect(stop).toHaveBeenCalledOnce();
     expect(boss.listenerCount("error")).toBe(0);
     expect(boss.listenerCount("warning")).toBe(0);
+  }),
+);
+
+it.effect(
+  "waits for interrupted worker registration before stopping claims and releasing the queue",
+  () =>
+    Effect.gen(function* () {
+      vi.spyOn(PgBoss.prototype, "start").mockImplementation(async function (this: PgBoss) {
+        return this;
+      });
+      const entered = Promise.withResolvers<void>();
+      const registered = Promise.withResolvers<string>();
+      vi.spyOn(PgBoss.prototype, "work").mockImplementation(() => {
+        entered.resolve();
+        return registered.promise;
+      });
+      const stopClaims = vi.spyOn(PgBoss.prototype, "offWork").mockResolvedValue(undefined);
+      const stop = vi.spyOn(PgBoss.prototype, "stop").mockResolvedValue(undefined);
+      const fiber = yield* Effect.gen(function* () {
+        const context = yield* Layer.build(
+          makeQueueLayer(Redacted.make("postgres://test:secret@localhost/test")),
+        );
+        const consumers = yield* Context.get(context, Queue).openConsumers(1000);
+        yield* consumers.register(
+          { queue: deliveryQueue, concurrency: 1, pollingIntervalSeconds: 0.5 },
+          () => Effect.void,
+        );
+        return yield* Effect.never;
+      }).pipe(Effect.scoped, Effect.forkChild);
+      yield* Effect.promise(() => entered.promise);
+      yield* Effect.forkChild(Fiber.interrupt(fiber));
+      yield* Effect.yieldNow;
+      expect(stopClaims).not.toHaveBeenCalled();
+      expect(stop).not.toHaveBeenCalled();
+      registered.resolve("worker");
+      expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+      expect(stopClaims).toHaveBeenCalledTimes(4);
+      expect(stop).toHaveBeenCalledOnce();
+    }),
+);
+
+it.effect("drains interrupted job cleanup before releasing resources and rejects late claims", () =>
+  Effect.gen(function* () {
+    vi.spyOn(PgBoss.prototype, "start").mockImplementation(async function (this: PgBoss) {
+      return this;
+    });
+    const registered = Promise.withResolvers<(jobs: Job<unknown>[]) => Promise<void>>();
+    vi.spyOn(PgBoss.prototype, "work").mockImplementation(async (_name, _options, handler) => {
+      registered.resolve(async (jobs) => {
+        await handler(jobs);
+      });
+      return "worker";
+    });
+    const stoppedClaims = Promise.withResolvers<void>();
+    vi.spyOn(PgBoss.prototype, "offWork").mockImplementation(async () => {
+      stoppedClaims.resolve();
+    });
+    const stop = vi.spyOn(PgBoss.prototype, "stop").mockResolvedValue(undefined);
+    const started = Promise.withResolvers<void>();
+    const cleaning = Promise.withResolvers<void>();
+    const cleaned = Promise.withResolvers<void>();
+    const invoked = vi.fn<() => void>(() => started.resolve());
+    const fiber = yield* Effect.gen(function* () {
+      const context = yield* Layer.build(
+        makeQueueLayer(Redacted.make("postgres://test:secret@localhost/test")),
+      );
+      const consumers = yield* Context.get(context, Queue).openConsumers(1000);
+      yield* consumers.register(
+        { queue: deliveryQueue, concurrency: 1, pollingIntervalSeconds: 0.5 },
+        () =>
+          Effect.sync(invoked).pipe(
+            Effect.andThen(Effect.never),
+            Effect.ensuring(
+              Effect.promise(() => {
+                cleaning.resolve();
+                return cleaned.promise;
+              }),
+            ),
+          ),
+      );
+      return yield* Effect.never;
+    }).pipe(Effect.scoped, Effect.forkChild);
+    const handler = yield* Effect.promise(() => registered.promise);
+    const job: Job<unknown> = {
+      id: "claimed-job",
+      name: deliveryQueue,
+      data: {},
+      expireInSeconds: 90,
+      heartbeatSeconds: null,
+      signal: new AbortController().signal,
+    };
+    const completion = handler([job]).then(
+      () => "completed",
+      () => "interrupted",
+    );
+    yield* Effect.promise(() => started.promise);
+    yield* Effect.forkChild(Fiber.interrupt(fiber));
+    yield* Effect.promise(() => stoppedClaims.promise);
+    yield* TestClock.adjust("1 second");
+    yield* Effect.promise(() => cleaning.promise);
+    expect(stop).not.toHaveBeenCalled();
+    const lateClaim = yield* Effect.result(Effect.tryPromise(() => handler([job])));
+    expect(lateClaim._tag).toBe("Failure");
+    expect(invoked).toHaveBeenCalledOnce();
+    cleaned.resolve();
+    expect(yield* Effect.promise(() => completion)).toBe("interrupted");
+    expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+    expect(stop).toHaveBeenCalledOnce();
   }),
 );

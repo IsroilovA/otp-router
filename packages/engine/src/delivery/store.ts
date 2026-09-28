@@ -62,12 +62,3 @@ export const requireExternal = (operation: Operation) =>
   operation.owner === "external"
     ? Effect.void
     : Effect.fail(new DomainError({ code: "managed_operation" }));
-
-export const invalidRecipient = (id: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    return (yield* single(
-      Schema.Struct({ stopped: Schema.Boolean }),
-      sql`SELECT EXISTS (SELECT 1 FROM otp_router.delivery_attempts WHERE operation_id = ${id} AND failure_category = 'InvalidRecipient') AS stopped`,
-    )).stopped;
-  });

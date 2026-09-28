@@ -13,7 +13,7 @@ import {
 } from "./eligibility.js";
 import type { Snapshot } from "./contracts.js";
 import { Attempt, type Operation } from "./records.js";
-import { findAttempt, invalidRecipient } from "./store.js";
+import { findAttempt } from "./store.js";
 
 type Action = Snapshot["actions"]["resend"];
 const deny = (reason: NonNullable<Action["reason"]>, availableAt?: string): Action => ({
@@ -79,7 +79,7 @@ export const buildSnapshot = (config: RuntimeConfiguration, operation: Operation
         ? undefined
         : yield* findAttempt(operation.current_attempt_id);
     if (delivery === undefined) return preparedSnapshot(operation, time);
-    const stopped = yield* invalidRecipient(operation.id);
+    const stopped = operation.recipient_invalid;
     const admissionRetry = yield* quotaRetryAt([admissionLimit(operation.recipient_token)], time);
     const actions = deliveryActions(withAdmissionCooldown(operation, admissionRetry), delivery, {
       options: yield* availableProviders(config, operation, time),
@@ -101,7 +101,10 @@ export const buildSnapshot = (config: RuntimeConfiguration, operation: Operation
       revision: operation.public_revision + 1,
       ...overallState(
         operation,
-        { ...delivery, failure_category: stopped ? "InvalidRecipient" : delivery.failure_category },
+        {
+          ...delivery,
+          failure_category: stopped ? "invalid_recipient" : delivery.failure_category,
+        },
         accepted !== undefined,
         evidence.some((entry) => entry.state === "uncertain"),
       ),
@@ -141,7 +144,7 @@ export const overallState = (
   if (accepted) return { state: "accepted", reason: null };
   if (uncertain) return { state: "uncertain", reason: "delivery_uncertain" };
   const reason =
-    delivery.failure_category === "InvalidRecipient"
+    delivery.failure_category === "invalid_recipient"
       ? "invalid_recipient"
       : delivery.diagnostic_code === "rate_limited"
         ? "rate_limited"

@@ -6,7 +6,8 @@ import {
   type ProviderMakeOptions,
   ProviderConfigurationError,
   TemplateResolutionError,
-  UnknownProviderOutcome,
+  ProviderUncertain,
+  ProviderRejected,
   type Locale,
   type ProviderConstraints,
   type ProviderSendInput,
@@ -18,24 +19,22 @@ const decoder = new TextDecoder("utf-8", { fatal: true });
 
 export const encodeJson = (value: Schema.Json): Uint8Array => encoder.encode(JSON.stringify(value));
 
-export const decodeUtf8 = (body: Uint8Array): Effect.Effect<string, UnknownProviderOutcome> =>
+export const decodeUtf8 = (body: Uint8Array): Effect.Effect<string, ProviderUncertain> =>
   Effect.try({
     try: () => decoder.decode(body),
     catch: () =>
-      new UnknownProviderOutcome({
-        acceptance: "unknown",
+      new ProviderUncertain({
         diagnosticCode: "invalid_provider_response",
       }),
   });
 
-export const parseJson = (body: Uint8Array): Effect.Effect<unknown, UnknownProviderOutcome> =>
+export const parseJson = (body: Uint8Array): Effect.Effect<unknown, ProviderUncertain> =>
   decodeUtf8(body).pipe(
     Effect.flatMap((text) =>
       Effect.try({
         try: () => JSON.parse(text) as unknown,
         catch: () =>
-          new UnknownProviderOutcome({
-            acceptance: "unknown",
+          new ProviderUncertain({
             diagnosticCode: "invalid_provider_response",
           }),
       }),
@@ -45,14 +44,14 @@ export const parseJson = (body: Uint8Array): Effect.Effect<unknown, UnknownProvi
 export const validateSendInput = (
   input: ProviderSendInput,
   constraints: ProviderConstraints,
-): Effect.Effect<void, UnknownProviderOutcome> => {
+): Effect.Effect<void, ProviderRejected> => {
   if (
     input.code.length < constraints.minCodeLength ||
     input.code.length > constraints.maxCodeLength
   ) {
     return Effect.fail(
-      new UnknownProviderOutcome({
-        acceptance: "not_accepted",
+      new ProviderRejected({
+        reason: "configuration",
         diagnosticCode: "unsupported_code_length",
       }),
     );
@@ -65,9 +64,9 @@ export const validateTimeout = (
   defaultSendTimeoutMs: number,
 ): Effect.Effect<number, ProviderConfigurationError> => {
   const timeout = sendTimeoutMs ?? defaultSendTimeoutMs;
-  return Number.isFinite(defaultSendTimeoutMs) &&
+  return Number.isSafeInteger(defaultSendTimeoutMs) &&
     defaultSendTimeoutMs > 0 &&
-    Number.isFinite(timeout) &&
+    Number.isSafeInteger(timeout) &&
     timeout > 0
     ? Effect.succeed(timeout)
     : Effect.fail(new ProviderConfigurationError({ diagnosticCode: "invalid_send_timeout" }));
@@ -104,12 +103,12 @@ export const makeTemplateResolver = <Template extends Schema.Json, Encoded>(
 export const validateTemplate = <Template extends Schema.Json, Encoded>(
   schema: Schema.Codec<Template, Encoded>,
   template: Schema.Json,
-): Effect.Effect<Template, UnknownProviderOutcome> =>
+): Effect.Effect<Template, ProviderRejected> =>
   Schema.decodeUnknownEffect(schema)(template).pipe(
     Effect.mapError(
       () =>
-        new UnknownProviderOutcome({
-          acceptance: "not_accepted",
+        new ProviderRejected({
+          reason: "configuration",
           diagnosticCode: "invalid_template_snapshot",
         }),
     ),
@@ -138,7 +137,7 @@ export const validateAllTemplates = <A, I>(
 
 export const readyMetadata = <C, I>(
   definition: Omit<ProviderDefinition<C, I>, "make" | "configSchema" | "templateSchema">,
-  options: Pick<ProviderMakeOptions<C>, "instanceId" | "enabled" | "settingsFingerprint">,
+  options: Pick<ProviderMakeOptions<C>, "instanceId" | "enabled" | "compatibilityRevision">,
   sendTimeoutMs: number,
 ) => ({
   instanceId: options.instanceId,
@@ -147,7 +146,7 @@ export const readyMetadata = <C, I>(
   contractVersion: definition.contractVersion,
   channel: definition.channel,
   enabled: options.enabled,
-  settingsFingerprint: options.settingsFingerprint,
+  compatibilityRevision: options.compatibilityRevision,
   constraints: definition.constraints,
   defaultSendTimeoutMs: definition.defaultSendTimeoutMs,
   sendTimeoutMs,

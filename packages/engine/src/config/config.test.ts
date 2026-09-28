@@ -10,7 +10,7 @@ const ring = (n: number) => ({
 const provider = FakeProvider.make({
   instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
   enabled: true,
-  settingsFingerprint: "test",
+  compatibilityRevision: "test",
   config: { outcome: "accepted", callbackSecret: Redacted.make("callback") },
   templates: {},
 });
@@ -98,6 +98,43 @@ it.effect("validates adapter defaults even when a valid timeout override is supp
     ).toBe("Failure");
   }),
 );
+it.effect("rejects provider budget and label keys without registered instances", () =>
+  Effect.gen(function* () {
+    for (const settings of [
+      { ...base.settings, providerSendLimits15m: { missing: 10 } },
+      { ...base.settings, providerLabels: { missing: "Unregistered" } },
+    ]) {
+      const result = yield* loadConfiguration({ ...base, settings }).pipe(Effect.result);
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "unknown_provider" },
+      });
+    }
+  }),
+);
+
+it.effect("rejects malformed provider constraints at registration", () =>
+  Effect.gen(function* () {
+    const ready = Context.get(yield* Layer.build(provider), ProviderInstance);
+    for (const constraints of [
+      { ...ready.constraints, minCodeLength: Number.NaN },
+      { ...ready.constraints, maxCodeLength: Number.POSITIVE_INFINITY },
+      { ...ready.constraints, minCodeLength: -1 },
+      { ...ready.constraints, minCodeLength: 8, maxCodeLength: 6 },
+      { ...ready.constraints, minDeliveryWindowMs: Number.NEGATIVE_INFINITY },
+      { ...ready.constraints, minDeliveryWindowMs: -1 },
+    ]) {
+      const result = yield* loadConfiguration({
+        ...base,
+        providers: [Layer.succeed(ProviderInstance, { ...ready, constraints })],
+      }).pipe(Effect.result);
+      expect(result).toMatchObject({
+        _tag: "Failure",
+        failure: { reason: "invalid_provider_registration" },
+      });
+    }
+  }),
+);
 it.effect(
   "checks every configured template at startup, including locales not selected by defaults",
   () =>
@@ -113,7 +150,7 @@ it.effect(
       const layer = MetaProvider.make({
         instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("meta"),
         enabled: true,
-        settingsFingerprint: "meta-account",
+        compatibilityRevision: "meta-account",
         config: configuration,
         templates: {
           en: { name: "otp", languageCode: "en", codeButtonIndex: 0 },

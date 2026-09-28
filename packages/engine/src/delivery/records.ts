@@ -20,7 +20,7 @@ export const SavedProvider = Schema.Struct({
   template: Schema.Json,
   sendTimeoutMs: Schema.Number,
   minDeliveryWindowMs: Schema.Number,
-  settingsFingerprint: Schema.String,
+  compatibilityRevision: Schema.String,
 });
 export type SavedProvider = typeof SavedProvider.Type;
 export const PolicySnapshot = Schema.Struct({
@@ -71,6 +71,7 @@ export const Operation = Schema.Struct({
   processing_started: Schema.Boolean,
   routing_revision: Schema.Int,
   automatic_stopped: Schema.Boolean,
+  recipient_invalid: Schema.Boolean,
   current_attempt_id: Schema.NullOr(Schema.String),
   initial_position: Schema.Int,
   next_user_send_at: Schema.Date,

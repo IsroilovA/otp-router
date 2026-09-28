@@ -1,5 +1,5 @@
-import type { OwnerProjection } from "./delivery/projection.js";
-import { OwnerProjectionLive } from "./challenges/owner-projection.js";
+import type { DeliveryOwner } from "./delivery/owner.js";
+import { DeliveryOwnerLive } from "./challenges/delivery-owner.js";
 import { DeliveryLive } from "./delivery/service.js";
 import type { PgClient } from "@effect/sql-pg";
 import { Context, Effect, Layer, type Redacted } from "effect";
@@ -19,7 +19,7 @@ import { startWorkers } from "./worker/run.js";
 
 const makeControl = Effect.gen(function* () {
   const context = yield* Effect.context<
-    PgClient.PgClient | SqlClient.SqlClient | Queue | RouterConfig | OwnerProjection
+    PgClient.PgClient | SqlClient.SqlClient | Queue | RouterConfig | DeliveryOwner
   >();
   const config = Context.get(context, RouterConfig);
   const sql = Context.get(context, SqlClient.SqlClient);
@@ -72,7 +72,7 @@ export const makeEngineLayer = (options: {
           ProviderCallbacksLive,
           Layer.effect(EngineControl, makeControl),
         ).pipe(
-          Layer.provide(OwnerProjectionLive.pipe(Layer.provide(dependencies))),
+          Layer.provide(DeliveryOwnerLive.pipe(Layer.provide(dependencies))),
           Layer.provide(dependencies),
         ),
       );

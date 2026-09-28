@@ -14,7 +14,7 @@ import {
   type ProviderSendInput,
   type ReadyProvider,
 } from "../packages/engine/src/providers/contract.js";
-import { deliveryQueue } from "../packages/engine/src/queue/jobs.js";
+import { deliveryQueue } from "../packages/engine/src/queue/contracts.js";
 import {
   type IntegrationRuntime,
   type PostgresFixture,
@@ -32,7 +32,7 @@ const provider: ReadyProvider = {
   contractVersion: ProviderContractVersion,
   channel: "fake",
   enabled: true,
-  settingsFingerprint: "fault-test-provider-v1",
+  compatibilityRevision: "fault-test-provider-v1",
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   sendTimeoutMs: 1_000,
   defaultSendTimeoutMs: 1_000,

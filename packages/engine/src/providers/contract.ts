@@ -43,38 +43,32 @@ export type IsoDateTime = typeof IsoDateTimeSchema.Type;
 export const LocaleSchema = Schema.NonEmptyString.pipe(Schema.check(Schema.isMaxLength(64)));
 export type Locale = typeof LocaleSchema.Type;
 
-export type AcceptanceCertainty = "not_accepted" | "unknown";
-
-interface ProviderFailureFields {
-  readonly acceptance: AcceptanceCertainty;
+export class ProviderRejected extends Data.TaggedError("ProviderRejected")<{
+  readonly reason:
+    | "recipient_unavailable"
+    | "invalid_recipient"
+    | "throttled"
+    | "configuration"
+    | "temporary"
+    | "unspecified";
   readonly diagnosticCode: string;
   readonly retryAt?: IsoDateTime;
-}
+}> {}
 
-export class RecipientUnavailable extends Data.TaggedError(
-  "RecipientUnavailable",
-)<ProviderFailureFields> {}
-export class InvalidRecipient extends Data.TaggedError("InvalidRecipient")<ProviderFailureFields> {}
-export class ProviderThrottled extends Data.TaggedError(
-  "ProviderThrottled",
-)<ProviderFailureFields> {}
-export class ProviderConfigurationRejected extends Data.TaggedError(
-  "ProviderConfigurationRejected",
-)<ProviderFailureFields> {}
-export class TemporaryProviderFailure extends Data.TaggedError(
-  "TemporaryProviderFailure",
-)<ProviderFailureFields> {}
-export class UnknownProviderOutcome extends Data.TaggedError(
-  "UnknownProviderOutcome",
-)<ProviderFailureFields> {}
+export class ProviderUncertain extends Data.TaggedError("ProviderUncertain")<{
+  readonly diagnosticCode: string;
+}> {}
 
-export type ProviderSendError =
-  | RecipientUnavailable
-  | InvalidRecipient
-  | ProviderThrottled
-  | ProviderConfigurationRejected
-  | TemporaryProviderFailure
-  | UnknownProviderOutcome;
+export type ProviderSendError = ProviderRejected | ProviderUncertain;
+
+export const CorrelationReferenceSchema = Schema.Union([
+  Schema.Struct({ _tag: Schema.Literal("Attempt"), attemptId: AttemptIdSchema }),
+  Schema.Struct({
+    _tag: Schema.Literal("ProviderRequest"),
+    providerRequestId: Schema.NonEmptyString,
+  }),
+]);
+export type CorrelationReference = typeof CorrelationReferenceSchema.Type;
 
 export class ProviderConfigurationError extends Data.TaggedError("ProviderConfigurationError")<{
   readonly diagnosticCode: string;
@@ -123,7 +117,8 @@ export interface ProviderSendInput {
 
 export interface NormalizedDeliveryEvent {
   readonly deduplicationKey: string;
-  readonly correlationReference: string;
+  readonly correlationReference: CorrelationReference;
+  readonly providerRequestId?: string;
   readonly status: "accepted" | "delivered" | "failed" | "cancelled";
   readonly providerEventTime?: IsoDateTime;
   readonly diagnosticCode?: string;
@@ -158,7 +153,7 @@ export interface ReadyProvider {
   readonly contractVersion: typeof ProviderContractVersion;
   readonly channel: string;
   readonly enabled: boolean;
-  readonly settingsFingerprint: string;
+  readonly compatibilityRevision: string;
   readonly constraints: ProviderConstraints;
   readonly sendTimeoutMs: number;
   readonly defaultSendTimeoutMs: number;
@@ -178,7 +173,7 @@ export class ProviderInstance extends Context.Service<ProviderInstance, ReadyPro
 export interface ProviderMakeOptions<Configuration> {
   readonly instanceId: ProviderInstanceId;
   readonly enabled: boolean;
-  readonly settingsFingerprint: string;
+  readonly compatibilityRevision: string;
   readonly sendTimeoutMs?: number;
   readonly config: Configuration;
   readonly templates: Readonly<Record<string, unknown>>;

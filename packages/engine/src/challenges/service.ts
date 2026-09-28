@@ -1,5 +1,5 @@
 import { observeOperation } from "../diagnostics/operation.js";
-import { OwnerProjection } from "../delivery/projection.js";
+import { DeliveryOwner } from "../delivery/owner.js";
 import { SqlClient } from "effect/unstable/sql";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Layer, Schema } from "effect";
@@ -31,18 +31,14 @@ export const RouterLive = Layer.effect(
     const config = yield* RouterConfig;
     const pg = yield* PgClient.PgClient;
     const queue = yield* Queue;
-    const projection = yield* OwnerProjection;
+    const owner = yield* DeliveryOwner;
     const provide = <A, E>(
-      effect: Effect.Effect<
-        A,
-        E,
-        PgClient.PgClient | SqlClient.SqlClient | Queue | OwnerProjection
-      >,
+      effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue | DeliveryOwner>,
     ) =>
       effect.pipe(
         Effect.provideService(PgClient.PgClient, pg),
         Effect.provideService(Queue, queue),
-        Effect.provideService(OwnerProjection, projection),
+        Effect.provideService(DeliveryOwner, owner),
         Effect.provideService(SqlClient.SqlClient, pg),
       );
     return {

@@ -12,6 +12,8 @@ node apps/server/dist/main.js --openapi > openapi.json
 
 Choose [managed verification or external delivery](engine.md). Create, retain the operation ID and request key, then observe [public updates](webhooks.md). Creation acknowledges durable work, not provider acceptance. The local fake provider accepts sends without delivering a usable code.
 
+The [HTTP walkthrough](../examples/http/README.md) runs both flows against the local server and shows a same-key replay after an ambiguous response.
+
 For managed verification, submit the received code with its original purpose/context and preserve leading zeros. Consume the successful result once in your backend. Cancel when the flow ends without verification.
 
 For external delivery, preserve the upstream deadline and attached code across channel changes. Close when the upstream flow ends; delivery status never authenticates the recipient.

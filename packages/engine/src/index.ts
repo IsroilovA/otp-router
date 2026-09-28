@@ -7,4 +7,4 @@ export {
 export { prometheus as engineMetrics } from "./diagnostics/metrics.js";
 export { SchemaCompatibilityError } from "./database/migrations.js";
 export { QueueLifecycleError } from "./queue/client.js";
-export { QueueOperationError } from "./queue/jobs.js";
+export { QueueOperationError } from "./queue/contracts.js";

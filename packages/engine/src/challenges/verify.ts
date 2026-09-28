@@ -7,7 +7,7 @@ import { PgClient } from "@effect/sql-pg";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";
-import { type ChallengeMutation, type OperationResult, type VerifyInput } from "./contracts.js";
+import { type ChallengeMutation, VerifyResult, type VerifyInput } from "./contracts.js";
 import { DomainError } from "../errors.js";
 import { digest, equalDigest } from "../crypto.js";
 import { lockOperation, operation, replay, saveResult } from "./idempotency.js";
@@ -49,7 +49,7 @@ export const verifyChallenge = (
         Effect.catchTag("DomainError", () => Effect.succeed(undefined)),
       );
       if (initial !== undefined) yield* checkBinding(initial, request.input);
-      const previous = yield* replay(config.settings.crypto, op);
+      const previous = yield* replay(config.settings.crypto, op, VerifyResult);
       if (previous !== undefined) return previous;
       if (initial === undefined)
         return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
@@ -87,7 +87,7 @@ export const verifyChallenge = (
         yield* sql`UPDATE otp_router.challenges SET verification_state = 'verified', verification_id = ${verificationId}, verified_at = ${time}, terminal_at = ${time} WHERE id = ${challenge.id} AND verification_state = 'active'`;
         yield* closeOperation(challenge.delivery, "closed", time);
         yield* eraseSecrets(challenge.id);
-        const response: OperationResult = {
+        const response: VerifyResult = {
           outcome: "completed",
           replayed: false,
           body: {
@@ -110,7 +110,7 @@ export const verifyChallenge = (
       yield* changed(challenge.operation_id);
       const active = challenge.incorrect_guesses + 1 < challenge.max_incorrect_guesses;
       if (!active) yield* terminate(challenge, "locked", time);
-      const response: OperationResult = {
+      const response: VerifyResult = {
         outcome: "incorrect_code",
         replayed: false,
         body: {

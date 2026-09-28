@@ -54,7 +54,7 @@ export default defineConfig({
       FakeProvider.make({
         instanceId: fakeProviderId,
         enabled: true,
-        settingsFingerprint: "local-demo-fake-v1",
+        compatibilityRevision: "local-demo-fake-v1",
         config: {
           outcome: "accepted",
           callbackSecret: Redacted.make(callbackSecret),

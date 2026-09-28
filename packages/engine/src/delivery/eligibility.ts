@@ -13,7 +13,7 @@ const providerCompatible = (config: RuntimeConfiguration, saved: SavedProvider) 
   return (
     provider !== undefined &&
     provider.enabled &&
-    provider.settingsFingerprint === saved.settingsFingerprint &&
+    provider.compatibilityRevision === saved.compatibilityRevision &&
     provider.pluginId === saved.pluginId
   );
 };

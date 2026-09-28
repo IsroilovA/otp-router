@@ -1,8 +1,8 @@
 # OTP Router
 
-A private, unreleased OTP engine with a self-hosted HTTP server. Route managed verification or externally generated codes through Telegram, WhatsApp, SMS, and custom providers, with shared send limits and explicit handling of uncertain delivery.
+A private, unreleased self-hosted OTP router. Applications use its HTTP server to route managed verification or externally generated codes through Telegram, WhatsApp, SMS, and custom providers, with shared send limits and explicit handling of uncertain delivery.
 
-Confirmed failures can advance the configured route. Uncertain delivery requires an explicit user action; resends preserve the original code and expiry. External-code callers retain responsibility for generation and verification.
+Confirmed failures can advance the configured route. Uncertainty alone never triggers an automatic resend; an explicit user action can request another attempt. Resends preserve the original code and expiry. External-code callers retain responsibility for generation and verification.
 
 Start with [local setup](docs/running.md). The examples use fake providers and send no messages. Use [provider setup](docs/provider-setup.md) for a real deployment.
 

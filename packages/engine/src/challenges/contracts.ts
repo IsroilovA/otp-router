@@ -114,16 +114,22 @@ export const OperationOutcome = Schema.Literals([
   "delivery_queued",
   "incorrect_code",
 ]);
-export const OperationResult = Schema.Union([
-  Schema.Struct({ outcome: Schema.Literal("created"), body: Snapshot, replayed: Schema.Boolean }),
+export const CreateResult = Schema.Struct({
+  outcome: Schema.Literal("created"),
+  body: Snapshot,
+  replayed: Schema.Boolean,
+});
+export type CreateResult = typeof CreateResult.Type;
+export const StatusResult = Schema.Struct({
+  outcome: Schema.Literal("completed"),
+  body: Snapshot,
+  replayed: Schema.Boolean,
+});
+export type StatusResult = typeof StatusResult.Type;
+export const VerifyResult = Schema.Union([
   Schema.Struct({
     outcome: Schema.Literal("completed"),
-    body: Schema.Union([Snapshot, VerificationResult]),
-    replayed: Schema.Boolean,
-  }),
-  Schema.Struct({
-    outcome: Schema.Literal("delivery_queued"),
-    body: DeliveryResult,
+    body: VerificationResult,
     replayed: Schema.Boolean,
   }),
   Schema.Struct({
@@ -132,6 +138,14 @@ export const OperationResult = Schema.Union([
     replayed: Schema.Boolean,
   }),
 ]);
+export type VerifyResult = typeof VerifyResult.Type;
+export const SendResult = Schema.Struct({
+  outcome: Schema.Literal("delivery_queued"),
+  body: DeliveryResult,
+  replayed: Schema.Boolean,
+});
+export type SendResult = typeof SendResult.Type;
+export const OperationResult = Schema.Union([CreateResult, StatusResult, VerifyResult, SendResult]);
 export type OperationResult = typeof OperationResult.Type;
 const mutation = <S extends Schema.Top>(input: S) =>
   Schema.Struct({ key: Opaque, input, requestId: Opaque });
@@ -146,18 +160,16 @@ export type ChallengeMutation<A> = Mutation<A> & { readonly challengeId: string 
 export class Router extends Context.Service<
   Router,
   {
-    readonly create: (
-      request: Mutation<CreateInput>,
-    ) => Effect.Effect<OperationResult, DomainError>;
-    readonly status: (id: string) => Effect.Effect<OperationResult, DomainError>;
+    readonly create: (request: Mutation<CreateInput>) => Effect.Effect<CreateResult, DomainError>;
+    readonly status: (id: string) => Effect.Effect<StatusResult, DomainError>;
     readonly verify: (
       request: ChallengeMutation<VerifyInput>,
-    ) => Effect.Effect<OperationResult, DomainError>;
+    ) => Effect.Effect<VerifyResult, DomainError>;
     readonly deliver: (
       request: ChallengeMutation<DeliveryInput>,
-    ) => Effect.Effect<OperationResult, DomainError>;
+    ) => Effect.Effect<SendResult, DomainError>;
     readonly cancel: (
       request: ChallengeMutation<Record<string, never>>,
-    ) => Effect.Effect<OperationResult, DomainError>;
+    ) => Effect.Effect<StatusResult, DomainError>;
   }
 >()("otp-router/Router") {}

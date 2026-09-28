@@ -1,12 +1,12 @@
 import type { ProviderSendError } from "../providers/contract.js";
 import { Cause, Effect } from "effect";
 import type { CryptoError } from "../crypto.js";
-import type { CorrelationConflict } from "../delivery/callbacks.js";
+import type { CorrelationConflict } from "../delivery/correlation.js";
 import { failureCategory, type InfrastructureError } from "../diagnostics/operation.js";
 import { logEvent, type FailureCategory } from "../diagnostics/log.js";
 import { count } from "../diagnostics/metrics.js";
 import type { DomainError } from "../errors.js";
-import { QueueOperationError } from "../queue/jobs.js";
+import { QueueOperationError } from "../queue/contracts.js";
 
 type JobError =
   | InfrastructureError
@@ -25,12 +25,8 @@ const category = (cause: Cause.Cause<JobError>): FailureCategory => {
       return "crypto_failure";
     case "CorrelationConflict":
       return "correlation_conflict";
-    case "InvalidRecipient":
-    case "RecipientUnavailable":
-    case "ProviderThrottled":
-    case "ProviderConfigurationRejected":
-    case "TemporaryProviderFailure":
-    case "UnknownProviderOutcome":
+    case "ProviderRejected":
+    case "ProviderUncertain":
       return "provider_failure";
     case "TimeoutError":
       return "timeout";

@@ -2,7 +2,7 @@ import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
 import { databaseTime } from "../database/transaction.js";
-import { OperationOutcome, ResultBody, OperationResult } from "./contracts.js";
+import { OperationOutcome, ResultBody, type OperationResult } from "./contracts.js";
 import { DomainError } from "../errors.js";
 import { Digest, digest, equalDigest, operationIdentity, type CryptoConfig } from "../crypto.js";
 import { expire, findChallenge } from "./store.js";
@@ -56,7 +56,7 @@ const codeInput = (config: CryptoConfig, op: Operation) => [
   op.identity,
   op.code,
 ];
-export const replay = (config: CryptoConfig, op: Operation) =>
+export const replay = <S extends Schema.Top>(config: CryptoConfig, op: Operation, schema: S) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
     let record = (yield* rows(
@@ -87,18 +87,18 @@ export const replay = (config: CryptoConfig, op: Operation) =>
       if (!equalDigest(code.value, record.code_fingerprint.value))
         return yield* Effect.fail(new DomainError({ code: "idempotency_conflict" }));
     }
-    return yield* Schema.decodeUnknownEffect(OperationResult)({
+    return yield* Schema.decodeUnknownEffect(schema)({
       outcome: record.outcome,
       body: record.response,
       replayed: true,
     });
   });
-export const saveResult = (
+export const saveResult = <A extends OperationResult>(
   config: CryptoConfig,
   op: Operation,
   result: {
     readonly challengeId: string;
-    readonly response: OperationResult;
+    readonly response: A;
     readonly active: boolean;
     readonly time: Date;
   },

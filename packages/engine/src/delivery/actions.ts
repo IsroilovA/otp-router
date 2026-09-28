@@ -5,7 +5,7 @@ import type { RuntimeConfiguration } from "../config/config.js";
 import { DomainError } from "../errors.js";
 import type { DeliveryInput } from "./input.js";
 import type { Operation, Attempt } from "./records.js";
-import { findOperation, findAttempt, requireActive, invalidRecipient } from "./store.js";
+import { findOperation, findAttempt, requireActive } from "./store.js";
 import {
   availableProviders,
   resolveChoice,
@@ -48,7 +48,7 @@ export const requestSend = (
 ) =>
   Effect.gen(function* () {
     yield* requireActive(operation);
-    if (operation.current_attempt_id === null || (yield* invalidRecipient(operation.id)))
+    if (operation.current_attempt_id === null || operation.recipient_invalid)
       return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
     const current = yield* findAttempt(operation.current_attempt_id);
     const target = yield* selectTarget(

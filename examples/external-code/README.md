@@ -1,6 +1,6 @@
 # External-code delivery example
 
-This standalone consumer uses supported exports and a fake provider. It sends no real messages and requires no verification key. Use a fresh disposable PostgreSQL database; demo keys are fixed and public.
+For server integration, start with the [HTTP walkthrough](../http/README.md). This private engine example uses supported exports and a fake provider. It sends no real messages and requires no verification key. Use a fresh disposable PostgreSQL database; demo keys are fixed and public.
 
 ```sh
 pnpm build

@@ -1,4 +1,4 @@
-import { OwnerProjection } from "./projection.js";
+import { DeliveryOwner } from "./owner.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
 import { Effect } from "effect";
@@ -37,9 +37,12 @@ export const flushChanges = (config: RuntimeConfiguration, time?: Date) =>
     if (changes === undefined) return;
     for (const id of changes) {
       const publishedAt = time ?? (yield* databaseTime);
+      const operation = yield* findOperation(id);
+      const owner = operation.owner === "challenge" ? yield* DeliveryOwner : undefined;
+      const ownerId = owner === undefined ? undefined : yield* owner.synchronize(id, publishedAt);
       const delivery = yield* publish(config, id, publishedAt);
-      if ((yield* findOperation(id)).owner === "challenge")
-        yield* (yield* OwnerProjection).publish(id, publishedAt, delivery);
+      if (owner !== undefined && ownerId !== undefined)
+        yield* owner.publish(ownerId, publishedAt, delivery);
     }
     changes.clear();
   });

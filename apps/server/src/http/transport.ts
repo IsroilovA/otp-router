@@ -24,6 +24,8 @@ import { Cause, type Context, Data, Effect, Layer, Redacted, Schema, Stream } fr
 import {
   CreateInput as CreateInputSchema,
   DeliveryInput as DeliveryInputSchema,
+  type DomainError,
+  type Mutation,
   type OperationResult,
   Router,
   VerifyInput as VerifyInputSchema,
@@ -222,14 +224,19 @@ const complete = (
 const transportFailure = (error: BodyTooLarge | InvalidRequest, requestId: string) =>
   errorResponse(error instanceof BodyTooLarge ? "request_too_large" : "invalid_request", requestId);
 
-const mutationInput = <A, I>(
+const completeMutation = <A, I>(
   request: HttpServerRequest.HttpServerRequest,
   headers: { readonly "idempotency-key": string },
   schema: Schema.Codec<A, I>,
+  run: (mutation: Mutation<A>) => Effect.Effect<OperationResult | ExternalResult, DomainError>,
 ) =>
-  Effect.all({
-    key: Effect.succeed(headers["idempotency-key"]),
-    input: readApplicationJson(request, schema),
+  Effect.gen(function* () {
+    const { requestId } = yield* RequestContext;
+    const input = yield* readApplicationJson(request, schema).pipe(
+      Effect.catch((error) => transportFailure(error, requestId)),
+    );
+    if (HttpServerResponse.isHttpServerResponse(input)) return input;
+    return yield* complete(run({ key: headers["idempotency-key"], input, requestId }), requestId);
   });
 
 const queryFromRequest = (request: HttpServerRequest.HttpServerRequest): WebhookQuery => {
@@ -280,65 +287,41 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
   handlers
     .handleRaw("prepareDelivery", ({ request, headers }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const delivery = yield* Delivery;
-        const parsed = yield* mutationInput(request, headers, PrepareInput).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
+        return yield* completeMutation(request, headers, PrepareInput, (mutation) =>
+          delivery.prepare(mutation),
         );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(delivery.prepare({ ...parsed, requestId }), requestId);
       }),
     )
     .handleRaw("createDelivery", ({ request, headers }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const delivery = yield* Delivery;
-        const parsed = yield* mutationInput(request, headers, ExternalCreateInput).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
+        return yield* completeMutation(request, headers, ExternalCreateInput, (mutation) =>
+          delivery.create(mutation),
         );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(delivery.create({ ...parsed, requestId }), requestId);
       }),
     )
     .handleRaw("submitDeliveryCode", ({ request, headers, params: path }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const delivery = yield* Delivery;
-        const parsed = yield* mutationInput(request, headers, SubmitInput).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
-        );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(
-          delivery.submitCode({ ...parsed, requestId, operationId: path.operationId }),
-          requestId,
+        return yield* completeMutation(request, headers, SubmitInput, (mutation) =>
+          delivery.submitCode({ ...mutation, operationId: path.operationId }),
         );
       }),
     )
     .handleRaw("sendDelivery", ({ request, headers, params: path }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const delivery = yield* Delivery;
-        const parsed = yield* mutationInput(request, headers, DeliveryInputSchema).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
-        );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(
-          delivery.deliver({ ...parsed, requestId, operationId: path.operationId }),
-          requestId,
+        return yield* completeMutation(request, headers, DeliveryInputSchema, (mutation) =>
+          delivery.deliver({ ...mutation, operationId: path.operationId }),
         );
       }),
     )
     .handleRaw("closeDelivery", ({ request, headers, params: path }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const delivery = yield* Delivery;
-        const parsed = yield* mutationInput(request, headers, Schema.Struct({})).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
-        );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(
-          delivery.close({ ...parsed, requestId, operationId: path.operationId }),
-          requestId,
+        return yield* completeMutation(request, headers, Schema.Struct({}), (mutation) =>
+          delivery.close({ ...mutation, operationId: path.operationId }),
         );
       }),
     )
@@ -351,13 +334,10 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     )
     .handleRaw("createChallenge", ({ request, headers }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, headers, CreateInputSchema).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
+        return yield* completeMutation(request, headers, CreateInputSchema, (mutation) =>
+          router.create(mutation),
         );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(router.create({ ...parsed, requestId }), requestId);
       }),
     )
     .handleRaw("getChallengeStatus", ({ params: path }) =>
@@ -369,43 +349,25 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     )
     .handleRaw("verifyChallenge", ({ params: path, request, headers }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, headers, VerifyInputSchema).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
-        );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(
-          router.verify({ ...parsed, challengeId: path.challengeId, requestId }),
-          requestId,
+        return yield* completeMutation(request, headers, VerifyInputSchema, (mutation) =>
+          router.verify({ ...mutation, challengeId: path.challengeId }),
         );
       }),
     )
     .handleRaw("scheduleDelivery", ({ params: path, request, headers }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, headers, DeliveryInputSchema).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
-        );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(
-          router.deliver({ ...parsed, challengeId: path.challengeId, requestId }),
-          requestId,
+        return yield* completeMutation(request, headers, DeliveryInputSchema, (mutation) =>
+          router.deliver({ ...mutation, challengeId: path.challengeId }),
         );
       }),
     )
     .handleRaw("cancelChallenge", ({ params: path, request, headers }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
         const router = yield* Router;
-        const parsed = yield* mutationInput(request, headers, Schema.Struct({})).pipe(
-          Effect.catch((error) => transportFailure(error, requestId)),
-        );
-        if (HttpServerResponse.isHttpServerResponse(parsed)) return parsed;
-        return yield* complete(
-          router.cancel({ ...parsed, challengeId: path.challengeId, requestId }),
-          requestId,
+        return yield* completeMutation(request, headers, Schema.Struct({}), (mutation) =>
+          router.cancel({ ...mutation, challengeId: path.challengeId }),
         );
       }),
     ),

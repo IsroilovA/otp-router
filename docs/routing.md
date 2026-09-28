@@ -32,7 +32,20 @@ Verification progresses from active to verified, locked, expired, or cancelled. 
 
 Recovery treats unresolved dispatched work as uncertain and never sends it again. Explicit resend is a new attempt.
 
-Callbacks and send responses share outcome rules. Late acceptance cannot overwrite delivery or confirmed final failure. Authenticated delivery evidence can resolve an earlier uncertain or failed outcome. A stale failure cannot advance a newer route.
+Callbacks and send responses share these evidence rules. Evidence updates an existing invocation; only an explicit command creates a user send.
+
+| Existing evidence | Incoming evidence | Result and routing effect |
+| --- | --- | --- |
+| Pending, dispatching, or uncertain | Acceptance | Record acceptance; suppress pending automatic fallback. |
+| Any unsuppressed attempt | First authenticated delivery | Record delivery; stop automatic progression and suppress pending automatic fallback. |
+| Accepted | Uncertain | Preserve acceptance. |
+| Failed | Acceptance, uncertainty, or repeated failure | Preserve final failure and its existing failure diagnostics; no second fallback. |
+| Delivered or suppressed | Any | Preserve state; duplicates cannot suppress a later explicit action. |
+| Current active attempt | First confirmed rejection or final failure | Consider the next eligible provider under current budgets, unless delivery is stopped. |
+| Older attempt or routing revision | Failure | Record evidence without advancing the current route. |
+| Terminal operation | Any | Never reopen it or change its terminal public snapshot. |
+
+Authenticated delivery can resolve an earlier uncertain or failed attempt. A confirmed invalid-recipient rejection separately sets a permanent stop for the operation: neither later delivery evidence nor an explicit command clears it. Verification remains available under its original limits. Repeated failure reports cannot erase that stop.
 
 New delivery evidence stops pending automatic fallback, but does not cancel an explicit user send. Duplicate delivery evidence must not suppress a later action. Local cancellation cannot recall a message already in flight.
 

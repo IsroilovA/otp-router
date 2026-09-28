@@ -36,7 +36,7 @@ const program = Effect.gen(function* () {
       FakeProvider.make({
         instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
         enabled: true,
-        settingsFingerprint: "external-code-demo",
+        compatibilityRevision: "external-code-demo",
         config: { outcome: "accepted", callbackSecret: Redacted.make("demo-callback") },
         templates: {},
       }),

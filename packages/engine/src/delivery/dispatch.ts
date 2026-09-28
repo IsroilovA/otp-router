@@ -28,7 +28,7 @@ import {
 } from "../delivery/quotas.js";
 import { expire, findOperation, findAttempt, findSecrets } from "./store.js";
 import type { Operation, Attempt } from "./records.js";
-import type { DeliveryJob } from "../queue/jobs.js";
+import type { DeliveryJob } from "../queue/contracts.js";
 import { availableProviders } from "./eligibility.js";
 import { recordAccepted } from "./callbacks.js";
 import { mergeLockedOutcome, recordOutcome, type Outcome } from "./outcomes.js";
@@ -149,13 +149,19 @@ const failureOutcome = (
   )
     return { state: "uncertain", acceptance: "unknown", diagnosticCode: "interrupted_or_timeout" };
   const error = failure.value;
+  if (error._tag === "ProviderUncertain")
+    return {
+      state: "uncertain",
+      acceptance: "unknown",
+      diagnosticCode: providerDiagnostic(provider, error.diagnosticCode),
+    };
   return {
-    state: error.acceptance === "not_accepted" ? "failed" : "uncertain",
-    acceptance: error.acceptance,
-    failureCategory: error._tag,
+    state: "failed",
+    acceptance: "not_accepted",
+    failureCategory: error.reason,
     diagnosticCode: providerDiagnostic(provider, error.diagnosticCode),
     ...(error.retryAt === undefined ? {} : { retryAt: new Date(error.retryAt) }),
-    stop: error._tag === "InvalidRecipient",
+    stop: error.reason === "invalid_recipient",
   };
 };
 export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>

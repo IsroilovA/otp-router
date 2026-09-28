@@ -12,6 +12,8 @@ Configuration is trusted executable TypeScript. Install its imports with the dep
 - Enable manual provider/channel selection deliberately and restrict its choices when necessary. Selectors may narrow routes but cannot relax limits.
 - Ensure timeouts, delivery windows, code formats, and locale templates fit every enabled capability. Use [provider setup](provider-setup.md) for remote account requirements.
 
+Startup rejects malformed provider constraints, policies whose lifetime or code length cannot fit a routed provider, and provider budget or label references without a registered instance. Validate the full deployment entry before directing traffic to it.
+
 ## Database identity
 
 A database belongs to one deployment and its stable recipient-lookup key. Keep both unchanged across restarts, and retain keys needed by stored data. Empty business tables do not reset that identity.

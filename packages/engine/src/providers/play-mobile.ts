@@ -1,28 +1,21 @@
+import { defineProvider } from "./define.js";
 import { createHash } from "node:crypto";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 import {
-  InvalidRecipient,
-  ProviderConfigurationRejected,
   ProviderContractVersion,
-  ProviderInstance,
-  UnknownProviderOutcome,
+  ProviderUncertain,
+  ProviderRejected,
   type ProviderDefinition,
   type ProviderSendError,
   type ProviderSendInput,
-  type ReadyProvider,
   type SendAccepted,
 } from "./contract.js";
 import {
-  readyMetadata,
   decodeUtf8,
   encodeJson,
-  makeTemplateResolver,
   parseJson,
   validateSendInput,
   validateTemplate,
-  validateTimeout,
-  validateProviderConfiguration,
-  validateAllTemplates,
 } from "./internal.js";
 import { fetchTransport, type HttpTransport } from "./transport.js";
 
@@ -88,25 +81,24 @@ const messageId = (attemptId: string): string =>
 const mapErrorCode = (code: string): ProviderSendError => {
   if (code === "100") {
     // An internal server error, even under HTTP 400, does not establish rejection.
-    return new UnknownProviderOutcome({
-      acceptance: "unknown",
+    return new ProviderUncertain({
       diagnosticCode: "play_mobile_internal_error",
     });
   }
   if (code === "102") {
-    return new ProviderConfigurationRejected({
-      acceptance: "not_accepted",
+    return new ProviderRejected({
+      reason: "configuration",
       diagnosticCode: "account_locked",
     });
   }
   if (code === "202" || code === "204") {
-    return new InvalidRecipient({
-      acceptance: "not_accepted",
-      diagnosticCode: "recipient_rejected",
+    // Missing recipient fields (204 is email-only) do not invalidate the phone across providers.
+    return new ProviderRejected({
+      reason: "configuration",
+      diagnosticCode: "request_configuration_rejected",
     });
   }
-  return new UnknownProviderOutcome({
-    acceptance: "unknown",
+  return new ProviderUncertain({
     diagnosticCode: "unknown_provider_error",
   });
 };
@@ -121,15 +113,15 @@ const send = (
     const template = yield* validateTemplate(PlayMobileTemplateSchema, input.template);
     const text = template.text.replace("{{code}}", input.code);
     if (!fitsSingleSms(text)) {
-      return yield* new UnknownProviderOutcome({
-        acceptance: "not_accepted",
+      return yield* new ProviderRejected({
+        reason: "configuration",
         diagnosticCode: "message_exceeds_single_segment",
       });
     }
     const ttl = Math.floor(input.remainingDeliveryMs / 1000);
     if (ttl < 1)
-      return yield* new UnknownProviderOutcome({
-        acceptance: "not_accepted",
+      return yield* new ProviderRejected({
+        reason: "configuration",
         diagnosticCode: "delivery_window_too_short",
       });
     const requestId = messageId(input.attemptId);
@@ -163,8 +155,7 @@ const send = (
       .pipe(
         Effect.mapError(
           () =>
-            new UnknownProviderOutcome({
-              acceptance: "unknown",
+            new ProviderUncertain({
               diagnosticCode: "transport_failure",
             }),
         ),
@@ -172,8 +163,7 @@ const send = (
     if (response.status === 200) {
       const responseText = yield* decodeUtf8(response.body);
       if (responseText.trim() !== "Request is received") {
-        return yield* new UnknownProviderOutcome({
-          acceptance: "unknown",
+        return yield* new ProviderUncertain({
           diagnosticCode: "invalid_provider_response",
         });
       }
@@ -185,8 +175,7 @@ const send = (
     const parsed = yield* Schema.decodeUnknownEffect(PlayMobileErrorSchema)(json).pipe(
       Effect.mapError(
         () =>
-          new UnknownProviderOutcome({
-            acceptance: "unknown",
+          new ProviderUncertain({
             diagnosticCode: "play_mobile_rejected_unknown",
           }),
       ),
@@ -209,7 +198,7 @@ const metadata = {
     "message_exceeds_single_segment",
     "play_mobile_internal_error",
     "play_mobile_rejected_unknown",
-    "recipient_rejected",
+    "request_configuration_rejected",
     "transport_failure",
     "unknown_provider_error",
     "unsupported_code_length",
@@ -219,28 +208,14 @@ const metadata = {
 
 export const makePlayMobileDefinition = (
   transport: HttpTransport = fetchTransport,
-): ProviderDefinition<PlayMobileConfiguration, typeof PlayMobileConfigurationSchema.Encoded> => ({
-  ...metadata,
-  configSchema: PlayMobileConfigurationSchema,
-  templateSchema: PlayMobileTemplateSchema,
-  make: (options) =>
-    Layer.effect(
-      ProviderInstance,
-      Effect.gen(function* () {
-        yield* validateProviderConfiguration(PlayMobileConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(
-          options.sendTimeoutMs,
-          metadata.defaultSendTimeoutMs,
-        );
-        yield* validateAllTemplates(PlayMobileTemplateSchema, options.templates);
-        const ready: ReadyProvider = {
-          ...readyMetadata(metadata, options, sendTimeoutMs),
-          resolveTemplate: makeTemplateResolver(PlayMobileTemplateSchema, options.templates),
-          send: (input) => send(transport, options.config, input),
-        };
-        return ready;
-      }),
-    ),
-});
+): ProviderDefinition<PlayMobileConfiguration, typeof PlayMobileConfigurationSchema.Encoded> =>
+  defineProvider({
+    ...metadata,
+    configSchema: PlayMobileConfigurationSchema,
+    templateSchema: PlayMobileTemplateSchema,
+    create: (config) => ({
+      send: (input) => send(transport, config, input),
+    }),
+  });
 
 export const PlayMobileProvider = makePlayMobileDefinition();

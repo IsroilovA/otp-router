@@ -14,7 +14,7 @@ import {
 import type { Configuration } from "../packages/engine/src/config/config.js";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { dispatch, dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
-import { DeliveryJob, deliveryQueue } from "../packages/engine/src/queue/jobs.js";
+import { DeliveryJob, deliveryQueue } from "../packages/engine/src/queue/contracts.js";
 import { DeliveryEvent } from "../packages/engine/src/delivery/contracts.js";
 import { validateStoredKeys } from "../packages/engine/src/database/compatibility.js";
 import {
@@ -46,7 +46,7 @@ const provider = Layer.effect(
     FakeProvider.make({
       instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
       enabled: true,
-      settingsFingerprint: "external-tests",
+      compatibilityRevision: "external-tests",
       config: { outcome: "accepted", callbackSecret: Redacted.make("fake-callback") },
       templates: {},
     }),

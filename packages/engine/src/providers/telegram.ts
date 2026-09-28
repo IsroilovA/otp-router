@@ -1,36 +1,43 @@
+import { defineProvider } from "./define.js";
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Redacted, Schema } from "effect";
 import {
+  AttemptIdSchema,
   CallbackAuthenticationError,
   CallbackFormatError,
-  ProviderConfigurationRejected,
   ProviderContractVersion,
-  ProviderInstance,
-  UnknownProviderOutcome,
+  ProviderUncertain,
+  ProviderRejected,
   type CallbackInput,
   type CallbackResult,
   type NormalizedDeliveryEvent,
   type ProviderDefinition,
   type ProviderSendError,
   type ProviderSendInput,
-  type ReadyProvider,
   type SendAccepted,
 } from "./contract.js";
 import {
   callbackTimestamp,
   getHeader,
-  readyMetadata,
   decodeUtf8,
   encodeJson,
   parseJson,
   resolveNoTemplate,
+  validateTemplate,
   validateSendInput,
-  validateTimeout,
-  validateProviderConfiguration,
 } from "./internal.js";
 import { fetchTransport, type HttpTransport } from "./transport.js";
 
+const TelegramDeliverySettingsSchema = Schema.Struct({
+  deliveryTtlSeconds: Schema.Int.pipe(
+    Schema.check(Schema.isBetween({ minimum: 30, maximum: 3_600 })),
+  ),
+});
+
 const TelegramConfigurationSchema = Schema.Struct({
+  deliveryTtlSeconds: TelegramDeliverySettingsSchema.fields.deliveryTtlSeconds.pipe(
+    Schema.withDecodingDefaultType(Effect.succeed(60)),
+  ),
   apiToken: Schema.RedactedFromValue(Schema.NonEmptyString),
   senderUsername: Schema.optional(Schema.NonEmptyString),
   callbackUrl: Schema.optional(Schema.String.pipe(Schema.check(Schema.isPattern(/^https:\/\//)))),
@@ -52,7 +59,7 @@ const TelegramResponseSchema = Schema.Union([TelegramSuccessSchema, TelegramErro
 
 const TelegramCallbackSchema = Schema.Struct({
   request_id: Schema.NonEmptyString,
-  payload: Schema.optional(Schema.NonEmptyString),
+  payload: Schema.optional(AttemptIdSchema),
   delivery_status: Schema.Struct({
     status: Schema.Literals(["sent", "delivered", "read", "expired", "revoked"]),
     updated_at: Schema.Int,
@@ -140,7 +147,11 @@ const callbackEvent = (
     const providerEventTime = yield* callbackTimestamp(report.delivery_status.updated_at);
     const event: NormalizedDeliveryEvent = {
       deduplicationKey: `${report.request_id}:${status}:${String(report.delivery_status.updated_at)}`,
-      correlationReference: report.payload ?? report.request_id,
+      correlationReference:
+        report.payload === undefined
+          ? { _tag: "ProviderRequest", providerRequestId: report.request_id }
+          : { _tag: "Attempt", attemptId: report.payload },
+      providerRequestId: report.request_id,
       status: normalizeStatus(status),
       providerEventTime,
       ...(status === "expired" ? { diagnosticCode: "expired" } : {}),
@@ -148,16 +159,30 @@ const callbackEvent = (
     return { _tag: "Events", events: [event] };
   });
 
-const mapTelegramError = (error: string): ProviderSendError =>
-  error === "ACCESS_TOKEN_INVALID"
-    ? new ProviderConfigurationRejected({
-        acceptance: "not_accepted",
+// Gateway defines ok:false as an unsuccessful API request. The error name refines
+// the reason, not that rejection evidence. An existing send is the exception.
+// https://core.telegram.org/gateway/verification-tutorial#sending-auth-codes
+const mapTelegramError = (error: string): ProviderSendError => {
+  switch (error) {
+    case "ACCESS_TOKEN_INVALID":
+      return new ProviderRejected({
+        reason: "configuration",
         diagnosticCode: "access_token_invalid",
-      })
-    : new UnknownProviderOutcome({
-        acceptance: "unknown",
-        diagnosticCode: "telegram_rejected_unknown",
       });
+    // Observed Gateway names: https://github.com/apifonica/tg-gateway-go/blob/main/errors.go
+    // These describe Telegram reachability, never a globally invalid recipient.
+    case "PHONE_NUMBER_NOT_FOUND":
+    case "PHONE_NUMBER_NOT_AVAILABLE":
+      return new ProviderRejected({
+        reason: "recipient_unavailable",
+        diagnosticCode: "telegram_recipient_unavailable",
+      });
+    case "MESSAGE_ALREADY_SENT":
+      return new ProviderUncertain({ diagnosticCode: "telegram_already_sent" });
+    default:
+      return new ProviderRejected({ reason: "unspecified", diagnosticCode: "telegram_rejected" });
+  }
+};
 
 const send = (
   transport: HttpTransport,
@@ -166,14 +191,15 @@ const send = (
 ): Effect.Effect<SendAccepted, ProviderSendError> =>
   Effect.gen(function* () {
     yield* validateSendInput(input, constraints);
+    const settings = yield* validateTemplate(TelegramDeliverySettingsSchema, input.template);
     const remainingSeconds = Math.floor(input.remainingDeliveryMs / 1_000);
     if (remainingSeconds < 30) {
-      return yield* new UnknownProviderOutcome({
-        acceptance: "not_accepted",
+      return yield* new ProviderRejected({
+        reason: "configuration",
         diagnosticCode: "delivery_window_too_short",
       });
     }
-    const ttl = Math.min(remainingSeconds, 3_600);
+    const ttl = Math.min(remainingSeconds, settings.deliveryTtlSeconds);
     const body: Record<string, Schema.Json> = {
       phone_number: input.recipient,
       code: input.code,
@@ -195,23 +221,30 @@ const send = (
       .pipe(
         Effect.mapError(
           () =>
-            new UnknownProviderOutcome({
-              acceptance: "unknown",
+            new ProviderUncertain({
               diagnosticCode: "transport_failure",
             }),
         ),
       );
+    // A server/proxy failure or HTTP timeout is not an application rejection,
+    // even when its body resembles the Gateway error envelope.
+    const successfulHttp = response.status >= 200 && response.status < 300;
+    const clientErrorHttp =
+      response.status >= 400 && response.status < 500 && response.status !== 408;
+    if (!successfulHttp && !clientErrorHttp)
+      return yield* new ProviderUncertain({ diagnosticCode: "unexpected_http_status" });
     const json = yield* parseJson(response.body);
     const parsed = yield* Schema.decodeUnknownEffect(TelegramResponseSchema)(json).pipe(
       Effect.mapError(
         () =>
-          new UnknownProviderOutcome({
-            acceptance: "unknown",
+          new ProviderUncertain({
             diagnosticCode: "invalid_provider_response",
           }),
       ),
     );
     if (!parsed.ok) return yield* mapTelegramError(parsed.error);
+    if (!successfulHttp)
+      return yield* new ProviderUncertain({ diagnosticCode: "invalid_provider_response" });
     return {
       providerRequestId: parsed.result.request_id,
     };
@@ -229,7 +262,11 @@ const metadata = {
     "delivery_window_too_short",
     "expired",
     "invalid_provider_response",
-    "telegram_rejected_unknown",
+    "invalid_template_snapshot",
+    "telegram_rejected",
+    "telegram_recipient_unavailable",
+    "telegram_already_sent",
+    "unexpected_http_status",
     "transport_failure",
     "unsupported_code_length",
   ],
@@ -238,28 +275,22 @@ const metadata = {
 
 export const makeTelegramDefinition = (
   transport: HttpTransport = fetchTransport,
-): ProviderDefinition<TelegramConfiguration, typeof TelegramConfigurationSchema.Encoded> => ({
-  ...metadata,
-  configSchema: TelegramConfigurationSchema,
-  templateSchema: null,
-  make: (options) =>
-    Layer.effect(
-      ProviderInstance,
-      Effect.gen(function* () {
-        yield* validateProviderConfiguration(TelegramConfigurationSchema, options.config);
-        const sendTimeoutMs = yield* validateTimeout(
-          options.sendTimeoutMs,
-          metadata.defaultSendTimeoutMs,
-        );
-        const ready: ReadyProvider = {
-          ...readyMetadata(metadata, options, sendTimeoutMs),
-          resolveTemplate: resolveNoTemplate,
-          send: (input) => send(transport, options.config, input),
-          callback: (input) => callbackEvent(input, options.config),
-        };
-        return ready;
-      }),
-    ),
-});
+): ProviderDefinition<TelegramConfiguration, typeof TelegramConfigurationSchema.Encoded> =>
+  defineProvider({
+    ...metadata,
+    configSchema: TelegramConfigurationSchema,
+    templateSchema: null,
+    create: (config) => ({
+      resolveTemplate: (candidates) =>
+        resolveNoTemplate(candidates).pipe(
+          Effect.map(({ locale }) => ({
+            locale,
+            template: { deliveryTtlSeconds: config.deliveryTtlSeconds },
+          })),
+        ),
+      send: (input) => send(transport, config, input),
+      callback: (input) => callbackEvent(input, config),
+    }),
+  });
 
 export const TelegramProvider = makeTelegramDefinition();

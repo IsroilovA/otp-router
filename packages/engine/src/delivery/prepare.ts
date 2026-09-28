@@ -56,7 +56,7 @@ export const prepareRoute = (config: RuntimeConfiguration, input: PrepareInput) 
           template: resolved.template,
           sendTimeoutMs: provider.sendTimeoutMs,
           minDeliveryWindowMs: provider.constraints.minDeliveryWindowMs,
-          settingsFingerprint: provider.settingsFingerprint,
+          compatibilityRevision: provider.compatibilityRevision,
         };
       }),
     );
