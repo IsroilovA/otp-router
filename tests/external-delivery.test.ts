@@ -70,6 +70,14 @@ const configuration: Configuration = {
       },
     },
     purposes: { login: ["external"] },
+    projects: {
+      demo: {
+        policyIds: ["external"],
+        sendLimit15m: 10000,
+        sendLimit24h: 100000,
+        authorization: "disabled",
+      },
+    },
     deploymentSendLimit15m: 10,
     deploymentSendLimit24h: 20,
   },
@@ -81,7 +89,12 @@ const app = () => {
   if (runtime === undefined) throw new Error("Runtime missing");
   return runtime;
 };
-const request = <A>(input: A) => ({ key: randomUUID(), requestId: randomUUID(), input });
+const request = <A>(input: A) => ({
+  projectId: "demo",
+  key: randomUUID(),
+  requestId: randomUUID(),
+  input,
+});
 const prepare = () =>
   Effect.runPromise(
     app().delivery.prepare(
@@ -160,7 +173,8 @@ describe("independent durable external code delivery", () => {
     const events = await app().run(
       rows(
         Schema.Struct({ body: Schema.String }),
-        app().pg`SELECT body FROM otp_router.events ORDER BY revision`,
+        app()
+          .pg`SELECT body FROM otp_router.events WHERE kind = 'delivery.updated' ORDER BY revision`,
       ),
     );
     for (const event of events) {
@@ -185,7 +199,7 @@ describe("independent durable external code delivery", () => {
         app().delivery.submitCode(submit(operationId)).pipe(Effect.result),
       );
       expect(result).toMatchObject({ _tag: "Failure", failure: { code: "operation_unavailable" } });
-      const snapshot = (await Effect.runPromise(app().delivery.status(operationId))).body;
+      const snapshot = (await Effect.runPromise(app().delivery.status("demo", operationId))).body;
       expect(snapshot).toMatchObject({
         state: terminal === "close" ? "closed" : "expired",
         actions: {
@@ -231,7 +245,19 @@ describe("independent durable external code delivery", () => {
     const attached = await Effect.runPromise(app().delivery.submitCode(submit(body.operationId)));
     const h = await startRuntime(database.databaseUrl, {
       ...configuration,
-      settings: { ...configuration.settings, policies: {}, purposes: {} },
+      settings: {
+        ...configuration.settings,
+        policies: {},
+        purposes: {},
+        projects: {
+          demo: {
+            policyIds: [],
+            sendLimit15m: 10000,
+            sendLimit24h: 100000,
+            authorization: "disabled",
+          },
+        },
+      },
       providers: [],
     });
     try {
@@ -262,7 +288,9 @@ describe("independent durable external code delivery", () => {
     ]);
     await runQueued();
     expect(sent).toHaveLength(0);
-    expect((await Effect.runPromise(app().delivery.status(operationId))).body.state).toBe("closed");
+    expect((await Effect.runPromise(app().delivery.status("demo", operationId))).body.state).toBe(
+      "closed",
+    );
     expect(await counts()).toMatchObject({ secrets: 0, fingerprints: 0, sends: 0 });
   });
   it("checks expiry again at dispatch and preserves the original code on explicit resend", async () => {
@@ -344,6 +372,14 @@ describe("independent durable external code delivery", () => {
           managed: { providerInstanceIds: ["fake"], managed: {} },
         },
         purposes: { login: ["external", "managed"] },
+        projects: {
+          demo: {
+            policyIds: ["external", "managed"],
+            sendLimit15m: 10000,
+            sendLimit24h: 100000,
+            authorization: "disabled",
+          },
+        },
       },
     });
     try {
@@ -423,7 +459,7 @@ describe("independent durable external code delivery", () => {
     await app().run(dispatchGate(app().configuration, payload));
     await app().queue.deleteJob(deliveryQueue, job.id);
     await app().run(recoverDispatches(app().configuration));
-    expect((await Effect.runPromise(app().delivery.status(operationId))).body.state).toBe(
+    expect((await Effect.runPromise(app().delivery.status("demo", operationId))).body.state).toBe(
       "sending",
     );
     await app().run(
@@ -434,23 +470,23 @@ describe("independent durable external code delivery", () => {
       app().run(cleanup(app().configuration)),
       app().run(recoverDispatches(app().configuration)),
     ]);
-    const recovered = (await Effect.runPromise(app().delivery.status(operationId))).body;
+    const recovered = (await Effect.runPromise(app().delivery.status("demo", operationId))).body;
     expect(recovered.state).toBe("uncertain");
     expect(await app().queue.fetch(deliveryQueue)).toHaveLength(0);
     await app().run(dispatch(app().configuration, payload));
     expect(sent).toHaveLength(0);
     expect(await counts()).toMatchObject({ attempts: 1, sends: 1 });
-    expect((await Effect.runPromise(app().delivery.status(operationId))).body.revision).toBe(
-      recovered.revision,
-    );
+    expect(
+      (await Effect.runPromise(app().delivery.status("demo", operationId))).body.revision,
+    ).toBe(recovered.revision);
     await close(operationId);
     await app().run(
       app()
-        .pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '8 days' WHERE id = ${operationId}`,
+        .pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '31 days', history_updated_at = clock_timestamp() - interval '31 days' WHERE id = ${operationId}`,
     );
     await app().run(cleanup(app().configuration));
     expect(
-      await Effect.runPromise(app().delivery.status(operationId).pipe(Effect.result)),
+      await Effect.runPromise(app().delivery.status("demo", operationId).pipe(Effect.result)),
     ).toMatchObject({
       _tag: "Failure",
       failure: { code: "operation_not_found" },
@@ -460,10 +496,11 @@ describe("independent durable external code delivery", () => {
     const h = app(),
       apiKey = "external-test-key-with-at-least-thirty-two-bytes";
     const web = makeWebHandler(
-      { apiKeys: [apiKey] },
+      { principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }] },
       {
         router: h.router,
         delivery: h.delivery,
+        history: h.history,
         webhooks: {
           handshake: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
           ingest: () => Effect.void,
@@ -490,22 +527,28 @@ describe("independent durable external code delivery", () => {
         policyId: "external",
         expiresAt: new Date(Date.now() + 890000).toISOString(),
       };
-      expect((await post("/v1/delivery-operations", input, false)).status).toBe(401);
-      const prepared = await post("/v1/delivery-operations", input);
+      expect((await post("/v1/projects/demo/delivery-operations", input, false)).status).toBe(401);
+      const prepared = await post("/v1/projects/demo/delivery-operations", input);
       expect(prepared.status).toBe(201);
       const value = Schema.decodeUnknownSync(Schema.Struct({ operationId: Schema.String }))(
         await prepared.json(),
       );
       expect(
-        (await post(`/v1/delivery-operations/${value.operationId}/code`, { code: "123456" }))
-          .status,
+        (
+          await post(`/v1/projects/demo/delivery-operations/${value.operationId}/code`, {
+            code: "123456",
+          })
+        ).status,
       ).toBe(202);
-      expect((await post(`/v1/delivery-operations/${value.operationId}/close`, {})).status).toBe(
-        200,
-      );
       expect(
-        (await post(`/v1/delivery-operations/${value.operationId}/code`, { code: "123456" }))
-          .status,
+        (await post(`/v1/projects/demo/delivery-operations/${value.operationId}/close`, {})).status,
+      ).toBe(200);
+      expect(
+        (
+          await post(`/v1/projects/demo/delivery-operations/${value.operationId}/code`, {
+            code: "123456",
+          })
+        ).status,
       ).toBe(410);
       await runQueued();
       expect(sent).toHaveLength(0);
@@ -541,6 +584,7 @@ describe("independent durable external code delivery", () => {
     const expired = {
       ...original,
       input: { ...original.input, expiresAt: new Date(Date.now() - 1000).toISOString() },
+      projectId: "demo",
       key: randomUUID(),
     };
     expect(await Effect.runPromise(h.delivery.prepare(expired).pipe(Effect.result))).toMatchObject({

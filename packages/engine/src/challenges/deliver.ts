@@ -7,6 +7,7 @@ import { requestSend } from "../delivery/actions.js";
 import { type ChallengeMutation, SendResult } from "./contracts.js";
 import { operation, lockOperation, replay, saveResult } from "./idempotency.js";
 import { findChallenge, expire, requireActive } from "./store.js";
+import { findProjectChallenge } from "./store.js";
 import { snapshot } from "./publication.js";
 import { domainTransaction } from "../delivery/transaction.js";
 export const requestDelivery = (
@@ -16,6 +17,7 @@ export const requestDelivery = (
   domainTransaction(
     config,
     Effect.gen(function* () {
+      yield* findProjectChallenge(request.projectId, request.challengeId);
       const op = operation(config.settings.crypto, request, "deliver");
       yield* lockOperation(op);
       const previous = yield* replay(config.settings.crypto, op, SendResult);

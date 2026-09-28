@@ -9,14 +9,13 @@ import { OperationResult } from "./contracts.js";
 export const identity = (
   config: CryptoConfig,
   name: string,
-  request: { readonly key: string; readonly operationId?: string },
+  request: { readonly projectId: string; readonly key: string; readonly operationId?: string },
 ) =>
-  operationIdentity(
-    config.deploymentId,
-    `delivery:${name}`,
-    request.operationId ?? "",
-    request.key,
-  );
+  operationIdentity(config.deploymentId, request.projectId, {
+    name: `delivery:${name}`,
+    target: request.operationId ?? "",
+    key: request.key,
+  });
 const Record = Schema.Struct({
   operation_id: Schema.String,
   fingerprint: Digest,

@@ -1,3 +1,4 @@
+import { authorizeAttempt, projectBlock } from "./authorization.js";
 import { changed } from "./changes.js";
 import { deliveryTransaction as transaction } from "./transaction.js";
 import { SqlClient } from "effect/unstable/sql";
@@ -38,6 +39,26 @@ const stale = (operation: Operation, delivery: Attempt, job: DeliveryJob) =>
   operation.routing_revision !== delivery.routing_revision ||
   job.routingRevision !== delivery.routing_revision ||
   (delivery.reason === "fallback" && operation.automatic_stopped);
+const authorizationPermitsDispatch = (operation: Operation, delivery: Attempt, time: Date) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const block = yield* projectBlock(operation.project_id);
+    if (block !== undefined && block.blocked_until > time) return false;
+    if (delivery.authorization_required) {
+      if (delivery.authorization_state === "pending") return false;
+      if (
+        delivery.authorization_state !== "approved" ||
+        delivery.approval_expires_at === null ||
+        delivery.approval_expires_at <= time ||
+        delivery.project_generation !== (block?.generation ?? 0)
+      ) {
+        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'approval_unused' WHERE id = ${delivery.id}`;
+        yield* changed(operation.id);
+        return false;
+      }
+    }
+    return true;
+  });
 export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
   transaction(
     config,
@@ -48,6 +69,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         config.settings,
         original.recipient_token,
         initial.provider_instance_id,
+        original.project_id,
       );
       yield* lockQuotas(limits);
       const locked = yield* findOperation(original.id, true);
@@ -66,13 +88,14 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       if (delivery.state !== "pending") return undefined;
       if (stale(operation, delivery, job)) {
         yield* count("suppressed", "ineligible");
-        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed' WHERE id = ${delivery.id} AND state = 'pending'`;
+        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked' WHERE id = ${delivery.id} AND state = 'pending'`;
         return undefined;
       }
+      if (!(yield* authorizationPermitsDispatch(operation, delivery, time))) return undefined;
       yield* sql`UPDATE otp_router.delivery_operations SET processing_started = true WHERE id = ${operation.id}`;
       yield* changed(operation.id);
       const sharedBudget = yield* checkQuotas(
-        commonSendLimits(config.settings, operation.recipient_token),
+        commonSendLimits(config.settings, operation.recipient_token, operation.project_id),
         time,
       ).pipe(
         Effect.as(true),
@@ -80,7 +103,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       );
       if (!sharedBudget || operation.send_count >= operation.snapshot.maxSends) {
         yield* count("suppressed", "rate_limited");
-        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id}`;
+        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id}`;
         return undefined;
       }
       const target = (yield* availableProviders(config, operation, time)).find(
@@ -92,6 +115,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
           state: "failed",
           acceptance: "not_accepted",
           diagnosticCode: target === undefined ? "provider_unavailable" : "rate_limited",
+          notInvoked: true,
         });
         return undefined;
       }
@@ -99,10 +123,20 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       const secrets = yield* findSecrets(operation.id);
       const attached = yield* attachedCiphertext(secrets.code);
       const recipient = yield* Schema.decodeUnknownEffect(NormalizedPhoneSchema)(
-        yield* decrypt(config.settings.crypto, operation.id, "phone", secrets.phone),
+        yield* decrypt(
+          config.settings.crypto,
+          { projectId: operation.project_id, operationId: operation.id },
+          "phone",
+          secrets.phone,
+        ),
       );
       const code = yield* Schema.decodeUnknownEffect(OtpCodeSchema)(
-        yield* decrypt(config.settings.crypto, operation.id, "code", attached),
+        yield* decrypt(
+          config.settings.crypto,
+          { projectId: operation.project_id, operationId: operation.id },
+          "code",
+          attached,
+        ),
       );
       const input = {
         operationId: yield* Schema.decodeUnknownEffect(OperationIdSchema)(operation.id),
@@ -125,12 +159,16 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* countQuotas(limits, delivery.id, time);
       yield* extendAdmission(operation.recipient_token, delivery.id, time);
       // Allow outcome persistence time beyond the provider timeout before independent recovery.
-      yield* sql`UPDATE otp_router.delivery_attempts SET state = 'dispatching', reserved_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending'`;
+      yield* sql`UPDATE otp_router.delivery_attempts SET state = 'dispatching', invocation = 'committed', reserved_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending'`;
       yield* sql`UPDATE otp_router.delivery_operations SET send_count = send_count + 1, next_user_send_at = GREATEST(next_user_send_at,${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)}) WHERE id = ${operation.id}`;
       return {
         input,
         providerId: saved.providerInstanceId,
         gateMonotonicTime,
+        approvalRemainingMs:
+          delivery.approval_expires_at === null
+            ? Infinity
+            : delivery.approval_expires_at.getTime() - time.getTime(),
         minDeliveryWindowMs: saved.minDeliveryWindowMs,
         timeoutMs: Math.min(saved.sendTimeoutMs, operation.expires_at.getTime() - time.getTime()),
       };
@@ -166,6 +204,7 @@ const failureOutcome = (
 };
 export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
   Effect.gen(function* () {
+    yield* authorizeAttempt(config, job);
     const reserved = yield* dispatchGate(config, job);
     if (reserved === undefined) return;
     const provider = config.providers.get(reserved.providerId);
@@ -175,12 +214,16 @@ export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
     const started = performance.now();
     const remainingDeliveryMs =
       reserved.input.remainingDeliveryMs - (started - reserved.gateMonotonicTime);
-    if (remainingDeliveryMs <= reserved.minDeliveryWindowMs) {
+    if (
+      remainingDeliveryMs <= reserved.minDeliveryWindowMs ||
+      started - reserved.gateMonotonicTime >= reserved.approvalRemainingMs
+    ) {
       // The reservation remains counted after commit, even when local delay prevents transmission.
       yield* recordOutcome(config, job.attemptId, {
         state: "failed",
         acceptance: "not_accepted",
         diagnosticCode: "delivery_window_too_short",
+        notInvoked: true,
       });
       return;
     }

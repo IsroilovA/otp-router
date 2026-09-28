@@ -1,3 +1,4 @@
+import { finalizeEvents } from "../notifications/publication.js";
 import { Effect, Result } from "effect";
 import { transaction as databaseTransaction } from "../database/transaction.js";
 import type { RuntimeConfiguration } from "../config/config.js";
@@ -15,6 +16,7 @@ export const deliveryTransaction = <A, E, R>(
       Effect.gen(function* () {
         const result = yield* body;
         yield* flushChanges(config);
+        yield* finalizeEvents(config.settings.webhook !== undefined);
         return result;
       }).pipe(Effect.provideService(Changes, new Set<string>())),
     );
@@ -30,7 +32,9 @@ export const domainTransaction = <A, E, R>(
     body.pipe(
       Effect.map((value) => Result.succeed(value)),
       Effect.catch((error) =>
-        error instanceof DomainError ? Effect.succeed(Result.fail<E>(error)) : Effect.fail(error),
+        error instanceof DomainError && error.code !== "request_in_progress"
+          ? Effect.succeed(Result.fail<E>(error))
+          : Effect.fail(error),
       ),
     ),
   ).pipe(Effect.flatMap(Effect.fromResult));

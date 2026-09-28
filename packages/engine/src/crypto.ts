@@ -76,12 +76,15 @@ export const generateCode = (length: number): string =>
     .padStart(length, "0");
 export const operationIdentity = (
   deployment: string,
-  operation: string,
-  target: string,
-  id: string,
+  project: string,
+  {
+    name: operation,
+    target,
+    key: id,
+  }: { readonly name: string; readonly target: string; readonly key: string },
 ) =>
   createHash("sha256")
-    .update(JSON.stringify([deployment, operation, target, id]))
+    .update(JSON.stringify([deployment, project, operation, target, id]))
     .digest("hex");
 export const digest = (ring: KeyRing, input: readonly unknown[], keyId = ring.active): Digest => ({
   keyId,
@@ -92,13 +95,13 @@ export const equalDigest = (a: string, b: string): boolean => {
     right = Buffer.from(b, "hex");
   return left.length === 32 && right.length === 32 && timingSafeEqual(left, right);
 };
-export const recipientToken = (config: CryptoConfig, phone: string) =>
+export const recipientToken = (config: CryptoConfig, projectId: string, phone: string) =>
   createHmac("sha256", keyBytes(config.recipientKey))
-    .update(JSON.stringify([1, "recipient", config.deploymentId, phone]))
+    .update(JSON.stringify([1, "recipient", config.deploymentId, projectId, phone]))
     .digest("hex");
 export const encrypt = (
   config: CryptoConfig,
-  operationId: string,
+  { projectId, operationId }: { readonly projectId: string; readonly operationId: string },
   field: string,
   plaintext: string,
 ): Ciphertext => {
@@ -106,7 +109,9 @@ export const encrypt = (
     ring = config.encryption;
   const cipher = createCipheriv("aes-256-gcm", key(ring, ring.active), nonce);
   cipher.setAAD(
-    Buffer.from(JSON.stringify([1, "encryption", config.deploymentId, operationId, field])),
+    Buffer.from(
+      JSON.stringify([1, "encryption", config.deploymentId, projectId, operationId, field]),
+    ),
   );
   const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
   return {
@@ -119,7 +124,7 @@ export const encrypt = (
 };
 export const decrypt = (
   config: CryptoConfig,
-  operationId: string,
+  { projectId, operationId }: { readonly projectId: string; readonly operationId: string },
   field: string,
   encrypted: Ciphertext,
 ) =>
@@ -134,7 +139,9 @@ export const decrypt = (
         nonce,
       );
       cipher.setAAD(
-        Buffer.from(JSON.stringify([1, "encryption", config.deploymentId, operationId, field])),
+        Buffer.from(
+          JSON.stringify([1, "encryption", config.deploymentId, projectId, operationId, field]),
+        ),
       );
       cipher.setAuthTag(tag);
       return Buffer.concat([

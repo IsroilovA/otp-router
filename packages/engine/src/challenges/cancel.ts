@@ -6,6 +6,7 @@ import { type ChallengeMutation, StatusResult } from "./contracts.js";
 import { DomainError } from "../errors.js";
 import { lockOperation, operation, replay, saveResult } from "./idempotency.js";
 import { expire, findChallenge, terminate } from "./store.js";
+import { findProjectChallenge } from "./store.js";
 import { snapshot } from "./publication.js";
 export const cancelChallenge = (
   config: RuntimeConfiguration,
@@ -14,6 +15,7 @@ export const cancelChallenge = (
   domainTransaction(
     config,
     Effect.gen(function* () {
+      yield* findProjectChallenge(request.projectId, request.challengeId);
       const op = operation(config.settings.crypto, request, "cancel");
       yield* lockOperation(op);
       const previous = yield* replay(config.settings.crypto, op, StatusResult);

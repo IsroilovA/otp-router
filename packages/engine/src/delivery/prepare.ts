@@ -20,10 +20,12 @@ export const normalizePhone = (phone: string) =>
 export const prepareRoute = (
   config: RuntimeConfiguration,
   input: Omit<PrepareInput, "expiresAt">,
+  projectId: string,
 ) =>
   Effect.gen(function* () {
     const policy = config.settings.policies[input.policyId];
     if (
+      config.settings.projects[projectId]?.policyIds.includes(input.policyId) !== true ||
       policy === undefined ||
       config.settings.purposes[input.purpose]?.includes(input.policyId) !== true
     )
@@ -34,6 +36,7 @@ export const prepareRoute = (
     const locale = input.locale ?? config.settings.defaultLocale;
     const route = yield* selectRoute(config, {
       input,
+      projectId,
       recipient,
       locale,
       permitted: policy.providerInstanceIds,
@@ -66,6 +69,7 @@ export const prepareRoute = (
     const saved: PolicySnapshot = {
       version: 1,
       policyId: input.policyId,
+      authorizationRequired: config.settings.projects[projectId].authorization === "required",
       maxSends: policy.maxSends,
       resendCooldownSeconds: policy.resendCooldownSeconds,
       manualSelectionEnabled: policy.manualSelectionEnabled,
@@ -78,6 +82,7 @@ export const prepareRoute = (
 const selectRoute = (
   config: RuntimeConfiguration,
   options: {
+    readonly projectId: string;
     readonly input: Omit<PrepareInput, "expiresAt">;
     readonly recipient: typeof NormalizedPhoneSchema.Type;
     readonly locale: string;
@@ -92,6 +97,7 @@ const selectRoute = (
       selector === undefined
         ? { _tag: "Route" as const, providerInstanceIds: permitted }
         : yield* selector({
+            projectId: options.projectId,
             recipient,
             purpose: input.purpose,
             locale,

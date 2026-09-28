@@ -1,3 +1,7 @@
+import {
+  SendAuthorizer,
+  type AuthorizationUnavailable,
+} from "../delivery/authorization-contracts.js";
 import { Context, Data, Effect, Layer, Schema } from "effect";
 import { deliveryWindowFits } from "../providers/timing.js";
 import { CryptoConfig, validateCrypto } from "../crypto.js";
@@ -30,8 +34,16 @@ export const Policy = Schema.Struct({
   managed: Schema.optionalKey(ManagedPolicy),
 });
 export type Policy = typeof Policy.Type;
+export const Project = Schema.Struct({
+  policyIds: Schema.Array(Identifier),
+  sendLimit15m: Schema.Int.check(Schema.isGreaterThan(0)),
+  sendLimit24h: Schema.Int.check(Schema.isGreaterThan(0)),
+  authorization: Schema.Literals(["required", "disabled"]),
+});
 export const Settings = Schema.Struct({
   crypto: CryptoConfig,
+  projects: Schema.Record(Identifier, Project),
+  historyRetentionDays: bounded(1, 3650).pipe(Schema.withDecodingDefaultType(Effect.succeed(30))),
   webhook: Schema.optionalKey(
     Schema.Struct({
       url: Schema.String.check(
@@ -86,17 +98,20 @@ export const SelectorResult = Schema.Union([
   }),
 ]);
 export type RoutingSelector = (input: {
+  readonly projectId: string;
   readonly recipient: NormalizedPhone;
   readonly purpose: string;
   readonly locale: string;
   readonly routingContext: typeof RoutingContext.Type;
 }) => Effect.Effect<typeof SelectorResult.Type, SelectorFailure>;
 export interface Configuration {
+  readonly authorizer?: Layer.Layer<SendAuthorizer, AuthorizationUnavailable>;
   readonly settings: typeof Settings.Encoded;
   readonly providers: readonly Layer.Layer<ProviderInstance, ProviderConfigurationError>[];
   readonly selectors?: Readonly<Record<string, RoutingSelector>>;
 }
 export interface RuntimeConfiguration {
+  readonly authorizer?: Context.Service.Shape<typeof SendAuthorizer>;
   readonly settings: Settings;
   readonly providers: ReadonlyMap<string, ReadyProvider>;
   readonly selectors: Readonly<Record<string, RoutingSelector>>;
@@ -153,6 +168,20 @@ export const loadConfiguration = (configuration: Configuration) =>
       if (cryptoKeys.some((key) => secret.equals(Buffer.from(key, "base64url"))))
         return yield* invalid("invalid_keys");
     }
+    const authorizer =
+      configuration.authorizer === undefined
+        ? undefined
+        : Context.get(
+            yield* Layer.build(configuration.authorizer).pipe(
+              Effect.mapError(() => new ConfigurationError({ reason: "invalid_settings" })),
+            ),
+            SendAuthorizer,
+          );
+    if (
+      Object.values(settings.projects).some((project) => project.authorization === "required") &&
+      authorizer === undefined
+    )
+      return yield* invalid("invalid_settings");
     const providers = yield* buildProviders(configuration);
     const locales = yield* Schema.decodeUnknownEffect(Schema.Array(LocaleSchema))([
       ...new Set([settings.defaultLocale, ...settings.fallbackLocales]),
@@ -170,6 +199,7 @@ export const loadConfiguration = (configuration: Configuration) =>
       settings,
       providers,
       selectors: configuration.selectors ?? {},
+      ...(authorizer === undefined ? {} : { authorizer }),
     } satisfies RuntimeConfiguration;
   });
 
@@ -229,6 +259,10 @@ const validateReferences = (
   providers: ReadonlyMap<string, ReadyProvider>,
 ) =>
   Effect.gen(function* () {
+    if (Object.keys(settings.projects).length === 0) return yield* invalid("invalid_settings");
+    for (const project of Object.values(settings.projects))
+      for (const id of project.policyIds)
+        if (settings.policies[id] === undefined) return yield* invalid("unknown_policy");
     for (const ids of Object.values(settings.purposes))
       for (const id of ids)
         if (settings.policies[id] === undefined) return yield* invalid("unknown_policy");

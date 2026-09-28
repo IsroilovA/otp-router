@@ -26,6 +26,7 @@ export type SavedProvider = typeof SavedProvider.Type;
 export const PolicySnapshot = Schema.Struct({
   version: Schema.Literal(1),
   policyId: Schema.String,
+  authorizationRequired: Schema.Boolean,
   maxSends: Schema.Int,
   resendCooldownSeconds: Schema.Int,
   manualSelectionEnabled: Schema.Boolean,
@@ -35,6 +36,24 @@ export const PolicySnapshot = Schema.Struct({
 });
 export type PolicySnapshot = typeof PolicySnapshot.Type;
 export const Attempt = Schema.Struct({
+  revision: Schema.Int,
+  dispatch_deadline: Schema.Date,
+  authorization_required: Schema.Boolean,
+  authorization_state: Schema.Literals([
+    "not_required",
+    "pending",
+    "approved",
+    "denied",
+    "expired",
+  ]),
+  authorization_generation: Schema.Int,
+  project_generation: Schema.Int,
+  authorization_retry_at: Schema.NullOr(Schema.Date),
+  authorization_lease_until: Schema.NullOr(Schema.Date),
+  approved_at: Schema.NullOr(Schema.Date),
+  approval_expires_at: Schema.NullOr(Schema.Date),
+  reservation_reference: Schema.NullOr(Schema.String),
+  invocation: Schema.Literals(["not_started", "committed", "not_invoked"]),
   id: Schema.String,
   operation_id: Schema.String,
   provider_instance_id: Schema.String,
@@ -49,11 +68,11 @@ export const Attempt = Schema.Struct({
   acceptance: Schema.NullOr(Schema.Literals(["accepted", "not_accepted", "unknown"])),
   failure_category: Schema.NullOr(Schema.String),
   diagnostic_code: Schema.NullOr(Schema.String),
-  provider_request_id: Schema.NullOr(Schema.String),
   retry_at: Schema.NullOr(Schema.Date),
 });
 export type Attempt = typeof Attempt.Type;
 export const Operation = Schema.Struct({
+  project_id: Schema.String,
   id: Schema.String,
   owner: Schema.Literals(["external", "challenge"]),
   purpose: Schema.String,
@@ -65,6 +84,7 @@ export const Operation = Schema.Struct({
   created_at: Schema.Date,
   expires_at: Schema.Date,
   terminal_at: Schema.NullOr(Schema.Date),
+  history_updated_at: Schema.Date,
   send_count: Schema.Int,
   public_revision: Schema.Int,
   public_snapshot: Schema.NullOr(Snapshot),

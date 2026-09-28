@@ -12,13 +12,13 @@ Keep health/metrics private. Stop traffic and new job claims before draining wor
 
 For incompatible changes, stop creation and let active operations finish or expire under the old configuration. Keep verification, callbacks, and workers available during the drain. Stop old workers before starting replacement configuration. Use rolling deployments only when schemas, jobs, plugins, and settings remain compatible.
 
-Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials while history needs them, unless compromise requires revocation. Emergency disables require stopping workers and restarting with the affected instance disabled.
+Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials throughout the configured history reconciliation window, unless compromise requires revocation. Emergency disables require stopping workers and restarting with the affected instance disabled.
 
 During unreleased development, all router schema changes are folded into the initial schema. There are no incremental upgrade migrations or backfills, and existing development databases are not upgraded in place. After a schema change, use a new empty database, or explicitly recreate a confirmed disposable database after preserving anything needed. Never mix workers from incompatible builds against the same database; no reset is performed automatically.
 
 ## API-key rotation
 
-Deploy old and new keys to every API process, switch callers, then remove the old key. Both credentials have identical privileges. Rotation must preserve replay identities, quotas, and challenge bindings. Other key rotation follows [security](security.md#key-rotation).
+Deploy old and new keys to every API process, switch callers, then remove the old key. Keep both credentials under the same service principal and project grants. Rotation preserves replay identities, quotas, and challenge bindings. Other key rotation follows [security](security.md#key-rotation).
 
 ## Database restore
 
@@ -34,7 +34,7 @@ A backup can omit recent sends and guesses. Reconstruct complete quota usage fro
 
 ## Recipient-key replacement
 
-Replace the stable recipient key only as an incident procedure. Stop all roles, invalidate active flows, and reconstruct quota usage or wait the full window as above. Install the replacement consistently, then adopt it before restarting:
+Replace the stable recipient key only as an incident procedure. Stop all roles, invalidate active flows, and reconstruct quota usage or wait the full window as above. Callback correlation and deduplication also use this stable key. After incident replacement, old provider-only references cannot be matched with their former digests; do not treat missing historical correlation as proof of non-delivery. Install the replacement consistently, then adopt it before restarting:
 
 ```sh
 node --env-file=.env apps/server/dist/main.js --adopt-recipient-key --config "$PWD/examples/config/router.config.ts"
@@ -44,7 +44,7 @@ Ordinary encryption-key rotation and database restore do not require recipient-k
 
 ## Outbound notifications
 
-Monitor overdue and failed notifications. After repairing the receiver, replay a retained failed event:
+Monitor overdue and failed notifications. Consumers can also reconcile missed events using the [project event feed](history.md). After repairing the receiver, replay a retained failed event:
 
 ```sh
 node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/router.config.ts" --replay-webhook EVENT_UUID

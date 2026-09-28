@@ -1,6 +1,7 @@
 import { Data, Schema } from "effect";
 export const ErrorCode = Schema.Literals([
   "invalid_request",
+  "history_cursor_expired",
   "operation_not_found",
   "operation_unavailable",
   "operation_state_conflict",

@@ -1,3 +1,4 @@
+import { recoverAuthorizations } from "./delivery/authorization.js";
 import { recoverDispatches } from "./delivery/recovery.js";
 import { cleanupNotifications } from "./notifications/retention.js";
 import { deliveryTransaction as transaction } from "./delivery/transaction.js";
@@ -20,7 +21,6 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
       for (const row of expired)
         yield* terminate(yield* findOperation(row.id), "expired", yield* databaseTime);
       const time = yield* databaseTime;
-      const events = yield* cleanupNotifications(time);
 
       const operations = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
@@ -32,7 +32,7 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
       );
       const history = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
-        sql`DELETE FROM otp_router.delivery_operations WHERE id IN (SELECT id FROM otp_router.delivery_operations WHERE terminal_at < ${new Date(time.getTime() - 7 * 86400000)} AND NOT EXISTS (SELECT 1 FROM otp_router.delivery_attempts d WHERE d.operation_id = delivery_operations.id AND d.state = 'dispatching') LIMIT 100) RETURNING 1 AS deleted`,
+        sql`DELETE FROM otp_router.delivery_operations WHERE id IN (SELECT id FROM otp_router.delivery_operations WHERE terminal_at IS NOT NULL AND GREATEST(terminal_at,history_updated_at) < ${new Date(time.getTime() - config.settings.historyRetentionDays * 86400000)} AND NOT EXISTS (SELECT 1 FROM otp_router.delivery_attempts d WHERE d.operation_id = delivery_operations.id AND d.state = 'dispatching') LIMIT 100) RETURNING 1 AS deleted`,
       );
       const quotas = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
@@ -40,10 +40,9 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
       );
       const callbacks = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
-        sql`DELETE FROM otp_router.callback_inbox WHERE (provider_instance_id,deduplication_key) IN (SELECT provider_instance_id,deduplication_key FROM otp_router.callback_inbox WHERE received_at < ${new Date(time.getTime() - 7 * 86400000)} LIMIT 1000) RETURNING 1 AS deleted`,
+        sql`DELETE FROM otp_router.callback_inbox WHERE (provider_instance_id,deduplication_key) IN (SELECT provider_instance_id,deduplication_key FROM otp_router.callback_inbox WHERE received_at < ${new Date(time.getTime() - config.settings.historyRetentionDays * 86400000)} AND NOT EXISTS (SELECT 1 FROM otp_router.provider_correlations c WHERE c.provider_instance_id = callback_inbox.provider_instance_id AND c.reference = callback_inbox.reference) LIMIT 1000) RETURNING 1 AS deleted`,
       );
       return (
-        events.length === 1000 ||
         expired.length === 100 ||
         operations.length === 1000 ||
         externalResults.length === 1000 ||
@@ -58,7 +57,12 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
 export const cleanup = (config: RuntimeConfiguration) =>
   Effect.gen(function* () {
     yield* recoverDispatches(config);
+    yield* recoverAuthorizations(config);
     while (yield* cleanupBatch(config)) {}
+    while (
+      (yield* cleanupNotifications(yield* databaseTime, config.settings.historyRetentionDays))
+        .length === 1000
+    ) {}
   });
 export const invalidateRestoredOperations = (config: RuntimeConfiguration) =>
   transaction(

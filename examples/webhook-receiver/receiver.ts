@@ -1,9 +1,9 @@
-import { DeliveryEvent, type Snapshot as DeliverySnapshot } from "@otp-router/engine/delivery";
+import { HistoryEvent, type Snapshot as DeliverySnapshot } from "@otp-router/engine/delivery";
 import { Webhook } from "standardwebhooks";
 import { PgClient } from "@effect/sql-pg";
 import { SqlClient, SqlSchema } from "effect/unstable/sql";
 import { Data, Effect, Schema } from "effect";
-import { ChallengeEvent, type Snapshot } from "@otp-router/engine/challenges";
+import { type Snapshot } from "@otp-router/engine/challenges";
 
 export class InvalidWebhook extends Data.TaggedError("InvalidWebhook")<{}> {}
 
@@ -34,12 +34,9 @@ export const receiveWebhook = (input: {
       try: () => new Webhook(input.secret).verify(input.body, input.headers),
       catch: () => new InvalidWebhook(),
     });
-    const event = yield* Schema.decodeUnknownEffect(Schema.Union([ChallengeEvent, DeliveryEvent]))(
-      value,
-      {
-        onExcessProperty: "error",
-      },
-    );
+    const event = yield* Schema.decodeUnknownEffect(HistoryEvent)(value, {
+      onExcessProperty: "error",
+    });
     if (event.eventId !== input.headers["webhook-id"])
       return yield* Effect.fail(new InvalidWebhook());
     const sql = yield* SqlClient.SqlClient;
@@ -53,7 +50,8 @@ export const receiveWebhook = (input: {
         })(undefined);
         if (fresh) {
           if (event.type === "challenge.updated") yield* applySnapshot(event.challenge);
-          else yield* applyDeliverySnapshot(event.delivery);
+          else if (event.type === "delivery.updated") yield* applyDeliverySnapshot(event.delivery);
+          // Attempt updates and evidence remain in the deduplicated receipt journal.
         }
       }),
     );

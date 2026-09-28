@@ -1,3 +1,4 @@
+import { callbackIdentity } from "../packages/engine/src/delivery/correlation.js";
 import { makeTelegramDefinition } from "../packages/engine/src/providers/telegram.js";
 import type { HttpRequest } from "../packages/engine/src/providers/transport.js";
 import { ageAdmission } from "./fixture.js";
@@ -202,6 +203,14 @@ const configuration = {
       },
     },
     purposes: { login: ["default"] },
+    projects: {
+      demo: {
+        policyIds: ["default"],
+        sendLimit15m: 10000,
+        sendLimit24h: 100000,
+        authorization: "disabled",
+      },
+    },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1_000,
     recipientCreateLimit15m: 2,
@@ -237,6 +246,7 @@ const create = (
   const harness = currentRuntime();
   return Effect.runPromise(
     harness.router.create({
+      projectId: "demo",
       key: operationKey,
       input: createInput(phoneNumber),
       requestId: randomUUID(),
@@ -322,7 +332,12 @@ const createDirect = (
   input: CreateInput = createInput(),
 ) =>
   currentRuntime().run(
-    createChallenge(config, { key: operationKey, input, requestId: randomUUID() }),
+    createChallenge(config, {
+      projectId: "demo",
+      key: operationKey,
+      input,
+      requestId: randomUUID(),
+    }),
   );
 
 const withThreeProviders = (): RuntimeConfiguration => {
@@ -407,7 +422,12 @@ const readCode = async (challengeId: string): Promise<string> => {
   });
   const encrypted = Schema.decodeUnknownSync(Ciphertext)(secret.code);
   return Effect.runPromise(
-    decrypt(harness.configuration.settings.crypto, secret.operation_id, "code", encrypted),
+    decrypt(
+      harness.configuration.settings.crypto,
+      { projectId: "demo", operationId: secret.operation_id },
+      "code",
+      encrypted,
+    ),
   );
 };
 
@@ -416,10 +436,11 @@ beforeAll(async () => {
   try {
     runtime = await startRuntime(postgres.databaseUrl, configuration);
     web = makeWebHandler(
-      { apiKeys: [apiKey] },
+      { principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }] },
       {
         router: runtime.router,
         delivery: runtime.delivery,
+        history: runtime.history,
         webhooks: {
           handshake: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
           ingest: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
@@ -449,7 +470,9 @@ describe("PostgreSQL integration", () => {
   it("validates direct engine requests before reserving quotas or persisting work", async () => {
     const router = currentRuntime().router;
     const rejected = await Effect.runPromise(
-      router.create({ key: "", requestId: randomUUID(), input: createInput() }).pipe(Effect.result),
+      router
+        .create({ projectId: "demo", key: "", requestId: randomUUID(), input: createInput() })
+        .pipe(Effect.result),
     );
     expect(rejected).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
     expect(await count("challenges")).toBe(0);
@@ -461,6 +484,7 @@ describe("PostgreSQL integration", () => {
       router
         .verify({
           challengeId,
+          projectId: "demo",
           key: randomUUID(),
           requestId: randomUUID(),
           input: { code: "abcdef", purpose: "login", contextId: "session-1" },
@@ -479,7 +503,7 @@ describe("PostgreSQL integration", () => {
   it("runs HTTP create, queued dispatch, and verification end to end", async () => {
     if (web === undefined) throw new Error("HTTP handler is not initialized");
     const createResponse = await web.handler(
-      new Request("http://localhost/v1/challenges", {
+      new Request("http://localhost/v1/projects/demo/challenges", {
         method: "POST",
         headers: {
           authorization: `Bearer ${apiKey}`,
@@ -498,7 +522,7 @@ describe("PostgreSQL integration", () => {
     const code = primary.sends[0]?.code;
     if (code === undefined) throw new Error("The provider did not receive the code");
     const verifyResponse = await web.handler(
-      new Request(`http://localhost/v1/challenges/${created.challengeId}/verify`, {
+      new Request(`http://localhost/v1/projects/demo/challenges/${created.challengeId}/verify`, {
         method: "POST",
         headers: {
           authorization: `Bearer ${apiKey}`,
@@ -522,9 +546,10 @@ describe("PostgreSQL integration", () => {
   it("returns a generic HTTP 500 for defects without leaking details or writing state", async () => {
     const harness = currentRuntime();
     const defective = makeWebHandler(
-      { apiKeys: [apiKey] },
+      { principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }] },
       {
         delivery: harness.delivery,
+        history: harness.history,
         router: {
           ...harness.router,
           create: () => Effect.die(new Error("private-provider-payload")),
@@ -537,7 +562,7 @@ describe("PostgreSQL integration", () => {
     );
     try {
       const response = await defective.handler(
-        new Request("http://localhost/v1/challenges", {
+        new Request("http://localhost/v1/projects/demo/challenges", {
           method: "POST",
           headers: {
             authorization: `Bearer ${apiKey}`,
@@ -573,15 +598,22 @@ describe("PostgreSQL integration", () => {
     const dependencies = {
       router: currentRuntime().router,
       delivery: currentRuntime().delivery,
+      history: currentRuntime().history,
       webhooks: {
         handshake: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
         ingest: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
       },
     };
-    const overlap = makeWebHandler({ apiKeys: [apiKey, nextApiKey] }, dependencies);
-    const afterRotation = makeWebHandler({ apiKeys: [nextApiKey] }, dependencies);
+    const overlap = makeWebHandler(
+      { principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey, nextApiKey] }] },
+      dependencies,
+    );
+    const afterRotation = makeWebHandler(
+      { principals: [{ id: "backend", projectIds: ["demo"], keys: [nextApiKey] }] },
+      dependencies,
+    );
     const request = (credential: string) =>
-      new Request("http://localhost/v1/challenges", {
+      new Request("http://localhost/v1/projects/demo/challenges", {
         method: "POST",
         headers: {
           authorization: `Bearer ${credential}`,
@@ -628,6 +660,7 @@ describe("PostgreSQL integration", () => {
     const conflict = await Effect.runPromise(
       Effect.result(
         currentRuntime().router.create({
+          projectId: "demo",
           key: operationKey,
           input: createInput("+998909876543"),
           requestId: randomUUID(),
@@ -647,9 +680,8 @@ describe("PostgreSQL integration", () => {
     const operationKey = "blocked-operation-lock";
     const identity = operationIdentity(
       currentRuntime().configuration.settings.crypto.deploymentId,
-      "cancel",
-      challengeId,
-      operationKey,
+      "demo",
+      { name: "cancel", target: challengeId, key: operationKey },
     );
     const acquired = Promise.withResolvers<void>();
     const release = Promise.withResolvers<void>();
@@ -664,7 +696,7 @@ describe("PostgreSQL integration", () => {
     await acquired.promise;
     try {
       const response = await web.handler(
-        new Request(`http://localhost/v1/challenges/${challengeId}/cancel`, {
+        new Request(`http://localhost/v1/projects/demo/challenges/${challengeId}/cancel`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${apiKey}`,
@@ -712,7 +744,7 @@ describe("PostgreSQL integration", () => {
     await acquired.promise;
     try {
       const response = await web.handler(
-        new Request(`http://localhost/v1/challenges/${challengeId}/cancel`, {
+        new Request(`http://localhost/v1/projects/demo/challenges/${challengeId}/cancel`, {
           method: "POST",
           headers: {
             authorization: `Bearer ${apiKey}`,
@@ -751,11 +783,13 @@ describe("PostgreSQL integration", () => {
       if (recipientToken === undefined) throw new Error("Expected the recipient quota token");
       const quotaIdentity = `recipient:${recipientToken}`;
       const createRequest = {
+        projectId: "demo",
         key: "quota-lock-new-create",
         input: { ...createInput(), contextId: "quota-lock-new-flow" },
         requestId: randomUUID(),
       };
       const verifyRequest = {
+        projectId: "demo",
         key: "quota-lock-verify",
         challengeId,
         input: { code, purpose: "login", contextId: "session-1" },
@@ -848,6 +882,7 @@ describe("PostgreSQL integration", () => {
       Effect.runPromise(
         Effect.result(
           currentRuntime().router.verify({
+            projectId: "demo",
             key: keyValue,
             challengeId,
             requestId: randomUUID(),
@@ -879,6 +914,7 @@ describe("PostgreSQL integration", () => {
     await Promise.all([
       Effect.runPromise(
         harness.router.verify({
+          projectId: "demo",
           key: "verify-versus-fallback-correct",
           challengeId,
           requestId: randomUUID(),
@@ -928,6 +964,7 @@ describe("PostgreSQL integration", () => {
     const challengeId = challengeIdFrom(created);
     const code = await readCode(challengeId);
     const request = {
+      projectId: "demo",
       key: "successful-verify-replay",
       challengeId,
       requestId: randomUUID(),
@@ -965,6 +1002,7 @@ describe("PostgreSQL integration", () => {
     const verifyWrong = (keyValue: string, submittedCode = firstWrong) =>
       Effect.runPromise(
         currentRuntime().router.verify({
+          projectId: "demo",
           key: keyValue,
           challengeId,
           requestId: randomUUID(),
@@ -979,6 +1017,7 @@ describe("PostgreSQL integration", () => {
       await Effect.runPromise(
         Effect.result(
           currentRuntime().router.verify({
+            projectId: "demo",
             key: "wrong-1",
             challengeId,
             requestId: randomUUID(),
@@ -1010,6 +1049,7 @@ describe("PostgreSQL integration", () => {
     const created = await create();
     const challengeId = challengeIdFrom(created);
     const request = {
+      projectId: "demo",
       key: "cancel-replay",
       challengeId,
       requestId: randomUUID(),
@@ -1039,6 +1079,7 @@ describe("PostgreSQL integration", () => {
     const challengeId = challengeIdFrom(created);
     const operationKey = "cooldown-retry-deliver";
     const request = {
+      projectId: "demo",
       key: operationKey,
       challengeId,
       requestId: randomUUID(),
@@ -1049,9 +1090,8 @@ describe("PostgreSQL integration", () => {
     ).toMatchObject({ _tag: "Failure", failure: { code: "cooldown_active" } });
     const identity = operationIdentity(
       currentRuntime().configuration.settings.crypto.deploymentId,
-      "deliver",
-      challengeId,
-      operationKey,
+      "demo",
+      { name: "deliver", target: challengeId, key: operationKey },
     );
     expect(
       await query(
@@ -1092,6 +1132,7 @@ describe("PostgreSQL integration", () => {
     await ageAdmission(harness);
     const operationKey = "quota-retry-deliver";
     const request = {
+      projectId: "demo",
       key: operationKey,
       challengeId,
       requestId: randomUUID(),
@@ -1101,12 +1142,11 @@ describe("PostgreSQL integration", () => {
       _tag: "Failure",
       failure: { code: "rate_limited" },
     });
-    const identity = operationIdentity(
-      config.settings.crypto.deploymentId,
-      "deliver",
-      challengeId,
-      operationKey,
-    );
+    const identity = operationIdentity(config.settings.crypto.deploymentId, "demo", {
+      name: "deliver",
+      target: challengeId,
+      key: operationKey,
+    });
     expect(
       await query(
         Counts,
@@ -1135,6 +1175,7 @@ describe("PostgreSQL integration", () => {
         Effect.runPromise(
           Effect.result(
             currentRuntime().router.create({
+              projectId: "demo",
               key: operationKey,
               input: createInput(),
               requestId: randomUUID(),
@@ -1162,6 +1203,7 @@ describe("PostgreSQL integration", () => {
     const result = await currentRuntime().run(
       Effect.result(
         createChallenge(currentRuntime().configuration, {
+          projectId: "demo",
           key: "quota-history-3",
           input: createInput(),
           requestId: randomUUID(),
@@ -1648,6 +1690,7 @@ describe("PostgreSQL integration", () => {
     );
     await ageAdmission(harness);
     const request = {
+      projectId: "demo",
       key: "select-throttled-primary",
       challengeId,
       requestId: randomUUID(),
@@ -1769,7 +1812,7 @@ describe("PostgreSQL integration", () => {
     expect(primary.sends).toHaveLength(1);
     expect(secondary.sends).toHaveLength(0);
     expect(await count("delivery_attempts")).toBe(1);
-    const status = await Effect.runPromise(currentRuntime().router.status(challengeId));
+    const status = await Effect.runPromise(currentRuntime().router.status("demo", challengeId));
     expect(status.body).toMatchObject({
       state: "failed",
       actions: {
@@ -1829,6 +1872,7 @@ describe("PostgreSQL integration", () => {
         await Effect.runPromise(
           Effect.result(
             currentRuntime().router.deliver({
+              projectId: "demo",
               key: operationKey,
               challengeId,
               requestId: randomUUID(),
@@ -1843,6 +1887,7 @@ describe("PostgreSQL integration", () => {
 
     const verified = await Effect.runPromise(
       currentRuntime().router.verify({
+        projectId: "demo",
         key: "verify-after-invalid-recipient",
         challengeId,
         requestId: randomUUID(),
@@ -1866,6 +1911,7 @@ describe("PostgreSQL integration", () => {
     await ageAdmission(harness);
     const next = await Effect.runPromise(
       harness.router.deliver({
+        projectId: "demo",
         key: "next-while-old-in-flight",
         challengeId,
         requestId: randomUUID(),
@@ -1912,7 +1958,7 @@ describe("PostgreSQL integration", () => {
       { reason: "initial", state: "failed", diagnostic_code: "integration_fake_invalid_recipient" },
       { reason: "next", state: "suppressed", diagnostic_code: null },
     ]);
-    const status = await Effect.runPromise(harness.router.status(challengeId));
+    const status = await Effect.runPromise(harness.router.status("demo", challengeId));
     expect(status.body).toMatchObject({
       state: "failed",
       actions: {
@@ -1926,6 +1972,7 @@ describe("PostgreSQL integration", () => {
       await Effect.runPromise(
         Effect.result(
           harness.router.deliver({
+            projectId: "demo",
             key: "resend-after-stale-invalid-recipient",
             challengeId,
             requestId: randomUUID(),
@@ -1971,6 +2018,7 @@ describe("PostgreSQL integration", () => {
     const wrongCode = originalCode === "999999" ? "999998" : "999999";
     const wrong = await Effect.runPromise(
       harness.router.verify({
+        projectId: "demo",
         key: "wrong-before-resend",
         challengeId,
         requestId: randomUUID(),
@@ -1988,6 +2036,7 @@ describe("PostgreSQL integration", () => {
     );
     await ageAdmission(currentRuntime());
     const resendRequest = {
+      projectId: "demo",
       key: "explicit-resend",
       challengeId,
       requestId: randomUUID(),
@@ -2022,6 +2071,7 @@ describe("PostgreSQL integration", () => {
     ).toEqual(beforeResend);
     await Effect.runPromise(
       currentRuntime().router.verify({
+        projectId: "demo",
         key: "verify-after-resend",
         challengeId,
         requestId: randomUUID(),
@@ -2055,7 +2105,7 @@ describe("PostgreSQL integration", () => {
     const code = await readCode(challengeId);
     await dispatchNext(config);
 
-    const status = await Effect.runPromise(harness.router.status(challengeId));
+    const status = await Effect.runPromise(harness.router.status("demo", challengeId));
     expect(status.body).toMatchObject({
       state: "accepted",
       actions: {
@@ -2073,6 +2123,7 @@ describe("PostgreSQL integration", () => {
 
     const verified = await Effect.runPromise(
       harness.router.verify({
+        projectId: "demo",
         key: "verify-after-send-budget",
         challengeId,
         requestId: randomUUID(),
@@ -2150,8 +2201,8 @@ describe("PostgreSQL integration", () => {
       ),
     );
     const server = makeWebHandler(
-      { apiKeys: [apiKey] },
-      { router: harness.router, delivery: harness.delivery, webhooks },
+      { principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }] },
+      { router: harness.router, delivery: harness.delivery, history: harness.history, webhooks },
     );
     try {
       const response = await server.handler(
@@ -2198,7 +2249,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ diagnostic_code: Schema.String }),
-        "SELECT diagnostic_code FROM otp_router.callback_inbox WHERE deduplication_key = 'unsafe-diagnostic'",
+        `SELECT diagnostic_code FROM otp_router.callback_inbox WHERE deduplication_key = '${callbackIdentity(config.settings.crypto, "unsafe-diagnostic")}'`,
       ),
     ).toEqual([{ diagnostic_code: "unclassified" }]);
   });
@@ -2214,6 +2265,7 @@ describe("PostgreSQL integration", () => {
     await ageAdmission(currentRuntime());
     await Effect.runPromise(
       currentRuntime().router.deliver({
+        projectId: "demo",
         key: "resend-before-callback",
         challengeId,
         requestId: randomUUID(),
@@ -2254,6 +2306,7 @@ describe("PostgreSQL integration", () => {
     await ageAdmission(currentRuntime());
     await Effect.runPromise(
       currentRuntime().router.deliver({
+        projectId: "demo",
         key: "next-before-stale-failure",
         challengeId,
         requestId: randomUUID(),
@@ -2342,6 +2395,7 @@ describe("PostgreSQL integration", () => {
       await harness.run(
         Effect.result(
           createChallenge(config, {
+            projectId: "demo",
             key: "same-channel-explicit-create",
             input: {
               ...createInput(),
@@ -2362,6 +2416,7 @@ describe("PostgreSQL integration", () => {
 
     const selected = await harness.run(
       requestDelivery(config, {
+        projectId: "demo",
         key: "same-channel-generic",
         challengeId,
         requestId: randomUUID(),
@@ -2384,6 +2439,7 @@ describe("PostgreSQL integration", () => {
       await harness.run(
         Effect.result(
           requestDelivery(config, {
+            projectId: "demo",
             key: "same-channel-explicit-primary",
             challengeId,
             requestId: randomUUID(),
@@ -2407,6 +2463,7 @@ describe("PostgreSQL integration", () => {
     const limited = withSettings({ recipientGuessLimit15m: 1 });
     await currentRuntime().run(
       verifyChallenge(limited, {
+        projectId: "demo",
         key: "guess-cap-consume",
         challengeId: firstId,
         requestId: randomUUID(),
@@ -2417,6 +2474,7 @@ describe("PostgreSQL integration", () => {
       currentRuntime().run(
         Effect.result(
           verifyChallenge(limited, {
+            projectId: "demo",
             key: operationKey,
             challengeId: secondId,
             requestId: randomUUID(),
@@ -2462,6 +2520,7 @@ describe("PostgreSQL integration", () => {
       const result = await currentRuntime().run(
         Effect.result(
           createChallenge(selected, {
+            projectId: "demo",
             key: operationKey,
             input,
             requestId: randomUUID(),
@@ -2576,6 +2635,7 @@ describe("PostgreSQL integration", () => {
     await ageAdmission(currentRuntime());
     await currentRuntime().run(
       requestDelivery(config, {
+        projectId: "demo",
         key: "locale-snapshot-resend",
         challengeId,
         requestId: randomUUID(),
@@ -2602,6 +2662,7 @@ describe("PostgreSQL integration", () => {
     const result = await Effect.runPromise(
       Effect.result(
         currentRuntime().router.deliver({
+          projectId: "demo",
           key: "deliver-after-expiry",
           challengeId,
           requestId: randomUUID(),
@@ -2637,6 +2698,7 @@ describe("PostgreSQL integration", () => {
     const result = await Effect.runPromise(
       Effect.result(
         currentRuntime().router.cancel({
+          projectId: "demo",
           key: "cancel-after-expiry",
           challengeId,
           requestId: randomUUID(),
@@ -2693,6 +2755,7 @@ describe("PostgreSQL integration", () => {
     const verification = Effect.runPromise(
       Effect.result(
         harness.router.verify({
+          projectId: "demo",
           key: "verify-after-lock-expiry",
           challengeId,
           requestId: randomUUID(),
@@ -2769,6 +2832,7 @@ it.each([
       await ageAdmission(harness);
       await harness.run(
         requestDelivery(config, {
+          projectId: "demo",
           key: "skip-capped-next",
           challengeId,
           requestId: randomUUID(),
@@ -2797,15 +2861,16 @@ it("retains the published forecast while revalidating changed shared restriction
   const challengeId = challengeIdFrom(created);
   await dispatchNext();
   const before = Schema.decodeUnknownSync(Snapshot)(
-    (await Effect.runPromise(harness.router.status(challengeId))).body,
+    (await Effect.runPromise(harness.router.status("demo", challengeId))).body,
   );
   const retryAt = new Date(Date.now() + 45_000);
   await harness.run(
     harness.pg`INSERT INTO otp_router.provider_restrictions(provider_instance_id,retry_at) VALUES ('fake-primary',${retryAt})`,
   );
-  const status = await Effect.runPromise(harness.router.status(challengeId));
+  const status = await Effect.runPromise(harness.router.status("demo", challengeId));
   expect(status.body).toMatchObject({ revision: before.revision, actions: before.actions });
   const request = {
+    projectId: "demo",
     key: "restricted-resend",
     challengeId,
     requestId: randomUUID(),
@@ -2821,7 +2886,7 @@ it("retains the published forecast while revalidating changed shared restriction
     harness.pg`UPDATE otp_router.provider_restrictions SET retry_at = clock_timestamp() WHERE provider_instance_id = 'fake-primary'`,
   );
   const cooldownStatus = Schema.decodeUnknownSync(Snapshot)(
-    (await Effect.runPromise(harness.router.status(challengeId))).body,
+    (await Effect.runPromise(harness.router.status("demo", challengeId))).body,
   );
   expect(cooldownStatus.actions.resend.reason).toBe("cooldown_active");
   expect(await Effect.runPromise(Effect.result(harness.router.deliver(request)))).toMatchObject({

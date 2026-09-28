@@ -47,6 +47,7 @@ export const statusForError = (code: ErrorCode): number => {
     case "operation_state_conflict":
     case "challenge_state_conflict":
       return 409;
+    case "history_cursor_expired":
     case "operation_unavailable":
     case "challenge_unavailable":
       return 410;

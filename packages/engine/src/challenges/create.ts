@@ -31,7 +31,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
     const verification = config.settings.crypto.verification;
     if (managed === undefined || verification === undefined)
       return yield* Effect.fail(new DomainError({ code: "policy_not_allowed" }));
-    const route = yield* prepareRoute(config, input);
+    const route = yield* prepareRoute(config, input, request.projectId);
     return yield* transaction(
       config,
       Effect.gen(function* () {
@@ -43,12 +43,16 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
           ...input,
           expiresAt: new Date(time.getTime() + managed.lifetimeSeconds * 1000).toISOString(),
         };
-        const delivery = yield* admitOperation(config, prepared, { ...route, owner: "challenge" });
+        const delivery = yield* admitOperation(config, prepared, {
+          ...route,
+          projectId: request.projectId,
+          owner: "challenge",
+        });
         const id = randomUUID(),
           code = generateCode(managed.codeLength);
         const sql = yield* PgClient.PgClient;
         yield* sql`INSERT INTO otp_router.challenges(id,operation_id,purpose,context_id,code_length,max_incorrect_guesses,verification_state,created_at) VALUES (${id},${delivery.id},${input.purpose},${input.contextId},${managed.codeLength},${managed.maxIncorrectGuesses},'active',${time})`;
-        yield* sql`INSERT INTO otp_router.challenge_secrets(challenge_id,verifier) VALUES (${id},${sql.json(digest(verification, verifierInput(config.settings.crypto, { id, purpose: input.purpose, contextId: input.contextId }, code)))})`;
+        yield* sql`INSERT INTO otp_router.challenge_secrets(challenge_id,verifier) VALUES (${id},${sql.json(digest(verification, verifierInput(config.settings.crypto, { id, projectId: request.projectId, purpose: input.purpose, contextId: input.contextId }, code)))})`;
         yield* attachCode(config, delivery, code);
         const body = yield* snapshot(config, yield* findChallenge(id), time);
         const response: CreateResult = { outcome: "created", body, replayed: false };

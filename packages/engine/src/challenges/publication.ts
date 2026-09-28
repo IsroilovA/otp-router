@@ -25,14 +25,15 @@ export const publish = (
     const previous = challenge.public_snapshot;
     if (previous !== null && comparable(previous) === comparable(next)) return previous;
     const sql = yield* PgClient.PgClient;
-    const event: ChallengeEvent = {
+    const event: Omit<ChallengeEvent, "sequence"> = {
+      projectId: challenge.delivery.project_id,
       eventId: randomUUID(),
       type: "challenge.updated",
       occurredAt: time.toISOString(),
       challenge: next,
     };
     yield* sql`UPDATE otp_router.challenges SET public_revision = ${next.revision}, public_snapshot = ${sql.json(next)} WHERE id = ${id}`;
-    yield* persistEvent(event, config.settings.webhook !== undefined);
+    yield* persistEvent(event);
     return next;
   });
 export const snapshot = (config: RuntimeConfiguration, challenge: Challenge, time: Date) =>

@@ -20,6 +20,7 @@ import {
   requireActive,
   terminate,
 } from "./store.js";
+import { findProjectChallenge } from "./store.js";
 import type { Challenge } from "./records.js";
 
 const checkBinding = (challenge: Challenge, input: VerifyInput) =>
@@ -33,6 +34,7 @@ export const verifyChallenge = (
   domainTransaction(
     config,
     Effect.gen(function* () {
+      yield* findProjectChallenge(request.projectId, request.challengeId);
       const op = {
         ...operation(
           config.settings.crypto,
@@ -76,7 +78,12 @@ export const verifyChallenge = (
         config.settings.crypto.verification,
         verifierInput(
           config.settings.crypto,
-          { id: challenge.id, purpose: challenge.purpose, contextId: challenge.context_id },
+          {
+            id: challenge.id,
+            projectId: challenge.delivery.project_id,
+            purpose: challenge.purpose,
+            contextId: challenge.context_id,
+          },
           request.input.code,
         ),
         secret.verifier.keyId,
@@ -91,6 +98,7 @@ export const verifyChallenge = (
           outcome: "completed",
           replayed: false,
           body: {
+            projectId: challenge.delivery.project_id,
             verificationId,
             challengeId: challenge.id,
             purpose: challenge.purpose,

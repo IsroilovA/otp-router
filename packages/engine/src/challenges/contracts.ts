@@ -42,6 +42,7 @@ export const Action = Schema.Struct({
   availableAt: Schema.optionalKey(Schema.String),
 });
 export const Snapshot = Schema.Struct({
+  projectId: Identifier,
   operationId: Schema.String,
   challengeId: Schema.String,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -52,6 +53,9 @@ export const Snapshot = Schema.Struct({
       "cancelled",
       "locked",
       "delivery_failed",
+      "authorization_pending",
+      "authorization_denied",
+      "authorization_expired",
       "delivery_uncertain",
       "invalid_recipient",
       "rate_limited",
@@ -81,6 +85,8 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 export const ChallengeEvent = Schema.Struct({
+  projectId: Identifier,
+  sequence: Schema.String,
   eventId: Schema.String.check(Schema.isUUID()),
   type: Schema.Literal("challenge.updated"),
   occurredAt: Schema.String,
@@ -88,6 +94,7 @@ export const ChallengeEvent = Schema.Struct({
 });
 export type ChallengeEvent = typeof ChallengeEvent.Type;
 export const VerificationResult = Schema.Struct({
+  projectId: Identifier,
   verificationId: Schema.String,
   challengeId: Schema.String,
   purpose: Identifier,
@@ -148,20 +155,25 @@ export type SendResult = typeof SendResult.Type;
 export const OperationResult = Schema.Union([CreateResult, StatusResult, VerifyResult, SendResult]);
 export type OperationResult = typeof OperationResult.Type;
 const mutation = <S extends Schema.Top>(input: S) =>
-  Schema.Struct({ key: Opaque, input, requestId: Opaque });
+  Schema.Struct({ projectId: Identifier, key: Opaque, input, requestId: Opaque });
 const challengeMutation = <S extends Schema.Top>(input: S) =>
   Schema.Struct({ ...mutation(input).fields, challengeId: Schema.String });
 export const CreateRequest = mutation(CreateInput);
 export const VerifyRequest = challengeMutation(VerifyInput);
 export const DeliveryRequest = challengeMutation(DeliveryInput);
 export const CancelRequest = challengeMutation(Schema.Record(Schema.String, Schema.Never));
-export type Mutation<A> = { readonly key: string; readonly input: A; readonly requestId: string };
+export type Mutation<A> = {
+  readonly projectId: string;
+  readonly key: string;
+  readonly input: A;
+  readonly requestId: string;
+};
 export type ChallengeMutation<A> = Mutation<A> & { readonly challengeId: string };
 export class Router extends Context.Service<
   Router,
   {
     readonly create: (request: Mutation<CreateInput>) => Effect.Effect<CreateResult, DomainError>;
-    readonly status: (id: string) => Effect.Effect<StatusResult, DomainError>;
+    readonly status: (projectId: string, id: string) => Effect.Effect<StatusResult, DomainError>;
     readonly verify: (
       request: ChallengeMutation<VerifyInput>,
     ) => Effect.Effect<VerifyResult, DomainError>;

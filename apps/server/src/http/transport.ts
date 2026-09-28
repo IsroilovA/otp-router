@@ -1,4 +1,5 @@
 import {
+  DeliveryHistory,
   Delivery,
   PrepareInput,
   CreateInput as ExternalCreateInput,
@@ -39,17 +40,20 @@ import {
   statusForWebhookError,
 } from "./webhooks.js";
 
+import { Principals } from "../config/config.js";
+
 const APPLICATION_BODY_LIMIT = 16 * 1024;
 const DEFAULT_WEBHOOK_BODY_LIMIT = 256 * 1024;
 
 export interface HttpTransportOptions {
-  readonly apiKeys: ReadonlyArray<string>;
+  readonly principals: typeof Principals.Type;
   readonly webhookBodyLimitBytes?: number;
 }
 
 export interface HttpDependencies {
   readonly router: Context.Service.Shape<typeof Router>;
   readonly delivery: Context.Service.Shape<typeof Delivery>;
+  readonly history: Context.Service.Shape<typeof DeliveryHistory>;
   readonly webhooks: Context.Service.Shape<typeof WebhookHandler>;
 }
 
@@ -123,6 +127,7 @@ const readApplicationJson = <A, I>(
 
 const errorMessages = {
   invalid_request: "The request is invalid.",
+  history_cursor_expired: "The history cursor is outside the reconciliation window.",
   operation_not_found: "The delivery operation was not found.",
   operation_unavailable: "The delivery operation is no longer available.",
   operation_state_conflict: "The code is already attached.",
@@ -230,12 +235,15 @@ const completeMutation = <A, I>(
   run: (mutation: Mutation<A>) => Effect.Effect<OperationResult | ExternalResult, DomainError>,
 ) =>
   Effect.gen(function* () {
-    const { requestId } = yield* RequestContext;
+    const { requestId, projectId } = yield* RequestContext;
     const input = yield* readApplicationJson(request, schema).pipe(
       Effect.catch((error) => transportFailure(error, requestId)),
     );
     if (HttpServerResponse.isHttpServerResponse(input)) return input;
-    return yield* complete(run({ key: headers["idempotency-key"], input, requestId }), requestId);
+    return yield* complete(
+      run({ projectId, key: headers["idempotency-key"], input, requestId }),
+      requestId,
+    );
   });
 
 const queryFromRequest = (request: HttpServerRequest.HttpServerRequest): WebhookQuery => {
@@ -253,8 +261,10 @@ const webhookFailureResponse = (error: WebhookError) =>
 
 const digest = (key: string): Buffer => createHash("sha256").update(key, "utf8").digest();
 
-const makeAuthLayer = (apiKeys: ReadonlyArray<string>) => {
-  const expected = apiKeys.map(digest);
+const makeAuthLayer = (principals: typeof Principals.Type) => {
+  const expected = principals.flatMap((principal) =>
+    principal.keys.map((key) => ({ digest: digest(key), principal })),
+  );
   return Layer.succeed(ApplicationAuth, {
     bearer: (httpEffect, { credential }) =>
       Effect.gen(function* () {
@@ -262,13 +272,17 @@ const makeAuthLayer = (apiKeys: ReadonlyArray<string>) => {
         const authorization = request.headers["authorization"] ?? "";
         const token = Redacted.value(credential);
         const supplied = digest(token);
-        let matched = false;
-        for (const candidate of expected) matched = timingSafeEqual(supplied, candidate) || matched;
+        const projectId = /^\/v1\/projects\/([a-zA-Z0-9_-]+)(?:\/|$)/u.exec(request.url)?.[1];
+        let principal: (typeof Principals.Type)[number] | undefined;
+        for (const candidate of expected)
+          if (timingSafeEqual(supplied, candidate.digest)) principal = candidate.principal;
         const requestId = randomUUID();
         if (
           !authorization.startsWith("Bearer ") ||
           authorization.length !== token.length + 7 ||
-          !matched
+          principal === undefined ||
+          projectId === undefined ||
+          !principal.projectIds.includes(projectId)
         )
           return yield* Effect.fail({
             error: {
@@ -277,7 +291,11 @@ const makeAuthLayer = (apiKeys: ReadonlyArray<string>) => {
               requestId,
             },
           });
-        return yield* Effect.provideService(httpEffect, RequestContext, { requestId });
+        return yield* Effect.provideService(httpEffect, RequestContext, {
+          requestId,
+          projectId,
+          principalId: principal.id,
+        });
       }),
   });
 };
@@ -326,9 +344,9 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     )
     .handleRaw("getDelivery", ({ params: path }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
+        const { requestId, projectId } = yield* RequestContext;
         const delivery = yield* Delivery;
-        return yield* complete(delivery.status(path.operationId), requestId);
+        return yield* complete(delivery.status(projectId, path.operationId), requestId);
       }),
     )
     .handleRaw("createChallenge", ({ request, headers }) =>
@@ -341,9 +359,9 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     )
     .handleRaw("getChallengeStatus", ({ params: path }) =>
       Effect.gen(function* () {
-        const { requestId } = yield* RequestContext;
+        const { requestId, projectId } = yield* RequestContext;
         const router = yield* Router;
-        return yield* complete(router.status(path.challengeId), requestId);
+        return yield* complete(router.status(projectId, path.challengeId), requestId);
       }),
     )
     .handleRaw("verifyChallenge", ({ params: path, request, headers }) =>
@@ -372,6 +390,37 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     ),
 );
 
+const historyResponse = <A>(effect: Effect.Effect<A, DomainError>) =>
+  Effect.gen(function* () {
+    const { requestId } = yield* RequestContext;
+    return yield* effect.pipe(
+      Effect.map((body) => HttpServerResponse.jsonUnsafe(body)),
+      Effect.catchTag("DomainError", (error) => errorResponse(error.code, requestId)),
+    );
+  });
+const makeHistoryHandlers = HttpApiBuilder.group(OtpRouterApi, "history", (handlers) =>
+  handlers
+    .handleRaw("events", ({ params, query }) =>
+      Effect.flatMap(DeliveryHistory, (history) =>
+        historyResponse(history.events(params.projectId, query)),
+      ),
+    )
+    .handleRaw("attempts", ({ params, query }) =>
+      Effect.flatMap(DeliveryHistory, (history) =>
+        historyResponse(history.attempts(params.projectId, params.operationId, query)),
+      ),
+    )
+    .handleRaw("attempt", ({ params }) =>
+      Effect.flatMap(DeliveryHistory, (history) =>
+        historyResponse(history.attempt(params.projectId, params.attemptId)),
+      ),
+    )
+    .handleRaw("operations", ({ params, query }) =>
+      Effect.flatMap(DeliveryHistory, (history) =>
+        historyResponse(history.operations(params.projectId, query)),
+      ),
+    ),
+);
 const makeWebhookHandlers = (bodyLimit: number) =>
   HttpApiBuilder.group(OtpRouterApi, "providerCallbacks", (handlers) =>
     handlers
@@ -420,17 +469,12 @@ const makeWebhookHandlers = (bodyLimit: number) =>
   );
 
 export const makeHttpApiLayer = (options: HttpTransportOptions) => {
-  if (options.apiKeys.length < 1 || options.apiKeys.length > 2) {
-    throw new RangeError("apiKeys must contain one or two keys");
-  }
-  if (options.apiKeys.some((key) => Buffer.byteLength(key, "utf8") < 32)) {
-    throw new RangeError("apiKeys must contain at least 32 bytes");
-  }
+  const principals = Schema.decodeUnknownSync(Principals)(options.principals);
   const webhookBodyLimit = options.webhookBodyLimitBytes ?? DEFAULT_WEBHOOK_BODY_LIMIT;
   if (!Number.isSafeInteger(webhookBodyLimit) || webhookBodyLimit <= 0) {
     throw new RangeError("webhookBodyLimitBytes must be a positive safe integer");
   }
-  const auth = makeAuthLayer(options.apiKeys);
+  const auth = makeAuthLayer(principals);
   const handlers = Layer.mergeAll(
     makeApplicationHandlers.pipe(
       Layer.provide(
@@ -444,6 +488,14 @@ export const makeHttpApiLayer = (options: HttpTransportOptions) => {
               randomUUID(),
             ),
           ),
+        ),
+      ),
+    ),
+    makeHistoryHandlers.pipe(
+      Layer.provide(auth),
+      Layer.provide(
+        HttpApiMiddleware.layerSchemaErrorTransform(RequestValidation, () =>
+          errorResponse("invalid_request", randomUUID()),
         ),
       ),
     ),
@@ -461,6 +513,7 @@ export const makeWebHandler = (options: HttpTransportOptions, dependencies: Http
     HttpRouter.provideRequest(
       Layer.mergeAll(
         Layer.succeed(Delivery, dependencies.delivery),
+        Layer.succeed(DeliveryHistory, dependencies.history),
         Layer.succeed(Router, dependencies.router),
         Layer.succeed(WebhookHandler, dependencies.webhooks),
       ),

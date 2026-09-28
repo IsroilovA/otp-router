@@ -39,6 +39,7 @@ export const buildSnapshot = (
             ...(action.availableAt === undefined ? {} : { availableAt: action.availableAt }),
           };
     return {
+      projectId: challenge.delivery.project_id,
       challengeId: challenge.id,
       operationId: challenge.operation_id,
       revision: challenge.public_revision + 1,

@@ -24,7 +24,7 @@ export interface ProviderAvailability {
 }
 export const availableProviders = (
   config: RuntimeConfiguration,
-  operation: Pick<Operation, "snapshot" | "expires_at" | "recipient_token">,
+  operation: Pick<Operation, "snapshot" | "expires_at" | "recipient_token" | "project_id">,
   time: Date,
 ) =>
   Effect.gen(function* () {
@@ -34,7 +34,7 @@ export const availableProviders = (
       sql`SELECT provider_instance_id,retry_at FROM otp_router.provider_restrictions WHERE retry_at > ${time}`,
     );
     const commonRetry = yield* quotaRetryAt(
-      commonSendLimits(config.settings, operation.recipient_token),
+      commonSendLimits(config.settings, operation.recipient_token, operation.project_id),
       time,
     );
     const candidates = operation.snapshot.providers.flatMap((provider, position) =>

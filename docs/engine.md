@@ -19,4 +19,4 @@ External callers own code generation, verification, authorization, and associati
 
 Deployments own worker startup, readiness, and shutdown. API-only processes require a worker elsewhere for delivery and cleanup. Importing engine packages starts no resources.
 
-Use [public events](webhooks.md) for committed changes and status reads for reconciliation. Replayed results may describe an earlier state; follow [idempotency](api.md#idempotency). Operational recovery follows the [operations guide](operations.md).
+Use [public events](webhooks.md) for committed changes, status reads for snapshots, and [attempt history](history.md) for complete retained evidence and feed reconciliation. Replayed results may describe an earlier state; follow [idempotency](api.md#idempotency). Operational recovery follows the [operations guide](operations.md).

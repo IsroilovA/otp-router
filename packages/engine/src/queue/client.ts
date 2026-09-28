@@ -97,7 +97,8 @@ const makeQueue = (url: Redacted.Redacted<string>) =>
     }).pipe(Effect.uninterruptible);
     return {
       initialize: initialize(client),
-      enqueueDelivery: (job: DeliveryJob) => enqueue(client, deliveryQueue, job),
+      enqueueDelivery: (job: DeliveryJob, time?: Date) =>
+        enqueue(client, deliveryQueue, job, time === undefined ? {} : { startAfter: time }),
       enqueueNotification: (eventId: string, time: Date) =>
         enqueue(
           client,

@@ -1,3 +1,5 @@
+import { DeliveryHistory } from "../packages/engine/src/notifications/history-contracts.js";
+import { DeliveryHistoryLive } from "../packages/engine/src/notifications/history.js";
 import { DeliveryOwner } from "../packages/engine/src/delivery/owner.js";
 import { DeliveryOwnerLive } from "../packages/engine/src/challenges/delivery-owner.js";
 import { DeliveryLive } from "../packages/engine/src/delivery/service.js";
@@ -145,6 +147,7 @@ export interface IntegrationRuntime {
   readonly pg: Context.Service.Shape<typeof PgClient.PgClient>;
   readonly queue: PgBoss;
   readonly router: Context.Service.Shape<typeof Router>;
+  readonly history: Context.Service.Shape<typeof DeliveryHistory>;
   readonly delivery: Context.Service.Shape<typeof Delivery>;
   readonly run: <A, E>(
     effect: Effect.Effect<A, E, PgClient.PgClient | SqlClient.SqlClient | Queue | DeliveryOwner>,
@@ -207,7 +210,7 @@ export const startRuntime = async (
     const owner = Context.get(ownerContext, DeliveryOwner);
     const routerContext = await Effect.runPromise(
       buildInScope(
-        Layer.mergeAll(RouterLive, DeliveryLive).pipe(
+        Layer.mergeAll(RouterLive, DeliveryLive, DeliveryHistoryLive).pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(RouterConfig, runtimeConfiguration),
@@ -247,6 +250,7 @@ export const startRuntime = async (
       queue,
       router,
       delivery: Context.get(routerContext, Delivery),
+      history: Context.get(routerContext, DeliveryHistory),
       run,
       reset,
       close: () => Effect.runPromise(Scope.close(scope, Exit.void)),

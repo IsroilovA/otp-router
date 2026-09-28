@@ -19,6 +19,7 @@ import { WebhookError, WebhookHandler } from "./webhooks.js";
 const API_KEY = "test-api-key-with-at-least-thirty-two-bytes";
 
 const snapshot: Snapshot = {
+  projectId: "demo",
   operationId: "operation_1",
   challengeId: "challenge_1",
   revision: 1,
@@ -64,7 +65,7 @@ describe("HTTP transport", () => {
         replayed: createMode === "replay",
       });
     },
-    status: (challengeId) => {
+    status: (_projectId, challengeId) => {
       statusRequests.push(challengeId);
       return Effect.succeed({ outcome: "completed", body: snapshot, replayed: false });
     },
@@ -73,6 +74,7 @@ describe("HTTP transport", () => {
       return Effect.succeed({
         outcome: "completed",
         body: {
+          projectId: "demo",
           verificationId: "verification_1",
           challengeId: "challenge_1",
           purpose: "login",
@@ -115,10 +117,19 @@ describe("HTTP transport", () => {
   });
 
   const server = makeWebHandler(
-    { apiKeys: [API_KEY], webhookBodyLimitBytes: 64 },
+    {
+      principals: [{ id: "backend", projectIds: ["demo"], keys: [API_KEY] }],
+      webhookBodyLimitBytes: 64,
+    },
     {
       router,
       webhooks,
+      history: {
+        events: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        attempts: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        attempt: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+        operations: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+      },
       delivery: Delivery.of({
         prepare: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
         create: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
@@ -144,7 +155,7 @@ describe("HTTP transport", () => {
   });
 
   const createRequest = (body: string, headers: Readonly<Record<string, string>> = {}) =>
-    new Request("http://router.test/v1/challenges", {
+    new Request("http://router.test/v1/projects/demo/challenges", {
       method: "POST",
       headers: {
         authorization: `Bearer ${API_KEY}`,
@@ -165,16 +176,16 @@ describe("HTTP transport", () => {
   it("authenticates before challenge access and uses server request IDs", async () => {
     const before = statusRequests.length;
     const first = await server.handler(
-      new Request("http://router.test/v1/challenges/challenge_1", {
+      new Request("http://router.test/v1/projects/demo/challenges/challenge_1", {
         headers: { authorization: "Bearer wrong", "x-request-id": "caller-controlled" },
       }),
     );
     const second = await server.handler(
-      new Request("http://router.test/v1/challenges/challenge_1"),
+      new Request("http://router.test/v1/projects/demo/challenges/challenge_1"),
     );
 
     const mutation = await server.handler(
-      new Request("http://router.test/v1/challenges", {
+      new Request("http://router.test/v1/projects/demo/challenges", {
         method: "POST",
         body: "invalid JSON",
       }),
@@ -218,26 +229,26 @@ describe("HTTP transport", () => {
       "idempotency-key": "operation_2",
     };
     const status = await server.handler(
-      new Request("http://router.test/v1/challenges/challenge_1", {
+      new Request("http://router.test/v1/projects/demo/challenges/challenge_1", {
         headers: { authorization: `Bearer ${API_KEY}` },
       }),
     );
     const verify = await server.handler(
-      new Request("http://router.test/v1/challenges/challenge_1/verify", {
+      new Request("http://router.test/v1/projects/demo/challenges/challenge_1/verify", {
         method: "POST",
         headers,
         body: JSON.stringify({ code: "123456", purpose: "login", contextId: "flow_1" }),
       }),
     );
     const delivery = await server.handler(
-      new Request("http://router.test/v1/challenges/challenge_1/deliveries", {
+      new Request("http://router.test/v1/projects/demo/challenges/challenge_1/deliveries", {
         method: "POST",
         headers,
         body: JSON.stringify({ action: "select", choice: { type: "channel", channel: "sms" } }),
       }),
     );
     const cancel = await server.handler(
-      new Request("http://router.test/v1/challenges/challenge_1/cancel", {
+      new Request("http://router.test/v1/projects/demo/challenges/challenge_1/cancel", {
         method: "POST",
         headers,
         body: "{}",
@@ -250,16 +261,19 @@ describe("HTTP transport", () => {
     expect(statusRequests.at(-1)).toBe("challenge_1");
     expect(verifyRequests.at(-1)).toMatchObject({
       challengeId: "challenge_1",
+      projectId: "demo",
       key: "operation_2",
       input: { code: "123456", purpose: "login", contextId: "flow_1" },
     });
     expect(deliveryRequests.at(-1)).toMatchObject({
       challengeId: "challenge_1",
+      projectId: "demo",
       key: "operation_2",
       input: { action: "select", choice: { type: "channel", channel: "sms" } },
     });
     expect(cancelRequests.at(-1)).toMatchObject({
       challengeId: "challenge_1",
+      projectId: "demo",
       key: "operation_2",
       input: {},
     });
@@ -376,7 +390,7 @@ describe("HTTP transport", () => {
   });
 
   it("generates strict OpenAPI for operations, security, and status responses", () => {
-    const create = openApiDocument.paths["/v1/challenges"]?.post;
+    const create = openApiDocument.paths["/v1/projects/{projectId}/challenges"]?.post;
     if (create === undefined) throw new Error("Missing create endpoint");
     expect(Object.keys(create.responses)).toEqual(
       expect.arrayContaining(["201", "400", "401", "409", "413", "422", "429", "500", "503"]),
@@ -406,10 +420,10 @@ describe("HTTP transport", () => {
       },
     });
     for (const path of [
-      "/v1/challenges",
-      "/v1/challenges/{challengeId}/verify",
-      "/v1/challenges/{challengeId}/deliveries",
-      "/v1/challenges/{challengeId}/cancel",
+      "/v1/projects/{projectId}/challenges",
+      "/v1/projects/{projectId}/challenges/{challengeId}/verify",
+      "/v1/projects/{projectId}/challenges/{challengeId}/deliveries",
+      "/v1/projects/{projectId}/challenges/{challengeId}/cancel",
     ]) {
       expect(
         openApiDocument.paths[path]?.post?.parameters.find(

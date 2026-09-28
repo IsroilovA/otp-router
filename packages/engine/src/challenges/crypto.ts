@@ -1,12 +1,18 @@
 import type { CryptoConfig } from "../crypto.js";
 export const verifierInput = (
   config: CryptoConfig,
-  challenge: { readonly id: string; readonly purpose: string; readonly contextId: string },
+  challenge: {
+    readonly projectId: string;
+    readonly id: string;
+    readonly purpose: string;
+    readonly contextId: string;
+  },
   code: string,
 ) => [
   1,
   "verifier",
   config.deploymentId,
+  challenge.projectId,
   challenge.id,
   challenge.purpose,
   challenge.contextId,

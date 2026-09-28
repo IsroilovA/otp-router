@@ -2,13 +2,13 @@
 
 Start from the [fake configuration](../examples/config/router.config.ts) or [built-in providers](../examples/config/builtins.config.ts). [Engine](../packages/engine/src/config/config.ts) and [server](../apps/server/src/config/config.ts) schemas own fields, defaults, and bounds; the entries and [.env.example](../.env.example) own environment mappings.
 
-Configuration is trusted executable TypeScript. Install its imports with the deployment and keep secrets outside the image. Environment variables affect only fields the entry explicitly reads; Node requires `--env-file` to load a local secrets file. Configuration is immutable while running.
+Configuration is trusted executable TypeScript. Install its imports with the deployment and keep secrets outside the image. Environment variables affect only fields the entry explicitly reads; Node requires `--env-file` to load a local secrets file. Configuration is immutable while running. Configure explicit [projects and backend grants](projects.md), and choose [send authorization](authorization.md) separately for each project.
 
 ## Policies
 
 - Configure ordered provider instances and the purposes allowed to use each policy. Select routes according to cost, reachability, and account restrictions.
 - Enable managed verification only where the router should generate and check codes. External delivery uses its own supplied deadline, bounded by the common policy lifetime.
-- Choose deployment and provider send caps for account budgets. They count invocations, not exact monetary charges; automatic fallback consumes sends too.
+- Choose project, deployment and provider send caps for account budgets. They count invocations, not exact monetary charges; automatic fallback consumes sends too.
 - Enable manual provider/channel selection deliberately and restrict its choices when necessary. Selectors may narrow routes but cannot relax limits.
 - Ensure timeouts, delivery windows, code formats, and locale templates fit every enabled capability. Use [provider setup](provider-setup.md) for remote account requirements.
 

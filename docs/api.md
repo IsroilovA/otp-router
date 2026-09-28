@@ -1,6 +1,6 @@
 # HTTP integration
 
-Call the router from an authorized backend over a private network or TLS. A deployment Bearer key grants deployment-wide access; never expose it to browsers or mobile clients. Your backend must bind each operation to its authorized user/session and business action. An operation ID alone is not authorization.
+Call the router from an authorized backend over a private network or TLS. A configured backend service principal authenticates with a Bearer credential and explicit project grants; never expose that credential to browsers or mobile clients. See [project authentication and isolation](projects.md). Your backend must bind each operation to its authorized user/session and business action. An operation ID alone is not authorization.
 
 Endpoint schemas own paths, request/response shapes, validation limits, and status codes. Generate their reference after building:
 
@@ -22,7 +22,7 @@ For external delivery, preserve the upstream deadline and attached code across c
 
 Acceptance means a provider accepted a send, not that the recipient received it. Delivery failure can leave verification available until its deadline and guess limit. A failed resend cannot erase another still-valid acceptance. Terminal verification states never reopen.
 
-Public provider/channel describe confirmed acceptance, not route selection. During another send they may still identify the earlier acceptance. Public snapshots do not expose attempt history.
+Public provider/channel describe confirmed acceptance, not route selection. During another send they may still identify the earlier acceptance. Use the separate [attempt history and event feed](history.md) for complete retained evidence.
 
 Revisions advance for meaningful committed changes. Reads refresh server time without revision churn, though an overdue read can materialize expiry once. A webhook can arrive before its HTTP response; apply only higher revisions for the same subject and event kind.
 
@@ -30,7 +30,7 @@ Action forecasts describe the last published transition. Use absolute retry/expi
 
 ## Idempotency
 
-Use a fresh random `Idempotency-Key` for each intended mutation and retain it with the payload for retries. Do not embed secrets or deliberately recycle keys. Keys are scoped to deployment, operation, and target where applicable; changed validated input conflicts with a saved request.
+Use a fresh random `Idempotency-Key` for each intended mutation and retain it with the payload for retries. Do not embed secrets or deliberately recycle keys. Keys are scoped to deployment, project, operation, and target where applicable; changed validated input conflicts with a saved request.
 
 A matching replay returns the original status/body, marked by `Idempotency-Replayed`. The snapshot can be stale; use revisions and status reads to reconcile.
 

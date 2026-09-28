@@ -27,6 +27,14 @@ const base: Configuration = {
     fallbackLocales: [],
     policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
     purposes: { login: ["login"] },
+    projects: {
+      demo: {
+        policyIds: ["login"],
+        sendLimit15m: 10000,
+        sendLimit24h: 100000,
+        authorization: "disabled",
+      },
+    },
     deploymentSendLimit15m: 10,
     deploymentSendLimit24h: 100,
   },

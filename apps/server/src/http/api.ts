@@ -1,3 +1,11 @@
+import {
+  AttemptEvent,
+  EvidenceEvent,
+  EventPage,
+  AttemptPage,
+  AttemptSnapshot,
+  OperationPage,
+} from "@otp-router/engine/delivery";
 import { DeliveryEvent } from "@otp-router/engine/delivery";
 import {
   PrepareInput,
@@ -46,7 +54,7 @@ const InvalidRequestError = errorEnvelope("InvalidRequestError", Schema.Literal(
 export const UnauthorizedError = errorEnvelope("UnauthorizedError", Schema.Literal("unauthorized"));
 export class RequestContext extends Context.Service<
   RequestContext,
-  { readonly requestId: string }
+  { readonly requestId: string; readonly projectId: string; readonly principalId: string }
 >()("otp-router/http/RequestContext") {}
 
 export class ApplicationAuth extends HttpApiMiddleware.Service<
@@ -126,10 +134,62 @@ const unavailable = UnavailableChallengeError.pipe(HttpApiSchema.status(410));
 const tooLarge = RequestTooLargeError.pipe(HttpApiSchema.status(413));
 const unprocessable = UnprocessableError.pipe(HttpApiSchema.status(422));
 const rateLimit = RateLimitError.pipe(HttpApiSchema.status(429));
-const params = { challengeId: Schema.String };
+const params = { projectId: Schema.String, challengeId: Schema.String };
 
+const HistoryQuery = {
+  cursor: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(2048))),
+  limit: Schema.optionalKey(
+    Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100 })),
+  ),
+};
+const HistoryCursorExpired = errorEnvelope(
+  "HistoryCursorExpired",
+  Schema.Literal("history_cursor_expired"),
+).pipe(HttpApiSchema.status(410));
+const HistoryGroup = HttpApiGroup.make("history").add(
+  HttpApiEndpoint.get("events", "/v1/projects/:projectId/events", {
+    params: { projectId: Schema.String },
+    query: {
+      ...HistoryQuery,
+      operationId: Schema.optionalKey(Schema.String),
+      attemptId: Schema.optionalKey(Schema.String),
+    },
+    success: EventPage,
+    error: [...commonErrors, HistoryCursorExpired],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.get(
+    "attempts",
+    "/v1/projects/:projectId/delivery-operations/:operationId/attempts",
+    {
+      params: { projectId: Schema.String, operationId: Schema.String },
+      query: HistoryQuery,
+      success: AttemptPage,
+      error: [...commonErrors, notFound, HistoryCursorExpired],
+    },
+  )
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.get("attempt", "/v1/projects/:projectId/attempts/:attemptId", {
+    params: { projectId: Schema.String, attemptId: Schema.String },
+    success: AttemptSnapshot,
+    error: [...commonErrors, notFound],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+  HttpApiEndpoint.get("operations", "/v1/projects/:projectId/delivery-operations", {
+    params: { projectId: Schema.String },
+    query: HistoryQuery,
+    success: OperationPage,
+    error: [...commonErrors, HistoryCursorExpired],
+  })
+    .middleware(RequestValidation)
+    .middleware(ApplicationAuth),
+);
 const ApplicationGroup = HttpApiGroup.make("application").add(
-  HttpApiEndpoint.post("prepareDelivery", "/v1/delivery-operations", {
+  HttpApiEndpoint.post("prepareDelivery", "/v1/projects/:projectId/delivery-operations", {
+    params: { projectId: Schema.String },
     headers: MutationHeaders,
     payload: PrepareInput,
     success: DeliverySnapshot.pipe(HttpApiSchema.status(201)),
@@ -137,7 +197,8 @@ const ApplicationGroup = HttpApiGroup.make("application").add(
   })
     .middleware(RequestValidation)
     .middleware(ApplicationAuth),
-  HttpApiEndpoint.post("createDelivery", "/v1/delivery-operations/with-code", {
+  HttpApiEndpoint.post("createDelivery", "/v1/projects/:projectId/delivery-operations/with-code", {
+    params: { projectId: Schema.String },
     headers: MutationHeaders,
     payload: ExternalCreateInput,
     success: DeliverySnapshot.pipe(HttpApiSchema.status(201)),
@@ -145,41 +206,54 @@ const ApplicationGroup = HttpApiGroup.make("application").add(
   })
     .middleware(RequestValidation)
     .middleware(ApplicationAuth),
-  HttpApiEndpoint.get("getDelivery", "/v1/delivery-operations/:operationId", {
-    params: { operationId: Schema.String },
+  HttpApiEndpoint.get("getDelivery", "/v1/projects/:projectId/delivery-operations/:operationId", {
+    params: { projectId: Schema.String, operationId: Schema.String },
     success: DeliverySnapshot,
     error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
   })
     .middleware(RequestValidation)
     .middleware(ApplicationAuth),
-  HttpApiEndpoint.post("submitDeliveryCode", "/v1/delivery-operations/:operationId/code", {
-    params: { operationId: Schema.String },
-    headers: MutationHeaders,
-    payload: SubmitInput,
-    success: [DeliverySnapshot, DeliverySnapshot.pipe(HttpApiSchema.status(202))],
-    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
-  })
+  HttpApiEndpoint.post(
+    "submitDeliveryCode",
+    "/v1/projects/:projectId/delivery-operations/:operationId/code",
+    {
+      params: { projectId: Schema.String, operationId: Schema.String },
+      headers: MutationHeaders,
+      payload: SubmitInput,
+      success: [DeliverySnapshot, DeliverySnapshot.pipe(HttpApiSchema.status(202))],
+      error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+    },
+  )
     .middleware(RequestValidation)
     .middleware(ApplicationAuth),
-  HttpApiEndpoint.post("sendDelivery", "/v1/delivery-operations/:operationId/deliveries", {
-    params: { operationId: Schema.String },
-    headers: MutationHeaders,
-    payload: DeliveryInput,
-    success: DeliverySnapshot.pipe(HttpApiSchema.status(202)),
-    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
-  })
+  HttpApiEndpoint.post(
+    "sendDelivery",
+    "/v1/projects/:projectId/delivery-operations/:operationId/deliveries",
+    {
+      params: { projectId: Schema.String, operationId: Schema.String },
+      headers: MutationHeaders,
+      payload: DeliveryInput,
+      success: DeliverySnapshot.pipe(HttpApiSchema.status(202)),
+      error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+    },
+  )
     .middleware(RequestValidation)
     .middleware(ApplicationAuth),
-  HttpApiEndpoint.post("closeDelivery", "/v1/delivery-operations/:operationId/close", {
-    params: { operationId: Schema.String },
-    headers: MutationHeaders,
-    payload: Schema.Struct({}),
-    success: DeliverySnapshot,
-    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
-  })
+  HttpApiEndpoint.post(
+    "closeDelivery",
+    "/v1/projects/:projectId/delivery-operations/:operationId/close",
+    {
+      params: { projectId: Schema.String, operationId: Schema.String },
+      headers: MutationHeaders,
+      payload: Schema.Struct({}),
+      success: DeliverySnapshot,
+      error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+    },
+  )
     .middleware(RequestValidation)
     .middleware(ApplicationAuth),
-  HttpApiEndpoint.post("createChallenge", "/v1/challenges", {
+  HttpApiEndpoint.post("createChallenge", "/v1/projects/:projectId/challenges", {
+    params: { projectId: Schema.String },
     headers: MutationHeaders,
     payload: CreateInput,
     success: Snapshot.pipe(HttpApiSchema.status(201)),
@@ -190,7 +264,7 @@ const ApplicationGroup = HttpApiGroup.make("application").add(
     .annotateMerge(
       OpenApi.annotations({ summary: "Create a challenge and queue its initial delivery" }),
     ),
-  HttpApiEndpoint.get("getChallengeStatus", "/v1/challenges/:challengeId", {
+  HttpApiEndpoint.get("getChallengeStatus", "/v1/projects/:projectId/challenges/:challengeId", {
     params,
     success: Snapshot,
     error: [...commonErrors, notFound],
@@ -198,35 +272,47 @@ const ApplicationGroup = HttpApiGroup.make("application").add(
     .middleware(RequestValidation)
     .middleware(ApplicationAuth)
     .annotateMerge(OpenApi.annotations({ summary: "Read the current challenge snapshot" })),
-  HttpApiEndpoint.post("verifyChallenge", "/v1/challenges/:challengeId/verify", {
-    params,
-    headers: MutationHeaders,
-    payload: VerifyInput,
-    success: VerificationResult,
-    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
-  })
+  HttpApiEndpoint.post(
+    "verifyChallenge",
+    "/v1/projects/:projectId/challenges/:challengeId/verify",
+    {
+      params,
+      headers: MutationHeaders,
+      payload: VerifyInput,
+      success: VerificationResult,
+      error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+    },
+  )
     .middleware(RequestValidation)
     .middleware(ApplicationAuth)
     .annotateMerge(OpenApi.annotations({ summary: "Verify a challenge" })),
-  HttpApiEndpoint.post("scheduleDelivery", "/v1/challenges/:challengeId/deliveries", {
-    params,
-    headers: MutationHeaders,
-    payload: DeliveryInput,
-    success: DeliveryResult.pipe(HttpApiSchema.status(202)),
-    error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
-  })
+  HttpApiEndpoint.post(
+    "scheduleDelivery",
+    "/v1/projects/:projectId/challenges/:challengeId/deliveries",
+    {
+      params,
+      headers: MutationHeaders,
+      payload: DeliveryInput,
+      success: DeliveryResult.pipe(HttpApiSchema.status(202)),
+      error: [...commonErrors, notFound, conflict, unavailable, tooLarge, unprocessable, rateLimit],
+    },
+  )
     .middleware(RequestValidation)
     .middleware(ApplicationAuth)
     .annotateMerge(
       OpenApi.annotations({ summary: "Queue a resend, next route, or manual selection" }),
     ),
-  HttpApiEndpoint.post("cancelChallenge", "/v1/challenges/:challengeId/cancel", {
-    params,
-    headers: MutationHeaders,
-    payload: Schema.Struct({}),
-    success: Snapshot,
-    error: [...commonErrors, notFound, conflict, tooLarge],
-  })
+  HttpApiEndpoint.post(
+    "cancelChallenge",
+    "/v1/projects/:projectId/challenges/:challengeId/cancel",
+    {
+      params,
+      headers: MutationHeaders,
+      payload: Schema.Struct({}),
+      success: Snapshot,
+      error: [...commonErrors, notFound, conflict, tooLarge],
+    },
+  )
     .middleware(RequestValidation)
     .middleware(ApplicationAuth)
     .annotateMerge(OpenApi.annotations({ summary: "Cancel an active challenge" })),
@@ -258,7 +344,7 @@ const WebhookGroup = HttpApiGroup.make("providerCallbacks").add(
   }),
 );
 export const OtpRouterApi = HttpApi.make("otpRouter")
-  .add(ApplicationGroup, WebhookGroup)
+  .add(ApplicationGroup, HistoryGroup, WebhookGroup)
   .annotateMerge(
     OpenApi.annotations({
       title: "OTP Router API",
@@ -272,6 +358,8 @@ export const openApiDocument = {
     Object.entries({
       "challenge.updated": Schema.toJsonSchemaDocument(ChallengeEvent),
       "delivery.updated": Schema.toJsonSchemaDocument(DeliveryEvent),
+      "attempt.updated": Schema.toJsonSchemaDocument(AttemptEvent),
+      "attempt.evidence": Schema.toJsonSchemaDocument(EvidenceEvent),
     }).map(([kind, eventSchema]) => [
       kind,
       {

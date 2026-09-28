@@ -43,6 +43,14 @@ beforeAll(async () => {
       fallbackLocales: [],
       policies: { login: { providerInstanceIds: ["primary", "secondary"], managed: {} } },
       purposes: { login: ["login"] },
+      projects: {
+        demo: {
+          policyIds: ["login"],
+          sendLimit15m: 10000,
+          sendLimit24h: 100000,
+          authorization: "disabled",
+        },
+      },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
     },
@@ -79,6 +87,7 @@ const prepareOperations = async () => {
   for (const phoneNumber of ["+998901234567", "+998901234568"]) {
     const created = await Effect.runPromise(
       harness.router.create({
+        projectId: "demo",
         key: randomUUID(),
         requestId: randomUUID(),
         input: {
@@ -109,6 +118,7 @@ const prepareOperations = async () => {
     );
     await Effect.runPromise(
       harness.router.deliver({
+        projectId: "demo",
         key: randomUUID(),
         requestId: randomUUID(),
         challengeId: challenge.challengeId,

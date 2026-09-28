@@ -1,4 +1,4 @@
-import { DeliveryEvent } from "../packages/engine/src/delivery/contracts.js";
+import { HistoryEvent } from "../packages/engine/src/notifications/history-contracts.js";
 import { ageAdmission } from "./fixture.js";
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
@@ -75,6 +75,7 @@ const create = async () =>
     (
       await Effect.runPromise(
         app().router.create({
+          projectId: "demo",
           key: randomUUID(),
           requestId: randomUUID(),
           input: {
@@ -88,7 +89,9 @@ const create = async () =>
     ).body,
   );
 const status = async (id: string) =>
-  Schema.decodeUnknownSync(Snapshot)((await Effect.runPromise(app().router.status(id))).body);
+  Schema.decodeUnknownSync(Snapshot)(
+    (await Effect.runPromise(app().router.status("demo", id))).body,
+  );
 const events = async (id: string) => {
   const harness = app();
   const stored = await harness.run(
@@ -129,6 +132,7 @@ const resend = async (id: string) => {
   await Effect.runPromise(
     harness.router.deliver({
       challengeId: id,
+      projectId: "demo",
       key: randomUUID(),
       requestId: randomUUID(),
       input: { action: "resend" },
@@ -174,6 +178,14 @@ beforeAll(async () => {
       },
       providerLabels: { primary: "Primary channel", secondary: "Backup channel" },
       purposes: { login: ["login"] },
+      projects: {
+        demo: {
+          policyIds: ["login"],
+          sendLimit15m: 10000,
+          sendLimit24h: 100000,
+          authorization: "disabled",
+        },
+      },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
     },
@@ -311,6 +323,7 @@ describe("public snapshots and transactional events", () => {
       deliveryTransaction(
         harness.configuration,
         createChallenge(harness.configuration, {
+          projectId: "demo",
           key: randomUUID(),
           requestId: randomUUID(),
           input: {
@@ -344,6 +357,7 @@ describe("public snapshots and transactional events", () => {
         await Effect.runPromise(
           harness.router.cancel({
             challengeId: created.challengeId,
+            projectId: "demo",
             key: randomUUID(),
             requestId: randomUUID(),
             input: {},
@@ -358,7 +372,12 @@ describe("public snapshots and transactional events", () => {
         const saved = await harness.run(findSecrets(created.operationId));
         if (saved.code === null) throw new Error("Expected attached code");
         const code = await Effect.runPromise(
-          decrypt(harness.configuration.settings.crypto, created.operationId, "code", saved.code),
+          decrypt(
+            harness.configuration.settings.crypto,
+            { projectId: "demo", operationId: created.operationId },
+            "code",
+            saved.code,
+          ),
         );
         const input = {
           purpose: "login",
@@ -368,6 +387,7 @@ describe("public snapshots and transactional events", () => {
         await Effect.runPromise(
           harness.router.verify({
             challengeId: created.challengeId,
+            projectId: "demo",
             key: randomUUID(),
             requestId: randomUUID(),
             input,
@@ -377,6 +397,7 @@ describe("public snapshots and transactional events", () => {
           await Effect.runPromise(
             harness.router.verify({
               challengeId: created.challengeId,
+              projectId: "demo",
               key: randomUUID(),
               requestId: randomUUID(),
               input,
@@ -456,13 +477,14 @@ it("retries immutable signed events independently, recovers missing jobs, retain
   await Effect.runPromise(
     harness.router.cancel({
       challengeId: created.challengeId,
+      projectId: "demo",
       key: randomUUID(),
       requestId: randomUUID(),
       input: {},
     }),
   );
   await harness.run(
-    harness.pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '8 days' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${created.challengeId})`,
+    harness.pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '31 days', history_updated_at = clock_timestamp() - interval '31 days' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${created.challengeId})`,
   );
   await harness.run(
     harness.pg`UPDATE otp_router.events SET occurred_at = clock_timestamp() - interval '8 days' WHERE kind = 'challenge.updated' AND subject_id = ${created.challengeId}`,
@@ -527,7 +549,7 @@ it("durably deduplicates authenticated receipts and never overwrites a higher re
 it("runs notification workers independently and retains an expiry job for every challenge", async () => {
   const harness = app();
   responseStatus = 204;
-  notifyAfter = 12;
+  notifyAfter = 20;
   await harness.run(
     Effect.gen(function* () {
       yield* startWorkers({ concurrency: 4, shutdownGraceMs: 30000 }).pipe(
@@ -536,6 +558,7 @@ it("runs notification workers independently and retains an expiry job for every 
       for (let index = 0; index < 2; index++) {
         yield* harness.pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '31 seconds' WHERE kind = 'admission'`;
         yield* createChallenge(harness.configuration, {
+          projectId: "demo",
           key: randomUUID(),
           requestId: randomUUID(),
           input: {
@@ -564,13 +587,13 @@ it("runs notification workers independently and retains an expiry job for every 
         harness.pg`SELECT count(*)::int AS count FROM otp_router.notifications WHERE state = 'delivered'`,
       ),
     ),
-  ).toEqual({ count: 12 });
+  ).toEqual({ count: 20 });
   for (const receipt of received)
     expect(
-      Schema.decodeUnknownSync(Schema.Union([ChallengeEvent, DeliveryEvent]))(
+      Schema.decodeUnknownSync(HistoryEvent)(
         new Webhook(secret).verify(receipt.body, receipt.headers),
       ).type,
-    ).toMatch(/^(challenge|delivery)\.updated$/);
+    ).toMatch(/^(challenge|delivery|attempt)\.(updated|evidence)$/);
 });
 
 it("publishes only the final snapshot when acceptance and early failure evidence commit together", async () => {

@@ -1,3 +1,4 @@
+import { installAttemptHistory } from "../../delivery/history-schema.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 
@@ -5,11 +6,11 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE SCHEMA otp_router`;
   yield* sql`CREATE TABLE otp_router.delivery_operations (
-    id uuid PRIMARY KEY, owner text NOT NULL CHECK (owner IN ('external','challenge')),
+    id uuid PRIMARY KEY, project_id text NOT NULL, owner text NOT NULL CHECK (owner IN ('external','challenge')),
     purpose text NOT NULL, context_id text NOT NULL, recipient_token text NOT NULL,
     policy_id text NOT NULL, snapshot jsonb NOT NULL,
     state text NOT NULL CHECK (state IN ('prepared','active','closed','expired')),
-    created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL, terminal_at timestamptz,
+    created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL, terminal_at timestamptz, history_updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     send_count integer NOT NULL DEFAULT 0 CHECK (send_count >= 0),
     public_revision integer NOT NULL DEFAULT 0 CHECK (public_revision >= 0), public_snapshot jsonb,
     processing_started boolean NOT NULL DEFAULT false,
@@ -45,9 +46,18 @@ export default Effect.gen(function* () {
     provider_instance_id text NOT NULL, route_position integer NOT NULL CHECK (route_position >= 0),
     routing_revision integer NOT NULL CHECK (routing_revision > 0),
     reason text NOT NULL CHECK (reason IN ('initial','fallback','resend','next','select')),
+    revision integer NOT NULL DEFAULT 0, public_snapshot jsonb,
+    dispatch_deadline timestamptz NOT NULL,
+    authorization_required boolean NOT NULL,
+    authorization_state text NOT NULL CHECK (authorization_state IN ('not_required','pending','approved','denied','expired')),
+    authorization_generation integer NOT NULL DEFAULT 0, project_generation integer NOT NULL DEFAULT 0,
+    authorization_retry_at timestamptz, authorization_lease_until timestamptz,
+    approved_at timestamptz, approval_expires_at timestamptz,
+    reservation_reference text,
+    invocation text NOT NULL DEFAULT 'not_started' CHECK (invocation IN ('not_started','committed','not_invoked')),
     due_at timestamptz NOT NULL, state text NOT NULL CHECK (state IN ('pending','dispatching','accepted','delivered','failed','uncertain','suppressed')),
     reserved_at timestamptz, recovery_at timestamptz, completed_at timestamptz, acceptance text CHECK (acceptance IN ('accepted','not_accepted','unknown')),
-    failure_category text, diagnostic_code text, provider_request_id text, retry_at timestamptz,
+    failure_category text, diagnostic_code text, retry_at timestamptz,
     CHECK ((state = 'dispatching') IS NOT TRUE OR (reserved_at IS NOT NULL AND recovery_at IS NOT NULL))
   )`;
   yield* sql`CREATE UNIQUE INDEX attempts_advancement ON otp_router.delivery_attempts(operation_id,routing_revision,route_position) WHERE reason = 'fallback'`;
@@ -55,10 +65,17 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX attempts_recovery ON otp_router.delivery_attempts(recovery_at) WHERE state = 'dispatching'`;
   yield* sql`CREATE INDEX attempts_pending ON otp_router.delivery_attempts(due_at) WHERE state = 'pending'`;
   yield* sql`CREATE TABLE otp_router.events (
-    id uuid PRIMARY KEY, subject_id uuid NOT NULL, kind text NOT NULL CHECK (kind IN ('challenge.updated','delivery.updated')), revision integer NOT NULL CHECK (revision > 0),
+    id uuid PRIMARY KEY, subject_id uuid NOT NULL, kind text NOT NULL CHECK (kind IN ('challenge.updated','delivery.updated','attempt.updated','attempt.evidence')), revision integer NOT NULL CHECK (revision > 0),
+    project_id text NOT NULL, operation_id uuid NOT NULL, stream_sequence bigint,
+    transaction_id xid8 NOT NULL DEFAULT pg_current_xact_id(), ordinal bigserial NOT NULL,
     occurred_at timestamptz NOT NULL, body text NOT NULL,
     UNIQUE(kind,subject_id,revision)
   )`;
+  yield* sql`CREATE TABLE otp_router.project_streams(project_id text PRIMARY KEY, head bigint NOT NULL DEFAULT 0, floor bigint NOT NULL DEFAULT 0)`;
+  yield* sql`CREATE TABLE otp_router.project_send_blocks(project_id text PRIMARY KEY, blocked_until timestamptz NOT NULL, generation integer NOT NULL DEFAULT 1)`;
+  yield* sql`CREATE UNIQUE INDEX events_stream ON otp_router.events(project_id,stream_sequence)`;
+  yield* sql`CREATE INDEX events_operation ON otp_router.events(project_id,operation_id,ordinal)`;
+  yield* sql`CREATE INDEX events_transaction ON otp_router.events(transaction_id) WHERE stream_sequence IS NULL`;
   yield* sql`CREATE INDEX events_retention ON otp_router.events(occurred_at)`;
   yield* sql`CREATE TABLE otp_router.notifications (
     event_id uuid PRIMARY KEY REFERENCES otp_router.events(id) ON DELETE CASCADE,
@@ -100,5 +117,6 @@ export default Effect.gen(function* () {
   )`;
   yield* sql`CREATE INDEX quota_window ON otp_router.quota_events(identity,kind,occurred_at)`;
   yield* sql`CREATE TABLE otp_router.provider_restrictions(provider_instance_id text PRIMARY KEY,retry_at timestamptz NOT NULL)`;
+  yield* installAttemptHistory;
   yield* sql`CREATE TABLE otp_router.deployment_identity(singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),deployment_id text NOT NULL,recipient_key_fingerprint text NOT NULL)`;
 });

@@ -1,3 +1,4 @@
+import { DeliveryHistoryLive } from "./notifications/history.js";
 import type { DeliveryOwner } from "./delivery/owner.js";
 import { DeliveryOwnerLive } from "./challenges/delivery-owner.js";
 import { DeliveryLive } from "./delivery/service.js";
@@ -69,6 +70,7 @@ export const makeEngineLayer = (options: {
         Layer.mergeAll(
           RouterLive,
           DeliveryLive,
+          DeliveryHistoryLive,
           ProviderCallbacksLive,
           Layer.effect(EngineControl, makeControl),
         ).pipe(

@@ -21,14 +21,15 @@ export const publish = (config: RuntimeConfiguration, id: string, time: Date) =>
     const previous = operation.public_snapshot;
     if (previous !== null && comparable(previous) === comparable(next)) return previous;
     const sql = yield* PgClient.PgClient;
-    const event: DeliveryEvent = {
+    const event: Omit<DeliveryEvent, "sequence"> = {
+      projectId: operation.project_id,
       eventId: randomUUID(),
       type: "delivery.updated",
       occurredAt: time.toISOString(),
       delivery: next,
     };
     yield* sql`UPDATE otp_router.delivery_operations SET public_revision = ${next.revision}, public_snapshot = ${sql.json(next)} WHERE id = ${id}`;
-    yield* persistEvent(event, config.settings.webhook !== undefined);
+    yield* persistEvent(event);
     return next;
   });
 export const flushChanges = (config: RuntimeConfiguration, time?: Date) =>

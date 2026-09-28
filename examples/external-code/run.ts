@@ -29,6 +29,14 @@ const program = Effect.gen(function* () {
       fallbackLocales: [],
       policies: { login: { providerInstanceIds: ["fake"], maxLifetimeSeconds: 900 } },
       purposes: { login: ["login"] },
+      projects: {
+        demo: {
+          policyIds: ["login"],
+          sendLimit15m: 10000,
+          sendLimit24h: 100000,
+          authorization: "disabled",
+        },
+      },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
     },
@@ -49,6 +57,7 @@ const program = Effect.gen(function* () {
   const control = Context.get(context, EngineControl);
   yield* control.startWorkers({ concurrency: 1, shutdownGraceMs: 5000 });
   const prepared = yield* delivery.prepare({
+    projectId: "demo",
     key: randomUUID(),
     requestId: randomUUID(),
     input: {
@@ -63,15 +72,22 @@ const program = Effect.gen(function* () {
   // In a real consumer, its external authority supplies this code and verifies it.
   yield* delivery.submitCode({
     operationId,
+    projectId: "demo",
     key: randomUUID(),
     requestId: randomUUID(),
     input: { code: "123456" },
   });
   for (let attempt = 0; attempt < 30; attempt++) {
-    const status = yield* delivery.status(operationId);
+    const status = yield* delivery.status("demo", operationId);
     if (status.body.state === "accepted") {
       yield* Effect.sync(() => process.stdout.write(`${JSON.stringify(status.body)}\n`));
-      yield* delivery.close({ operationId, key: randomUUID(), requestId: randomUUID(), input: {} });
+      yield* delivery.close({
+        operationId,
+        projectId: "demo",
+        key: randomUUID(),
+        requestId: randomUUID(),
+        input: {},
+      });
       return;
     }
     yield* Effect.sleep("200 millis");

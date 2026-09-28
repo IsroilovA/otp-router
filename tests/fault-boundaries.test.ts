@@ -66,6 +66,14 @@ const configuration: Configuration = {
     fallbackLocales: [],
     policies: { login: { managed: {}, providerInstanceIds: [providerId] } },
     purposes: { login: ["login"] },
+    projects: {
+      demo: {
+        policyIds: ["login"],
+        sendLimit15m: 10000,
+        sendLimit24h: 100000,
+        authorization: "disabled",
+      },
+    },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1_000,
   },
@@ -136,6 +144,7 @@ describe("PostgreSQL fault boundaries", () => {
   const create = (operationKey: string) =>
     Effect.runPromise(
       app().router.create({
+        projectId: "demo",
         key: operationKey,
         input: createInput,
         requestId: randomUUID(),
@@ -268,6 +277,7 @@ describe("PostgreSQL fault boundaries", () => {
       const result = await Effect.runPromise(
         app()
           .router.deliver({
+            projectId: "demo",
             key: "pool-exhaustion-resend",
             challengeId,
             input: { action: "resend" },
@@ -299,6 +309,7 @@ describe("PostgreSQL fault boundaries", () => {
 
     const retried = await Effect.runPromise(
       app().router.deliver({
+        projectId: "demo",
         key: "pool-exhaustion-resend",
         challengeId,
         input: { action: "resend" },
@@ -325,7 +336,12 @@ describe("PostgreSQL fault boundaries", () => {
     try {
       const attempted = Effect.runPromise(
         app()
-          .router.create({ key: operationKey, input: createInput, requestId: randomUUID() })
+          .router.create({
+            projectId: "demo",
+            key: operationKey,
+            input: createInput,
+            requestId: randomUUID(),
+          })
           .pipe(Effect.exit),
       );
       const pid = await stage("wait for blocked queue insert", blockedQueueInsertPid());

@@ -15,7 +15,23 @@ export const recipientLimit = (token: string, kind: Limit["kind"], maximum: numb
   maximum,
   windowMs: 900000,
 });
-export const commonSendLimits = (settings: Settings, token: string): readonly Limit[] => [
+export const commonSendLimits = (
+  settings: Settings,
+  token: string,
+  projectId: string,
+): readonly Limit[] => [
+  {
+    identity: `project:${projectId}`,
+    kind: "send",
+    maximum: settings.projects[projectId]?.sendLimit15m ?? 0,
+    windowMs: 900000,
+  },
+  {
+    identity: `project:${projectId}`,
+    kind: "send",
+    maximum: settings.projects[projectId]?.sendLimit24h ?? 0,
+    windowMs: 86400000,
+  },
   recipientLimit(token, "send", settings.recipientSendLimit15m),
   {
     identity: "deployment",
@@ -40,8 +56,9 @@ export const sendLimits = (
   settings: Settings,
   token: string,
   providerId: string,
+  projectId: string,
 ): readonly Limit[] => [
-  ...commonSendLimits(settings, token),
+  ...commonSendLimits(settings, token, projectId),
   ...providerSendLimits(settings, providerId),
 ];
 // Lock order: request idempotency, sorted quota identities, operation, then challenge.

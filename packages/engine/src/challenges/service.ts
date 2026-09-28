@@ -18,6 +18,7 @@ import { DomainError } from "../errors.js";
 import { createChallenge } from "./create.js";
 import { verifyChallenge } from "./verify.js";
 import { cancelChallenge } from "./cancel.js";
+import { findProjectChallenge } from "./store.js";
 import { challengeStatus } from "./status.js";
 
 const validate = <S extends Schema.Top>(schema: S, input: S["Type"]) =>
@@ -50,11 +51,17 @@ export const RouterLive = Layer.effect(
           ),
           request.requestId,
         ),
-      status: (id) =>
+      status: (projectId, id) =>
         observeOperation(
           "status",
           validate(Schema.String, id).pipe(
-            Effect.flatMap((valid) => provide(challengeStatus(config, valid))),
+            Effect.flatMap((valid) =>
+              provide(
+                findProjectChallenge(projectId, valid).pipe(
+                  Effect.andThen(challengeStatus(config, valid)),
+                ),
+              ),
+            ),
           ),
         ),
       verify: (request) =>

@@ -10,6 +10,7 @@ import { expire, findOperation, findAttempt } from "./store.js";
 import { mergeLockedOutcome } from "./outcomes.js";
 import {
   correlationKey,
+  callbackIdentity,
   findCorrelation,
   providerReference,
   registerCorrelation,
@@ -25,10 +26,15 @@ const Inbox = Schema.Struct({
   processed: Schema.Boolean,
   diagnostic_code: Schema.NullOr(Schema.String),
 });
-const eventReferences = (events: readonly NormalizedDeliveryEvent[]) =>
+const eventReferences = (
+  config: RuntimeConfiguration,
+  events: readonly NormalizedDeliveryEvent[],
+) =>
   events.flatMap((event) => [
-    correlationKey(event.correlationReference),
-    ...(event.providerRequestId === undefined ? [] : [providerReference(event.providerRequestId)]),
+    correlationKey(config.settings.crypto, event.correlationReference),
+    ...(event.providerRequestId === undefined
+      ? []
+      : [providerReference(config.settings.crypto, event.providerRequestId)]),
   ]);
 
 const lockInboxOperations = (
@@ -66,6 +72,7 @@ const reconcile = (config: RuntimeConfiguration, providerId: string, reference: 
       const delivery = yield* findAttempt(attemptId);
       yield* mergeLockedOutcome(config, yield* findOperation(operation.id), delivery, {
         state: event.status,
+        ...(event.event_at === null ? {} : { providerEventTime: event.event_at }),
         acceptance: "accepted",
         ...(event.diagnostic_code === null ? {} : { diagnosticCode: event.diagnostic_code }),
       });
@@ -81,19 +88,19 @@ const ingestLockedEvents = (
     const sql = yield* SqlClient.SqlClient;
     const references = new Set<string>();
     for (const event of events) {
-      const reference = correlationKey(event.correlationReference);
+      const reference = correlationKey(config.settings.crypto, event.correlationReference);
       references.add(reference);
       if (event.providerRequestId !== undefined && event.correlationReference._tag === "Attempt") {
         const attemptId = yield* findCorrelation(providerId, reference);
         if (attemptId !== undefined) {
-          const alias = providerReference(event.providerRequestId);
+          const alias = providerReference(config.settings.crypto, event.providerRequestId);
           yield* registerCorrelation(providerId, alias, attemptId);
           references.add(alias);
         }
       }
       // A provider cancellation report is final failure evidence, never local cancellation or verification.
       const status = event.status === "cancelled" ? "failed" : event.status;
-      yield* sql`INSERT INTO otp_router.callback_inbox(provider_instance_id,deduplication_key,reference,status,received_at,event_at,diagnostic_code) VALUES (${providerId},${event.deduplicationKey},${reference},${status},clock_timestamp(),${event.providerEventTime ?? null},${event.diagnosticCode === undefined ? null : providerDiagnostic(config.providers.get(providerId), event.diagnosticCode)}) ON CONFLICT DO NOTHING`;
+      yield* sql`INSERT INTO otp_router.callback_inbox(provider_instance_id,deduplication_key,reference,status,received_at,event_at,diagnostic_code) VALUES (${providerId},${callbackIdentity(config.settings.crypto, event.deduplicationKey)},${reference},${status},clock_timestamp(),${event.providerEventTime ?? null},${event.diagnosticCode === undefined ? null : providerDiagnostic(config.providers.get(providerId), event.diagnosticCode)}) ON CONFLICT DO NOTHING`;
     }
     for (const reference of [...references].sort()) yield* reconcile(config, providerId, reference);
   });
@@ -106,7 +113,7 @@ export const ingestEvents = (
   transaction(
     config,
     Effect.gen(function* () {
-      yield* lockInboxOperations(providerId, eventReferences(events));
+      yield* lockInboxOperations(providerId, eventReferences(config, events));
       yield* ingestLockedEvents(config, providerId, events);
     }),
   );
@@ -119,10 +126,10 @@ export const recordAccepted = (config: RuntimeConfiguration, id: string, accepte
       yield* lockInboxOperations(
         initial.provider_instance_id,
         [
-          ...eventReferences(events),
+          ...eventReferences(config, events),
           ...(accepted.providerRequestId === undefined
             ? []
-            : [providerReference(accepted.providerRequestId)]),
+            : [providerReference(config.settings.crypto, accepted.providerRequestId)]),
         ],
         initial.operation_id,
       );
@@ -132,12 +139,9 @@ export const recordAccepted = (config: RuntimeConfiguration, id: string, accepte
       yield* mergeLockedOutcome(config, operation, delivery, {
         state: "accepted",
         acceptance: "accepted",
-        ...(accepted.providerRequestId === undefined
-          ? {}
-          : { providerRequestId: accepted.providerRequestId }),
       });
       if (accepted.providerRequestId !== undefined) {
-        const reference = providerReference(accepted.providerRequestId);
+        const reference = providerReference(config.settings.crypto, accepted.providerRequestId);
         yield* registerCorrelation(delivery.provider_instance_id, reference, id);
         yield* reconcile(config, delivery.provider_instance_id, reference);
       }

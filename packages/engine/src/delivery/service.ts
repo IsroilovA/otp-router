@@ -21,7 +21,13 @@ import type { DeliveryOwner } from "./owner.js";
 import { domainTransaction, deliveryTransaction } from "./transaction.js";
 import { prepareRoute, normalizePhone } from "./prepare.js";
 import { admitOperation, attachCode } from "./lifecycle.js";
-import { findOperation, expire, requireExternal, terminate } from "./store.js";
+import {
+  findProjectOperation,
+  findOperation,
+  expire,
+  requireExternal,
+  terminate,
+} from "./store.js";
 import { snapshot } from "./publication.js";
 import { identity, replay, save } from "./idempotency.js";
 import { requestSend } from "./actions.js";
@@ -41,13 +47,17 @@ const prepare = (
       replay(config.settings.crypto, id, input, code),
     );
     if (previous !== undefined) return previous;
-    const route = yield* prepareRoute(config, input);
+    const route = yield* prepareRoute(config, input, request.projectId);
     return yield* deliveryTransaction(
       config,
       Effect.gen(function* () {
         const existing = yield* replay(config.settings.crypto, id, input, code);
         if (existing !== undefined) return existing;
-        const operation = yield* admitOperation(config, input, { ...route, owner: "external" });
+        const operation = yield* admitOperation(config, input, {
+          ...route,
+          projectId: request.projectId,
+          owner: "external",
+        });
         const attached =
           code === undefined ? operation : yield* attachCode(config, operation, code);
         const time = yield* databaseTime;
@@ -75,6 +85,7 @@ const mutate = (config: RuntimeConfiguration, command: Mutation) =>
     config,
     Effect.gen(function* () {
       const { request, action } = command;
+      yield* findProjectOperation(request.projectId, request.operationId);
       const code = command.action === "submit" ? command.request.input.code : undefined;
       const input = command.action === "submit" ? {} : request.input;
       const id = identity(config.settings.crypto, action, request);
@@ -192,11 +203,15 @@ export const DeliveryLive = Layer.effect(
           ),
           request.requestId,
         ),
-      status: (id) =>
+      status: (projectId, id) =>
         run(
           "delivery.status",
           validate(Schema.String, id).pipe(
-            Effect.flatMap((value) => deliveryStatus(config, value)),
+            Effect.flatMap((value) =>
+              findProjectOperation(projectId, value).pipe(
+                Effect.andThen(deliveryStatus(config, value)),
+              ),
+            ),
           ),
         ),
     };

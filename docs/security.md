@@ -1,12 +1,12 @@
 # Verification and security
 
-For managed challenges, the router generates a cryptographically random numeric code and binds its verifier to the deployment, challenge, purpose, and application-supplied context. Preserve leading zeros. The adopting backend authorizes the business action and consumes the verification result once; the router does not issue login tokens.
+For managed challenges, the router generates a cryptographically random numeric code and binds its verifier to the deployment, project, challenge, purpose, and application-supplied context. Preserve leading zeros. The adopting backend authorizes the business action and consumes the verification result once; the router does not issue login tokens.
 
 ## Verification and abuse limits
 
 Compare purpose and context before checking a code or consuming a guess. Successful verification produces one durable result. A new operation key cannot verify an already verified challenge again. Replays retrieve the original result.
 
-Enforce per-challenge guess and send limits, recipient-wide creation/send/guess limits, and deployment send caps. Provider caps can further restrict sends. Changing purpose, policy, channel, or challenge does not reset recipient usage. The adopting application's public endpoints also need abuse controls.
+Enforce per-challenge guess and send limits, project-scoped recipient creation/send/guess limits, and deployment send caps. Provider caps can further restrict sends. Changing purpose, policy, channel, or challenge does not reset recipient usage within a project. See [limit scopes](projects.md#limit-scopes). The adopting application's public endpoints also need abuse controls.
 
 Use database-backed rolling windows. Count a wrong guess only when an active, correctly bound request reaches comparison and fails. Existing quota rejections and replays consume nothing. Recipient guess limits can temporarily block correct submissions; the challenge's own exhausted guess budget permanently locks it.
 
@@ -18,7 +18,7 @@ Configuration schemas define defaults and supported bounds. Providers may narrow
 
 ## Secrets and keys
 
-Store the recipient and recoverable code encrypted with authenticated encryption. Store a keyed verifier separately. Bind ciphertext to its deployment, delivery operation, and field so it cannot be moved between records. Use independent keys for encryption, verification, request fingerprints, and recipient lookup.
+Store the recipient and recoverable code encrypted with authenticated encryption. Store a keyed verifier separately. Bind ciphertext to its deployment, project, delivery operation, and field so it cannot be moved between records. Use independent keys for encryption, verification, request fingerprints, and recipient lookup.
 
 Load secrets from the environment or a secret store. Never put OTPs, credentials, full recipients, context IDs, routing context, message text, raw provider payloads, or authorization headers in logs or metrics. Persist provider diagnostics only from the adapter's declared allowlist. Keep internal health and metrics endpoints private.
 
@@ -42,4 +42,4 @@ Follow the [API-key rotation procedure](operations.md#api-key-rotation) separate
 
 External callers own generation, verification, authorization and the association between operation references and upstream flows. The router's [external lifecycle](engine.md#external-delivery) provides delivery without an authentication claim.
 
-Delivery-only deployments need encryption, fingerprint and stable recipient keys, but no verification key. Attachment fingerprints have a separate cryptographic purpose from request fingerprints and managed verifiers. Both capabilities share admission and send quotas; guess limits remain managed-only.
+Delivery-only deployments need encryption, fingerprint and stable recipient keys, but no verification key. Attachment fingerprints have a separate cryptographic purpose from request fingerprints and managed verifiers. Both capabilities share admission and send quotas within each project; guess limits remain managed-only.

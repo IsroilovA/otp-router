@@ -47,6 +47,14 @@ export default defineConfig({
         },
       },
       purposes: { login: ["login"] },
+      projects: {
+        demo: {
+          policyIds: ["login"],
+          sendLimit15m: 10000,
+          sendLimit24h: 100000,
+          authorization: "disabled",
+        },
+      },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1_000,
     },
@@ -65,7 +73,7 @@ export default defineConfig({
   },
   settings: {
     databaseUrl: required("DATABASE_URL"),
-    apiKeys: [apiKey],
+    principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }],
     host: process.env["OTP_ROUTER_HOST"] ?? "127.0.0.1",
     internalHost: process.env["OTP_ROUTER_INTERNAL_HOST"] ?? "127.0.0.1",
   },

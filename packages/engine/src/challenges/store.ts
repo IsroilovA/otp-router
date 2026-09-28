@@ -23,6 +23,17 @@ export const findChallenge = (id: string, lock = false) =>
       : initial;
     return { ...current, delivery };
   });
+export const findProjectChallenge = (projectId: string, id: string, lock = false) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const owned = yield* rows(
+      Schema.Struct({ id: Schema.String }),
+      sql`SELECT c.id::text FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE c.id::text = ${id} AND o.project_id = ${projectId}`,
+    );
+    if (owned.length === 0)
+      return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
+    return yield* findChallenge(id, lock);
+  });
 export const findSecrets = (id: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;

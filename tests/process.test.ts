@@ -193,6 +193,7 @@ export default defineConfig({
     fallbackLocales: [],
     policies: { default: { providerInstanceIds: ["process-fake"], managed: { lifetimeSeconds: 300 }, resendCooldownSeconds: 30 } },
     purposes: { login: ["default"] },
+    projects: { demo: { policyIds: ["default"], sendLimit15m: 10000, sendLimit24h: 100000, authorization: "disabled" } },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1000,
   },
@@ -200,7 +201,7 @@ export default defineConfig({
   },
   settings: {
     databaseUrl: process.env.DATABASE_URL,
-    apiKeys: [${JSON.stringify(API_KEY)}],
+    principals: [{ id: "backend", projectIds: ["demo"], keys: [${JSON.stringify(API_KEY)}] }],
     role: process.env.OTP_TEST_ROLE,
     port: Number(process.env.OTP_TEST_PORT),
     internalPort: Number(process.env.OTP_TEST_INTERNAL_PORT),
@@ -238,7 +239,7 @@ const createChallenge = async (
   contextId: string,
   phoneNumber: string,
 ): Promise<Snapshot> => {
-  const response = await fetch(`http://127.0.0.1:${String(port)}/v1/challenges`, {
+  const response = await fetch(`http://127.0.0.1:${String(port)}/v1/projects/demo/challenges`, {
     method: "POST",
     headers: {
       authorization: `Bearer ${API_KEY}`,
@@ -262,7 +263,7 @@ const challengeStatus = async (
   signal?: AbortSignal,
 ): Promise<Snapshot> => {
   const response = await fetch(
-    `http://127.0.0.1:${String(port)}/v1/challenges/${encodeURIComponent(challengeId)}`,
+    `http://127.0.0.1:${String(port)}/v1/projects/demo/challenges/${encodeURIComponent(challengeId)}`,
     { headers: { authorization: `Bearer ${API_KEY}` }, signal: signal ?? null },
   );
   if (response.status !== 200) throw new Error(`Status failed with ${String(response.status)}`);
@@ -440,7 +441,7 @@ describe("built process", () => {
     );
 
     const verify = await fetch(
-      `http://127.0.0.1:${String(apiPort)}/v1/challenges/${created.challengeId}/verify`,
+      `http://127.0.0.1:${String(apiPort)}/v1/projects/demo/challenges/${created.challengeId}/verify`,
       {
         method: "POST",
         headers: {
@@ -620,7 +621,7 @@ describe("built process", () => {
       await psql(
         `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
       ),
-    ).toBe("2");
+    ).toBe("3");
   }, 30_000);
 
   it("keeps a committed dispatch uncertain when killed before external transmission", async () => {
@@ -681,7 +682,7 @@ describe("built process", () => {
       await psql(
         `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
       ),
-    ).toBe("2");
+    ).toBe("3");
   }, 30_000);
 
   it("does not resend acceptance lost before the outcome transaction commits", async () => {
@@ -748,7 +749,7 @@ describe("built process", () => {
     ).toBe("dispatching");
     expect(
       await psql(
-        `SELECT count(*) FROM otp_router.provider_correlations WHERE attempt_id = '${attemptId}' AND reference = 'process:${attemptId}'`,
+        `SELECT count(*) FROM otp_router.provider_correlations WHERE attempt_id = '${attemptId}' AND reference LIKE 'provider:%'`,
       ),
     ).toBe("0");
     await psql(
@@ -777,7 +778,7 @@ describe("built process", () => {
       await psql(
         `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
       ),
-    ).toBe("2");
+    ).toBe("3");
   }, 30_000);
 
   it("recovers a discarded creation response and serializes replay across independent API processes", async () => {
@@ -806,7 +807,7 @@ describe("built process", () => {
         });
         socket.write(
           [
-            "POST /v1/challenges HTTP/1.1",
+            "POST /v1/projects/demo/challenges HTTP/1.1",
             "Host: localhost",
             `Authorization: Bearer ${API_KEY}`,
             "Content-Type: application/json",
@@ -853,19 +854,22 @@ describe("built process", () => {
       if (sent === undefined) throw new Error("No sink entry");
       const responses = await Promise.all(
         [apiPort, otherPort].map((port, index) =>
-          fetch(`http://127.0.0.1:${String(port)}/v1/challenges/${created.challengeId}/verify`, {
-            method: "POST",
-            headers: {
-              authorization: `Bearer ${API_KEY}`,
-              "content-type": "application/json",
-              "idempotency-key": `multiprocess-verify-${String(index)}`,
+          fetch(
+            `http://127.0.0.1:${String(port)}/v1/projects/demo/challenges/${created.challengeId}/verify`,
+            {
+              method: "POST",
+              headers: {
+                authorization: `Bearer ${API_KEY}`,
+                "content-type": "application/json",
+                "idempotency-key": `multiprocess-verify-${String(index)}`,
+              },
+              body: JSON.stringify({
+                code: sent.code,
+                purpose: "login",
+                contextId: "multiprocess-flow",
+              }),
             },
-            body: JSON.stringify({
-              code: sent.code,
-              purpose: "login",
-              contextId: "multiprocess-flow",
-            }),
-          }),
+          ),
         ),
       );
       expect(responses.map((response) => response.status).sort((a, b) => a - b)).toEqual([
@@ -937,7 +941,7 @@ describe("built process", () => {
     try {
       socket.write(
         [
-          "POST /v1/challenges HTTP/1.1",
+          "POST /v1/projects/demo/challenges HTTP/1.1",
           "Host: localhost",
           `Authorization: Bearer ${API_KEY}`,
           "Content-Type: application/json",

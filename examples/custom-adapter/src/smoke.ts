@@ -24,6 +24,7 @@ const expiresAt = Schema.decodeUnknownSync(IsoDateTimeSchema)("2030-01-01T00:00:
 const run = Effect.scoped(
   Effect.gen(function* () {
     const route = yield* textSelector({
+      projectId: "demo",
       recipient,
       purpose: "login",
       locale: "en",

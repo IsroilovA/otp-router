@@ -97,6 +97,7 @@ export const buildSnapshot = (config: RuntimeConfiguration, operation: Operation
     const provider =
       accepted === undefined ? undefined : operation.snapshot.providers[accepted.route_position];
     return {
+      projectId: operation.project_id,
       operationId: operation.id,
       revision: operation.public_revision + 1,
       ...overallState(
@@ -140,9 +141,19 @@ export const overallState = (
       break;
   }
   if (delivery.state === "pending" || delivery.state === "dispatching")
-    return { state: operation.processing_started ? "sending" : "queued", reason: null };
+    return {
+      state: operation.processing_started ? "sending" : "queued",
+      reason: delivery.diagnostic_code === "authorization_pending" ? "authorization_pending" : null,
+    };
   if (accepted) return { state: "accepted", reason: null };
   if (uncertain) return { state: "uncertain", reason: "delivery_uncertain" };
+  if (delivery.diagnostic_code === "authorization_denied")
+    return { state: "failed", reason: "authorization_denied" };
+  if (
+    delivery.diagnostic_code === "authorization_expired" ||
+    delivery.diagnostic_code === "approval_unused"
+  )
+    return { state: "failed", reason: "authorization_expired" };
   const reason =
     delivery.failure_category === "invalid_recipient"
       ? "invalid_recipient"
@@ -159,6 +170,7 @@ const preparedSnapshot = (operation: Operation, time: Date) => {
     operation.state === "prepared" ? "code_required" : "operation_unavailable",
   );
   return {
+    projectId: operation.project_id,
     operationId: operation.id,
     revision: operation.public_revision + 1,
     state:

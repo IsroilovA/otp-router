@@ -6,9 +6,10 @@ export interface Outcome {
   readonly acceptance: "accepted" | "not_accepted" | "unknown";
   readonly failureCategory?: ProviderRejected["reason"];
   readonly diagnosticCode?: string;
-  readonly providerRequestId?: string;
   readonly retryAt?: Date;
   readonly stop?: boolean;
+  readonly notInvoked?: boolean;
+  readonly providerEventTime?: string;
 }
 
 type AttemptEvidence = Pick<

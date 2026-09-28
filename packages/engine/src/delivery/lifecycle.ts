@@ -17,10 +17,18 @@ import { schedule } from "./schedule.js";
 export const admitOperation = (
   config: RuntimeConfiguration,
   input: PrepareInput,
-  prepared: { readonly saved: PolicySnapshot; readonly owner: Operation["owner"] },
+  prepared: {
+    readonly saved: PolicySnapshot;
+    readonly projectId: string;
+    readonly owner: Operation["owner"];
+  },
 ) =>
   Effect.gen(function* () {
-    const token = recipientToken(config.settings.crypto, input.recipient.phoneNumber);
+    const token = recipientToken(
+      config.settings.crypto,
+      prepared.projectId,
+      input.recipient.phoneNumber,
+    );
     const limits = [
       recipientLimit(token, "create", config.settings.recipientCreateLimit15m),
       admissionLimit(token),
@@ -41,14 +49,19 @@ export const admitOperation = (
       input.deliveryChoice,
       yield* availableProviders(
         config,
-        { snapshot: prepared.saved, recipient_token: token, expires_at: deadline },
+        {
+          snapshot: prepared.saved,
+          project_id: prepared.projectId,
+          recipient_token: token,
+          expires_at: deadline,
+        },
         time,
       ),
     );
     const id = randomUUID();
     const sql = yield* PgClient.PgClient;
-    yield* sql`INSERT INTO otp_router.delivery_operations(id,owner,purpose,context_id,recipient_token,policy_id,snapshot,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.owner},${input.purpose},${input.contextId},${token},${input.policyId},${sql.json(prepared.saved)},'prepared',${time},${deadline},${target.position},${time})`;
-    yield* sql`INSERT INTO otp_router.delivery_secrets(operation_id,phone) VALUES (${id},${sql.json(encrypt(config.settings.crypto, id, "phone", input.recipient.phoneNumber))})`;
+    yield* sql`INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,recipient_token,policy_id,snapshot,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.projectId},${prepared.owner},${input.purpose},${input.contextId},${token},${input.policyId},${sql.json(prepared.saved)},'prepared',${time},${deadline},${target.position},${time})`;
+    yield* sql`INSERT INTO otp_router.delivery_secrets(operation_id,phone) VALUES (${id},${sql.json(encrypt(config.settings.crypto, { projectId: prepared.projectId, operationId: id }, "phone", input.recipient.phoneNumber))})`;
     yield* countQuotas(limits, id, time);
     yield* enqueueExpiry(id, deadline);
     yield* changed(id);
@@ -63,7 +76,14 @@ export const attachCode = (config: RuntimeConfiguration, original: Operation, co
     const secret = yield* findSecrets(operation.id);
     const fingerprint = digest(
       config.settings.crypto.fingerprint,
-      [1, "delivery-code", config.settings.crypto.deploymentId, operation.id, code],
+      [
+        1,
+        "delivery-code",
+        config.settings.crypto.deploymentId,
+        operation.project_id,
+        operation.id,
+        code,
+      ],
       secret.code_fingerprint?.keyId,
     );
     if (secret.code_fingerprint !== null) {
@@ -82,7 +102,7 @@ export const attachCode = (config: RuntimeConfiguration, original: Operation, co
         return yield* Effect.fail(new DomainError({ code: "invalid_request" }));
     }
     const sql = yield* PgClient.PgClient;
-    yield* sql`UPDATE otp_router.delivery_secrets SET code = ${sql.json(encrypt(config.settings.crypto, operation.id, "code", code))}, code_fingerprint = ${sql.json(fingerprint)} WHERE operation_id = ${operation.id} AND code IS NULL`;
+    yield* sql`UPDATE otp_router.delivery_secrets SET code = ${sql.json(encrypt(config.settings.crypto, { projectId: operation.project_id, operationId: operation.id }, "code", code))}, code_fingerprint = ${sql.json(fingerprint)} WHERE operation_id = ${operation.id} AND code IS NULL`;
     yield* sql`UPDATE otp_router.delivery_operations SET state = 'active', next_user_send_at = ${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)} WHERE id = ${operation.id} AND state = 'prepared'`;
     const active = yield* findOperation(operation.id);
     yield* schedule(active, operation.initial_position, "initial", time);

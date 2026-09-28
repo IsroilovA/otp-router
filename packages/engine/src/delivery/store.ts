@@ -21,6 +21,17 @@ export const findOperation = (id: string, lock = false) =>
       return yield* Effect.fail(new DomainError({ code: "operation_not_found" }));
     return operation;
   });
+export const findProjectOperation = (projectId: string, id: string, lock = false) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const owned = yield* rows(
+      Schema.Struct({ id: Schema.String }),
+      sql`SELECT id::text FROM otp_router.delivery_operations WHERE id::text = ${id} AND project_id = ${projectId}`,
+    );
+    if (owned.length === 0)
+      return yield* Effect.fail(new DomainError({ code: "operation_not_found" }));
+    return yield* findOperation(id, lock);
+  });
 export const findAttempt = (id: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -40,7 +51,7 @@ export const eraseSecrets = (id: string) =>
     // Provider inputs are already in memory after the gate. No later operation needs this row.
     yield* sql`DELETE FROM otp_router.delivery_secrets WHERE operation_id = ${id}`;
     yield* sql`UPDATE otp_router.delivery_idempotency SET code_fingerprint = NULL WHERE operation_id = ${id} AND code_fingerprint IS NOT NULL`;
-    yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed' WHERE operation_id = ${id} AND state = 'pending'`;
+    yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked' WHERE operation_id = ${id} AND state = 'pending'`;
   });
 export const terminate = (operation: Operation, state: "closed" | "expired", time: Date) =>
   Effect.gen(function* () {

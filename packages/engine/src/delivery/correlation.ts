@@ -1,3 +1,5 @@
+import { createHmac } from "node:crypto";
+import type { CryptoConfig } from "../crypto.js";
 import { Data, Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import type { CorrelationReference } from "../providers/contract.js";
@@ -5,13 +7,20 @@ import { rows } from "../database/query.js";
 
 export class CorrelationConflict extends Data.TaggedError("CorrelationConflict")<{}> {}
 export const attemptReference = (id: string) => `attempt:${id}`;
-export const providerReference = (id: string) => `provider:${id}`;
-export const correlationKey = (reference: CorrelationReference) => {
+const privateReference = (config: CryptoConfig, purpose: string, value: string) =>
+  createHmac("sha256", Buffer.from(config.recipientKey, "base64url"))
+    .update(JSON.stringify([purpose, config.deploymentId, value]))
+    .digest("hex");
+export const providerReference = (config: CryptoConfig, id: string) =>
+  `provider:${privateReference(config, "provider-reference", id)}`;
+export const callbackIdentity = (config: CryptoConfig, id: string) =>
+  privateReference(config, "callback-deduplication", id);
+export const correlationKey = (config: CryptoConfig, reference: CorrelationReference) => {
   switch (reference._tag) {
     case "Attempt":
       return attemptReference(reference.attemptId);
     case "ProviderRequest":
-      return providerReference(reference.providerRequestId);
+      return providerReference(config, reference.providerRequestId);
   }
 };
 export const findCorrelation = (providerId: string, reference: string) =>

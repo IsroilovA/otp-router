@@ -1,10 +1,10 @@
 # Public updates
 
-Outbound events carry committed managed or external-delivery snapshots. The [challenge](../packages/engine/src/challenges/contracts.ts) and [delivery](../packages/engine/src/delivery/contracts.ts) schemas own their shape. Events omit codes, recipients, binding/context data, raw provider payloads, and attempt history. A notification never substitutes for consuming a securely bound verification result.
+Outbound events carry committed managed/external snapshots, attempt updates, and normalized attempt evidence. The [public event schemas](../packages/engine/src/notifications/history-contracts.ts) own their shape. Events omit codes, recipients, binding/context data, and raw provider payloads. A notification never substitutes for consuming a securely bound verification result.
 
 ## Ordering and reconciliation
 
-Events can arrive before their HTTP response, out of order, repeatedly, or after expiry. Deduplicate by event ID and apply only higher revisions for the same subject and event kind, including HTTP snapshots. Each event is self-contained; status reads provide reconciliation when needed.
+Events can arrive before their HTTP response, out of order, repeatedly, or after expiry. Deduplicate every event by event ID. Apply only higher revisions when updating subject snapshots, including HTTP snapshots; retain evidence events independently. Each event is self-contained. [Attempt history and the project event feed](history.md) provide reconciliation beyond the latest operation snapshot.
 
 ## Authentication and ingestion
 
@@ -26,6 +26,6 @@ Store it securely in both sender and receiver. Never log event bodies or reseria
 
 Any 2xx acknowledges delivery. Other responses, failures, and timeouts retry with bounded backoff; lost acknowledgements can duplicate delivery. Retries preserve event ID and body, with fresh authentication timestamps. Notification retries never authorize OTP sends.
 
-Failed events remain available for investigation and replay after retry exhaustion. Delivered events retain seven days after acknowledgement; pending/failed events survive subject-history cleanup. Without a configured destination, events retain seven days without notifications. Enabling a destination affects subsequent transitions.
+Failed events remain available for investigation and replay after retry exhaustion. [History retention](history.md#retention-window) governs events, including when no destination is configured; pending/failed notifications survive subject cleanup. Enabling a destination affects subsequent transitions.
 
 After repairing the receiver, follow [notification replay](operations.md#outbound-notifications). Replays use the current destination and signing secret; coordinate changes across roles and accept both secrets during rotation. Backups can restore already-delivered events and older revisions, so receiver deduplication must survive router recovery.

@@ -1,3 +1,4 @@
+import { recoverAuthorizations } from "../delivery/authorization.js";
 import { Effect, Schema } from "effect";
 import { RouterConfig } from "../config/runtime.js";
 import { dispatch } from "../delivery/dispatch.js";
@@ -44,6 +45,7 @@ export const startWorkers = (options: typeof WorkerSettings.Type) =>
         }),
     );
     yield* recoverDispatches(config);
+    yield* recoverAuthorizations(config);
     yield* recoverNotifications;
     yield* consumers.register(
       { queue: notificationQueue, concurrency: settings.concurrency, pollingIntervalSeconds: 0.5 },

@@ -15,10 +15,19 @@ export interface Operation {
 }
 export const operation = (
   config: CryptoConfig,
-  request: { readonly key: string; readonly input: object; readonly challengeId?: string },
+  request: {
+    readonly projectId: string;
+    readonly key: string;
+    readonly input: object;
+    readonly challengeId?: string;
+  },
   name: string,
 ): Operation => ({
-  identity: operationIdentity(config.deploymentId, name, request.challengeId ?? "", request.key),
+  identity: operationIdentity(config.deploymentId, request.projectId, {
+    name: name,
+    target: request.challengeId ?? "",
+    key: request.key,
+  }),
   input: request.input,
   ...(request.challengeId === undefined ? {} : { challengeId: request.challengeId }),
 });

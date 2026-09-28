@@ -44,6 +44,7 @@ export const Action = Schema.Struct({
   availableAt: Schema.optionalKey(Schema.String),
 });
 export const Snapshot = Schema.Struct({
+  projectId: Identifier,
   operationId: Schema.String,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   state: Schema.Literals([
@@ -59,6 +60,9 @@ export const Snapshot = Schema.Struct({
   reason: Schema.NullOr(
     Schema.Literals([
       "delivery_failed",
+      "authorization_pending",
+      "authorization_denied",
+      "authorization_expired",
       "delivery_uncertain",
       "invalid_recipient",
       "rate_limited",
@@ -88,6 +92,8 @@ export const Snapshot = Schema.Struct({
 });
 export type Snapshot = typeof Snapshot.Type;
 export const DeliveryEvent = Schema.Struct({
+  projectId: Identifier,
+  sequence: Schema.String,
   eventId: Schema.String.check(Schema.isUUID()),
   type: Schema.Literal("delivery.updated"),
   occurredAt: Schema.String,
@@ -101,7 +107,7 @@ export const OperationResult = Schema.Struct({
 });
 export type OperationResult = typeof OperationResult.Type;
 const mutation = <S extends Schema.Top>(input: S) =>
-  Schema.Struct({ key: Opaque, requestId: Opaque, input });
+  Schema.Struct({ projectId: Identifier, key: Opaque, requestId: Opaque, input });
 const targeted = <S extends Schema.Top>(input: S) =>
   Schema.Struct({ ...mutation(input).fields, operationId: Schema.String });
 export const PrepareRequest = mutation(PrepareInput);
@@ -121,7 +127,7 @@ export class Delivery extends Context.Service<
     readonly submitCode: (
       request: typeof SubmitRequest.Type,
     ) => Effect.Effect<OperationResult, DomainError>;
-    readonly status: (id: string) => Effect.Effect<OperationResult, DomainError>;
+    readonly status: (projectId: string, id: string) => Effect.Effect<OperationResult, DomainError>;
     readonly deliver: (
       request: typeof DeliverRequest.Type,
     ) => Effect.Effect<OperationResult, DomainError>;

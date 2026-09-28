@@ -12,7 +12,9 @@ const signingSecret = `whsec_${Buffer.alloc(32, 5).toString("base64")}`;
 const entry: ConfigurationInput = {
   settings: {
     databaseUrl: "postgres://unused/local",
-    apiKeys: ["independent-api-key-with-at-least-32-bytes"],
+    principals: [
+      { id: "backend", projectIds: ["demo"], keys: ["independent-api-key-with-at-least-32-bytes"] },
+    ],
   },
   engine: {
     settings: {
@@ -28,6 +30,14 @@ const entry: ConfigurationInput = {
       fallbackLocales: [],
       policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
       purposes: { login: ["login"] },
+      projects: {
+        demo: {
+          policyIds: ["login"],
+          sendLimit15m: 10000,
+          sendLimit24h: 100000,
+          authorization: "disabled",
+        },
+      },
       deploymentSendLimit15m: 10,
       deploymentSendLimit24h: 100,
     },
@@ -48,7 +58,10 @@ it.effect("rejects API credentials that reuse the engine's signing secret", () =
     for (const apiKey of [signingSecret, signingSecret.slice(6)]) {
       const result = yield* loadConfiguration({
         ...entry,
-        settings: { ...entry.settings, apiKeys: [apiKey] },
+        settings: {
+          ...entry.settings,
+          principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }],
+        },
       }).pipe(Effect.result);
       expect(result).toMatchObject({ _tag: "Failure", failure: { reason: "invalid_keys" } });
     }
