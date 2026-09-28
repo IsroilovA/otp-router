@@ -31,7 +31,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
     const verification = config.settings.crypto.verification;
     if (managed === undefined || verification === undefined)
       return yield* Effect.fail(new DomainError({ code: "policy_not_allowed" }));
-    const route = yield* prepareRoute(config, { ...input, expiresAt: new Date().toISOString() });
+    const route = yield* prepareRoute(config, input);
     return yield* transaction(
       config,
       Effect.gen(function* () {

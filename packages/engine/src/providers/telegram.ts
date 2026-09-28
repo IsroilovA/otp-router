@@ -72,11 +72,9 @@ const constraints = {
   minDeliveryWindowMs: 30_000,
 } as const;
 
-const constantTimeHexEqual = (left: string, right: string): boolean => {
-  if (!/^[0-9a-f]+$/iu.test(left) || !/^[0-9a-f]+$/iu.test(right)) return false;
-  const leftBytes = Buffer.from(left, "hex");
-  const rightBytes = Buffer.from(right, "hex");
-  return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
+const constantTimeHexEqual = (provided: string, expected: string): boolean => {
+  if (!/^[0-9a-f]{64}$/iu.test(provided)) return false;
+  return timingSafeEqual(Buffer.from(provided, "hex"), Buffer.from(expected, "hex"));
 };
 
 const authenticateCallback = (

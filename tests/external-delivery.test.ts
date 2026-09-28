@@ -225,6 +225,34 @@ describe("independent durable external code delivery", () => {
     await runQueued();
     expect(sent).toHaveLength(1);
   });
+  it("compares an attached code independently of retired provider configuration", async () => {
+    if (database === undefined) throw new Error("Database missing");
+    const { body } = await prepare();
+    const attached = await Effect.runPromise(app().delivery.submitCode(submit(body.operationId)));
+    const h = await startRuntime(database.databaseUrl, {
+      ...configuration,
+      settings: { ...configuration.settings, policies: {}, purposes: {} },
+      providers: [],
+    });
+    try {
+      const repeated = await Effect.runPromise(h.delivery.submitCode(submit(body.operationId)));
+      expect(repeated).toMatchObject({
+        outcome: "completed",
+        replayed: false,
+        body: { revision: attached.body.revision, expiresAt: body.expiresAt },
+      });
+      expect(
+        await Effect.runPromise(
+          h.delivery.submitCode(submit(body.operationId, "654321")).pipe(Effect.result),
+        ),
+      ).toMatchObject({ _tag: "Failure", failure: { code: "operation_state_conflict" } });
+      expect(await counts()).toMatchObject({ attempts: 1, sends: 0 });
+      expect(await h.queue.fetch(deliveryQueue, { batchSize: 10 })).toHaveLength(1);
+      expect(sent).toHaveLength(0);
+    } finally {
+      await h.close();
+    }
+  });
   it("serializes code submission against closure and suppresses pending work", async () => {
     const prepared = await prepare(),
       operationId = prepared.body.operationId;

@@ -10,7 +10,7 @@ import type { PrepareInput } from "./contracts.js";
 import type { Operation, PolicySnapshot } from "./records.js";
 import { changed } from "./changes.js";
 import { availableProviders, resolveChoice } from "./eligibility.js";
-import { checkQuotas, countQuotas, lockQuotas, recipientLimit } from "./quotas.js";
+import { admissionLimit, checkQuotas, countQuotas, lockQuotas, recipientLimit } from "./quotas.js";
 import { expire, findOperation, findSecrets } from "./store.js";
 import { schedule } from "./schedule.js";
 
@@ -23,7 +23,7 @@ export const admitOperation = (
     const token = recipientToken(config.settings.crypto, input.recipient.phoneNumber);
     const limits = [
       recipientLimit(token, "create", config.settings.recipientCreateLimit15m),
-      { identity: `recipient:${token}`, kind: "admission" as const, maximum: 1, windowMs: 30000 },
+      admissionLimit(token),
     ];
     yield* lockQuotas(limits);
     const time = yield* databaseTime;
@@ -60,16 +60,6 @@ export const attachCode = (config: RuntimeConfiguration, original: Operation, co
     const operation = yield* expire(original, time);
     if (operation.state === "closed" || operation.state === "expired")
       return yield* Effect.fail(new DomainError({ code: "operation_unavailable" }));
-    for (const saved of operation.snapshot.providers) {
-      const provider = config.providers.get(saved.providerInstanceId);
-      if (
-        provider === undefined ||
-        code.length < provider.constraints.minCodeLength ||
-        code.length > provider.constraints.maxCodeLength ||
-        !/^[0-9]{6,8}$/.test(code)
-      )
-        return yield* Effect.fail(new DomainError({ code: "invalid_request" }));
-    }
     const secret = yield* findSecrets(operation.id);
     const fingerprint = digest(
       config.settings.crypto.fingerprint,
@@ -80,6 +70,16 @@ export const attachCode = (config: RuntimeConfiguration, original: Operation, co
       if (!equalDigest(fingerprint.value, secret.code_fingerprint.value))
         return yield* Effect.fail(new DomainError({ code: "operation_state_conflict" }));
       return operation;
+    }
+    // Provider changes affect new attachments, not comparison with a saved code.
+    for (const saved of operation.snapshot.providers) {
+      const provider = config.providers.get(saved.providerInstanceId);
+      if (
+        provider === undefined ||
+        code.length < provider.constraints.minCodeLength ||
+        code.length > provider.constraints.maxCodeLength
+      )
+        return yield* Effect.fail(new DomainError({ code: "invalid_request" }));
     }
     const sql = yield* PgClient.PgClient;
     yield* sql`UPDATE otp_router.delivery_secrets SET code = ${sql.json(encrypt(config.settings.crypto, operation.id, "code", code))}, code_fingerprint = ${sql.json(fingerprint)} WHERE operation_id = ${operation.id} AND code IS NULL`;

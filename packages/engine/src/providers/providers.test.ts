@@ -332,6 +332,20 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
       _tag: "Events",
       events: [{ correlationReference: { _tag: "Attempt", attemptId }, status: "delivered" }],
     });
+    for (const malformed of [signature.slice(1), `${signature}0`, `${signature}00`]) {
+      expect(
+        yield* callback({
+          body,
+          method: "POST",
+          path: "/callbacks/telegram",
+          query: {},
+          headers: { "x-request-timestamp": timestamp, "x-request-signature": malformed },
+        }).pipe(Effect.result),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "CallbackAuthenticationError", diagnosticCode: "invalid_signature" },
+      });
+    }
     const invalidBody = encoder.encode(
       JSON.stringify({
         request_id: "invalid-time",

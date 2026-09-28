@@ -17,7 +17,10 @@ export const normalizePhone = (phone: string) =>
       Effect.mapError(() => new DomainError({ code: "invalid_recipient" })),
     );
   });
-export const prepareRoute = (config: RuntimeConfiguration, input: PrepareInput) =>
+export const prepareRoute = (
+  config: RuntimeConfiguration,
+  input: Omit<PrepareInput, "expiresAt">,
+) =>
   Effect.gen(function* () {
     const policy = config.settings.policies[input.policyId];
     if (
@@ -75,7 +78,7 @@ export const prepareRoute = (config: RuntimeConfiguration, input: PrepareInput) 
 const selectRoute = (
   config: RuntimeConfiguration,
   options: {
-    readonly input: PrepareInput;
+    readonly input: Omit<PrepareInput, "expiresAt">;
     readonly recipient: typeof NormalizedPhoneSchema.Type;
     readonly locale: string;
     readonly permitted: readonly string[];

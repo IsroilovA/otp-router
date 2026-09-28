@@ -338,6 +338,32 @@ describe("HTTP transport", () => {
     expect(accepted.status).toBe(200);
     expect(new TextDecoder().decode(callbackBodies.at(-1))).toBe('{"event":"delivered"}');
 
+    const payloads = ['{"event":"sent"}', '{"event":"delivered","text":"✓"}'];
+    const chunkedStart = callbackBodies.length;
+    const chunked = await Promise.all(
+      payloads.map((payload) => {
+        const init = {
+          method: "POST",
+          duplex: "half",
+          body: new ReadableStream<Uint8Array>({
+            start(controller) {
+              for (const byte of new TextEncoder().encode(payload))
+                controller.enqueue(Uint8Array.of(byte));
+              controller.close();
+            },
+          }),
+        };
+        return server.handler(new Request("http://router.test/webhooks/meta-primary", init));
+      }),
+    );
+    expect(chunked.map((response) => response.status)).toEqual([200, 200]);
+    expect(
+      callbackBodies
+        .slice(chunkedStart)
+        .map((body) => new TextDecoder().decode(body))
+        .sort(),
+    ).toEqual(payloads.toSorted());
+
     const before = callbackBodies.length;
     const oversized = await server.handler(
       new Request("http://router.test/webhooks/meta-primary", {

@@ -58,10 +58,8 @@ class InvalidRequest extends Data.TaggedError("InvalidRequest") {}
 
 interface BodyState {
   readonly size: number;
-  readonly chunks: ReadonlyArray<Uint8Array>;
+  readonly chunks: Array<Uint8Array>;
 }
-
-const initialBodyState: BodyState = { size: 0, chunks: [] };
 
 const readBody = (
   request: HttpServerRequest.HttpServerRequest,
@@ -69,11 +67,12 @@ const readBody = (
 ): Effect.Effect<Uint8Array, BodyTooLarge | InvalidRequest> =>
   request.stream.pipe(
     Stream.runFoldEffect<BodyState, Uint8Array, BodyTooLarge, never>(
-      () => initialBodyState,
+      () => ({ size: 0, chunks: [] }),
       (state, chunk) => {
         const size = state.size + chunk.byteLength;
         if (size > limit) return Effect.fail(new BodyTooLarge());
-        return Effect.succeed({ size, chunks: [...state.chunks, chunk] });
+        state.chunks.push(chunk);
+        return Effect.succeed({ size, chunks: state.chunks });
       },
     ),
     Effect.map((state) => {
