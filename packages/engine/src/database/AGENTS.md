@@ -1,9 +1,6 @@
 # PostgreSQL
 
-- `client.ts` defines the scoped application pool through Effect SQL. `makeDatabaseLayer` accepts an explicit redacted URL; importing it opens no connection.
-- Keep feature queries with their feature. This directory owns connections, migrations, and transaction infrastructure.
-- Register migrations in `migrations.ts` using `PgMigrator.fromRecord` keys such as `0001_initial_schema`. Keep migration modules under `migrations/`.
+- Scope pools to the caller's lifecycle and accept explicit redacted connection settings.
+- Write migrations explicitly with Effect SQL. During initial development, update the initial schema directly; do not add backfills or compatibility migrations.
 - Never modify pg-boss tables or migration history through router migrations.
-- Startup must run router migrations, then pg-boss initialization, before readiness or job processing. Preserve database coordination for concurrent starts. Compose platform services at startup; never run migrations at module import.
-- Keep pg-boss enqueue on the current Effect SQL transaction using the documented per-call adapter. A second pool cannot join that transaction by sharing the same URL. See [integration evidence](../../../../docs/research/sql-pg-research.md).
-- Validate schema changes, constraints, rollback, and concurrent startup against disposable PostgreSQL. Type checking cannot validate SQL text.
+- Coordinate concurrent startup: finish router migrations before pg-boss initialization and readiness. Never run migrations at module import.

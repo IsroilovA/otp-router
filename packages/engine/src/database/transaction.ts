@@ -3,6 +3,7 @@ import { Effect, Schema } from "effect";
 import { duration } from "../diagnostics/metrics.js";
 import { single } from "./query.js";
 
+// Read after acquiring mutation locks so time spent waiting consumes the deadline.
 export const databaseTime = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   return (yield* single(

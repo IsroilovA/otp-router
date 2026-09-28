@@ -22,7 +22,7 @@ An explicit choice can revisit a previously failed provider if it is eligible ag
 
 Creation and accepted user actions start the cooldown. Dispatch extends it to at least dispatch time plus cooldown. Automatic fallback bypasses the user cooldown. Rejections and replays do not change it.
 
-Expiry is fixed at creation. Queue delay and time spent inside the dispatch transaction consume the lifetime. Derive the remaining budget from database time and subtract elapsed monotonic time before invoking an adapter. The provider's request timeout and minimum delivery window must fit. Skip transmission if the budget expires after reservation; retain the committed reservation conservatively.
+Expiry is fixed at creation. Queue delay and dispatch preparation consume the lifetime. Evaluate the remaining budget immediately before invoking a provider. The provider's request timeout and minimum delivery window must fit. Skip transmission if the budget expires after reservation; retain the committed reservation conservatively.
 
 Provider TTL limits delivery attempts, not code validity. Some providers can deliver after expiry; verification still rejects the expired code.
 
@@ -30,20 +30,20 @@ Provider TTL limits delivery attempts, not code validity. Some providers can del
 
 Verification progresses from active to verified, locked, expired, or cancelled. These terminal states never reopen. Treat an overdue active row as expired even before cleanup runs. Delivery exhaustion leaves verification available until the original deadline and guess limits.
 
-Each provider attempt moves from pending through dispatch to an outcome. Recovery turns unresolved dispatching work uncertain and never sends it again. Explicit resend creates a different record.
+Recovery treats unresolved dispatched work as uncertain and never sends it again. Explicit resend is a new attempt.
 
 Callbacks and send responses share outcome rules. Late acceptance cannot overwrite delivery or confirmed final failure. Authenticated delivery evidence can resolve an earlier uncertain or failed outcome. A stale failure cannot advance a newer route.
 
 New delivery evidence stops pending automatic fallback, but does not cancel an explicit user send. Duplicate delivery evidence must not suppress a later action. Local cancellation cannot recall a message already in flight.
 
-A failed or uncertain resend cannot erase another attempt's still-valid acceptance. Public provider/channel identify confirmed acceptance, never route selection. See [public states and action forecasts](api.md#challenge-operations).
+A failed or uncertain resend cannot erase another attempt's still-valid acceptance. Public provider/channel identify confirmed acceptance, never route selection. See [public states and action forecasts](api.md#status-and-action-forecasts).
 
 Late delivery evidence can change active challenges but cannot alter a terminal public snapshot. [Public events](webhooks.md) describe committed changes; time passing alone creates no event.
 
 ## Independent operations
 
-The same dispatch, eligibility, evidence and fallback machinery serves prepared external-code operations and managed challenges. A prepared operation cannot send until attachment. Policy settings bound external deadlines and managed lifetimes; see [configuration](configuration.md#policies). Attachment and dispatch both check the fixed deadline, and every saved provider must accept the code format and length.
+The same eligibility, evidence, quota, and fallback rules apply to external-code operations and managed challenges. A prepared operation cannot send until attachment. Policy settings bound external deadlines and managed lifetimes; see [configuration](configuration.md#policies). Attachment and dispatch both check the fixed deadline, and every saved provider must accept the code format and length.
 
 New operations and accepted user sends share recipient admission: one per 30 seconds, alongside rolling creation/send budgets. Dispatch extends that recipient cooldown. Automatic confirmed-failure fallback never waits for it. Recipient/provider/deployment send reservations are shared across capabilities and retain uncertain or failed dispatched attempts.
 
-Routing exhaustion alone does not close an external operation. Its caller ends the flow through the [external lifecycle](engine.md#choosing-a-capability).
+Routing exhaustion alone does not close an external operation. Its caller ends the flow through the [external lifecycle](engine.md#external-delivery).

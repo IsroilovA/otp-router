@@ -80,11 +80,14 @@ export const fitsSingleSms = (text: string): boolean => {
   return septets <= 160;
 };
 
+// The provider's older PDF limits IDs to 20 characters; the HTTP wiki says 40.
+// Keep the stricter bound until the account confirms otherwise.
 const messageId = (attemptId: string): string =>
   `otp${createHash("sha256").update(attemptId, "utf8").digest("hex").slice(0, 17)}`;
 
 const mapErrorCode = (code: string): ProviderSendError => {
   if (code === "100") {
+    // An internal server error, even under HTTP 400, does not establish rejection.
     return new UnknownProviderOutcome({
       acceptance: "unknown",
       diagnosticCode: "play_mobile_internal_error",

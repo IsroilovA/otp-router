@@ -1,36 +1,31 @@
 # OTP Router
 
-A private, unreleased engine for managed phone OTP challenges and delivery of externally generated, externally verified codes, with a self-hosted HTTP server. Applications configure an ordered route through Telegram, WhatsApp, SMS, or custom providers. Expect breaking configuration and schema changes while development continues.
+A private, unreleased OTP engine with a self-hosted HTTP server. Route managed verification or externally generated codes through Telegram, WhatsApp, SMS, and custom providers, with shared send limits and explicit handling of uncertain delivery.
 
-Managed creation atomically composes a challenge with an independent delivery operation. External callers can prepare a fixed-deadline operation, attach a code once, resend/select, and close. Submission commits snapshots, events and queued work before returning. Workers send afterward. Confirmed failures can advance the route; uncertain delivery waits for an explicit user action. Resends reuse the code and original expiry.
+Confirmed failures can advance the configured route. Uncertain delivery requires an explicit user action; resends preserve the original code and expiry. External-code callers retain responsibility for generation and verification.
 
-Start with the [running guide](docs/running.md) and [provider setup](docs/provider-setup.md). The local examples use fake providers and send no messages. See the [standalone external-code example](examples/external-code/README.md).
+Start with [local setup](docs/running.md). The examples use fake providers and send no messages. Use [provider setup](docs/provider-setup.md) for a real deployment.
 
-## Documentation
+## Contracts
 
-- [Engine package API](docs/engine.md)
-- [Architecture](docs/architecture.md) and [transaction design](docs/data-model.md)
-- [Routing](docs/routing.md) and [verification security](docs/security.md)
+- [Managed and external capabilities](docs/engine.md)
+- [Routing](docs/routing.md), [verification and security](docs/security.md), and [consistency guarantees](docs/data-model.md)
 - [HTTP integration](docs/api.md) and [outbound webhooks](docs/webhooks.md)
-- [Configuration reference](docs/configuration.md)
-- [Provider and selector extensions](docs/plugins.md)
-- [Deployment and operations](docs/operations.md)
+- [Configuration choices](docs/configuration.md) and [provider extensions](docs/plugins.md)
+- [Deployment and recovery](docs/operations.md)
 
-Source schemas define configuration and wire formats. Generate OpenAPI with `node apps/server/dist/main.js --openapi` after building; never edit its output manually. Historical experiments are in the [research archive](docs/research/README.md).
+Schemas and exported TypeScript contracts define supported shapes. Generate the HTTP reference with `node apps/server/dist/main.js --openapi` after building; never edit generated output.
 
 ## Development
 
-The workspace contains `packages/engine` (`@otp-router/engine`), `apps/server` (`@otp-router/server`), and a custom-adapter consumer example. One lockfile pins every dependency. Server and examples import built package exports; build before running focused tests.
-
-Use the pinned pnpm version in `package.json`. Docker is required for PostgreSQL integration tests.
+Use the Node.js and pnpm versions declared in [package.json](package.json). Docker is required for PostgreSQL tests.
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm check
-pnpm build
 pnpm test
 ```
 
-Tests own disposable databases and fake providers. For a focused run, use `pnpm exec vitest run tests/integration.test.ts`. Real sends require explicit authorization and a designated recipient. Follow [AGENTS.md](AGENTS.md) for development rules.
+`pnpm check` builds before checking; `pnpm build` also runs independently. Consumers resolve built engine exports. See [AGENTS.md](AGENTS.md) for conventions.
 
 Distribution remains private. Licensed under [MIT](LICENSE). Copyright 2026 Alisher Isorilov.

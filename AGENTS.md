@@ -1,44 +1,30 @@
-# Development rules
+# Goal
 
-## Scope
+Build a self-hosted OTP router that gives applications one integration for managed verification and externally generated code delivery across Telegram, WhatsApp, SMS, and custom providers. Control provider routing and send costs while preserving verification safety when delivery outcomes are uncertain.
 
-- Unreleased, with no customers. Make direct breaking changes when needed. Remove superseded code; do not add compatibility shims, deprecated APIs, legacy branches, or parallel implementations. Update callers, tests, and docs together.
-- Private pnpm workspace: reusable engine in `packages/engine`, self-hosted HTTP application in `apps/server`. Keep publication private. Follow the owning contracts linked from [README](README.md); research snapshots are historical evidence.
-- Implement only the requested scope. Add dependencies and abstractions for concrete needs, not anticipated flexibility.
+## Scope and architecture
 
-## Feature-first structure
-
-- In `packages/engine/src`, organize behavior under `challenges/`, `delivery/`, and `notifications/`. Colocate feature types, operations, SQL, and `*.test.ts`. Create directories only when they have code.
-- Engine `providers/` owns contracts and adapters; `worker/` processes jobs. `queue/` owns pg-boss and never imports feature orchestration. `database/` owns connections, migrations, and transactions.
-- Engine `config/` validates supplied settings; it must not load environment variables or depend on API keys, listener ports, process arguments, or startup.
-- `apps/server/src` owns HTTP, authentication, OpenAPI, configuration loading, CLI, and process lifecycle. Separate reusable application construction from CLI execution. Consume only supported engine package exports; never source paths or internal records/SQL helpers.
-- Features must not import HTTP handlers, workers, or startup. Providers normalize external outcomes; they never verify challenges or choose the next provider. Avoid cycles, unnecessary barrels, global services/repositories/types, and miscellaneous utilities.
+- Private, unreleased pnpm workspace with no customers. Make direct breaking changes; remove superseded code and update callers together. No compatibility shims or parallel implementations.
+- Implement the requested scope. Add dependencies, abstractions, and shared modules only for concrete needs.
+- Organize behavior by feature; colocate its operations, schemas, SQL, and tests. Avoid global service/repository/type buckets, unnecessary barrels, and cycles.
+- `packages/engine` owns reusable behavior; `apps/server` owns HTTP and process lifecycle. Consumers use supported package exports, never engine source paths or private records.
 
 ## TypeScript and Effect
 
-- Use the exactly pinned Effect 4 package set. Check installed types or version-matched official docs before changing Effect APIs.
-- Keep domain operations in Effect with explicit tagged failures. Preserve defects and interruption separately. Use Layers for resources and dependency boundaries, not every helper. Run Effects only at process/transport boundaries and tests.
-- Validate external input with Effect Schema. Derive types from schemas; use discriminated unions and exhaustive handling. Never use `any`, unsafe casts, non-null assertions, or suppressed diagnostics to bypass a missing model or validation.
-- Use `unknown` only at untrusted boundaries and validate it before domain use. Do not replace domain models with untyped property bags or use `eval`/`Function` to bypass static checks.
-- Keep plain calculations pure. Prefer readonly data, named exports, type-only imports, and explicit `.js` extensions in relative imports.
-- Do not disable checks to make code pass. A necessary exception must be narrow and explain the concrete reason. Split complex functions by responsibility, not arbitrary fragments to satisfy a metric.
-
-## PostgreSQL
-
-- Use `@effect/sql-pg`, parameterized Effect SQL, and `SqlSchema` result validation. Keep queries with their feature and transactions in `SqlClient.withTransaction`. SQL result annotations are not validation.
-- Write migrations explicitly with Effect SQL. During initial development, update the initial schema directly. Do not add backfills or compatibility migrations.
-- Require an explicit predicate for application updates and deletes. Any intentional whole-table operation needs a narrow explanation and review. The current linter does not inspect SQL strings.
-- Follow [database rules](packages/engine/src/database/AGENTS.md) when changing connections, queries, or migrations.
-
-## Critical invariants
-
-- Uncertain delivery never triggers automatic resend or provider fallback. Disable transport retries. Explicit resend preserves the original code, deadline, and guess count.
-- Commit eligibility and quota reservation before a provider call; never hold a database transaction across network work. Recovery must not repeat a dispatched send.
-- Verification and delivery are separate states. Never log OTPs, credentials, full recipients, or raw provider payloads. See [routing](docs/routing.md), [security](docs/security.md), and [transactions](docs/data-model.md) before changing these rules.
+- Use the pinned compiler, tooling, and Effect package set. Check installed types or version-matched official docs before changing Effect APIs.
+- Validate external input with Effect Schema; derive types from schemas and handle discriminated unions exhaustively. No `any`, unsafe casts, non-null assertions, or diagnostic suppression to bypass missing validation.
+- Use `unknown` at untrusted boundaries and narrow it before domain use. No untyped property bags or dynamic code evaluation.
+- Keep domain operations in Effect with tagged failures; distinguish defects and interruption. Use Layers for resources and dependency boundaries. Run Effects only at transport/process boundaries and tests.
+- Keep calculations pure. Prefer readonly data, named exports, type-only imports, and explicit `.js` extensions in relative imports.
+- Reduce cyclomatic and cognitive complexity by simplifying control flow and extracting cohesive responsibilities. Do not split functions into meaningless helpers merely to satisfy either limit.
 
 ## Verification
 
-- Use pnpm and preserve exact versions in the lockfile. `pnpm check` runs TypeScript, Effect diagnostics, typed linting, and formatting checks. `pnpm build` emits engine before server; consumers resolve built exports without source aliases. Build before focused tests.
-- For tests, read [write-tests](.agents/skills/write-tests/SKILL.md). Use `pnpm exec vitest run <file>` for focused runs and `pnpm test` for the suite. Do not present an empty suite as passing coverage.
-- Run checks and relevant tests after changes. Report what ran and any unverified behavior. Do not add tests for empty modules or merely to increase coverage.
-- Keep agent instructions and docs concise.
+- Use pnpm and exact dependency versions. `pnpm check` covers TypeScript, Effect diagnostics, typed linting, and formatting; `pnpm build` emits engine before server.
+- Fix failures without weakening checks. Justified lint exceptions use `oxlint-disable-next-line <rule> -- <reason>`; keep them narrow and remove stale directives.
+- Run checks at the end of a meaningful phase; repeat only after relevant changes or failures. Report what ran and material gaps.
+
+## Documentation
+
+- Read the relevant contracts linked from [README](README.md) before changing behavior. Update requirements and callers together when the contract changes.
+- Keep each rule in one owning guide. Scoped instructions add local requirements without repeating parents; docs describe specifications and external guarantees, not implementation inventories.

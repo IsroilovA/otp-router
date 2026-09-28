@@ -1,42 +1,30 @@
 ---
 name: write-tests
-description: Write, review, or remove OTP Router tests while preserving distinct regression protection and avoiding redundant or low-value coverage.
+description: Use when deciding whether to add OTP Router tests or when writing, changing, reviewing, or removing them; preserve distinct regression protection with the smallest sufficient suite.
 ---
 
 # Write tests
 
-Use Vitest and `@effect/vitest`; colocate unit tests with their feature and put cross-feature/database integration tests under `tests/`.
-
-## Decide whether to write a test
-
-Before creating a test, read the relevant behavior and existing coverage. Use these conditions as a quick judgment; no scoring or written justification is required. Add a test when all hold:
-
-- A plausible project-owned regression would affect correctness, security, stored data, delivery costs, or a caller-visible outcome.
-- Existing tests or static checks do not already protect the same behavior at the relevant boundary. Validating individual pieces does not establish that they work together. A new file or endpoint alone is not a coverage gap.
-- The assertions would fail for that regression and survive a harmless refactor. They do more than repeat supplied values or implementation steps.
-- The protection justifies setup, runtime, flakiness, and maintenance. No cheaper test at the owning layer provides the same protection.
-
-If these conditions are not met, write no test. Extend existing coverage before adding another scenario. Decide before writing the test.
-
-Useful: two concurrent dispatches cannot both reserve the last send; replay cannot consume another guess. Low value: a config literal contains its declared value, a wrapper calls its only dependency, or an empty module imports successfully. Test wiring only when a consequential integration failure can escape lower-level checks.
-
 ## Choose coverage
 
-- Use the smallest sufficient scope. Test pure decisions directly. Persistence, transactions, quotas, and races require real PostgreSQL; mocked rows and SQL snapshots cannot establish those guarantees.
-- Skip constructors, getters, forwarders, constants, empty modules, generated code, compiler guarantees, dependency behavior, and ordinary copy changes. No test-per-file rule, coverage quota, or justification comment is required.
-- Keep boundary coverage when transport, authentication, composition, or concurrency can fail independently. Avoid repeating the same domain rule through every endpoint or provider.
+- Read requirements, implementation, and nearby assertions. Add a test only for a plausible project-owned regression affecting correctness, security, data, delivery costs, or caller-visible behavior that existing coverage or static checks do not protect.
+- Give each behavior a primary testing boundary. Keep consumer coverage only for distinct transport, authentication, composition, or concurrency risks. Extend existing scenarios before duplicating them.
+- Use the smallest sufficient scope: Vitest for pure decisions, `@effect/vitest` for Effects, real PostgreSQL for persistence, transactions, quotas, and races. Colocate unit tests; put cross-feature/database suites under `tests/`.
+- Weigh protection against setup, runtime, flakiness, and maintenance. Skip isolated constructors, getters, forwarders, constants, generated code, compiler guarantees, and dependency behavior. No test-per-file rule, coverage quota, or justification ritual; write no test when none is needed.
 
 ## Design assertions
 
-- Assert observable results with independent expectations, not values calculated by the implementation under test. Replace external providers/transports and clocks; never mock the behavior being tested.
-- Use `it.effect` or scoped Effect tests for Effects. Use TestClock for local deadlines, actual database time for persisted expiry, and barriers for races. Avoid sleeps and uncontrolled network calls.
-- Assert persisted state, quota usage, queued work, and replay results for database operations. External send counts are meaningful for the at-most-one-invocation contract; arbitrary internal call order is not.
-- Test failures and recovery where consequences differ: definitive rejection, uncertainty, duplicate callbacks, stale routing revisions, terminal transitions, and process death around dispatch. Select the cases relevant to the change, not the entire matrix for every edit.
-- Await the complete outcome and release scoped resources. Isolate database state, timers, and mocks. No real provider sends without explicit authorization and a designated recipient.
+- Derive expectations from requirements or independent examples, never the tested implementation. Resolve contract conflicts instead of encoding current bugs as expected behavior.
+- Exercise production interfaces; do not add exports or flags solely for tests. Substitute external providers, transports, and clocks, never the behavior being proved or fixtures that merely test themselves.
+- Assert observable outcomes that survive harmless refactors. Reject source-text greps, assertion-free probes, supplied-value checks, and incidental internal call order. Provider invocation counts matter for the no-automatic-retry contract.
+- Assert persisted state, quota usage, queued work, and replay results for database guarantees. Mocked rows, SQL snapshots, or spy order cannot establish filtering, atomicity, or concurrency.
+- Choose consequential failure paths relevant to the change: definitive rejection, uncertainty, stale callbacks, terminal transitions, and process death around dispatch.
+- Use Effect/scoped tests, TestClock for local deadlines, database time for persisted expiry, and barriers for races. Await complete outcomes, release resources, and isolate state; avoid sleeps and uncontrolled network calls. Real sends require explicit authorization and a designated recipient.
 
-## Review and run
+## Review and verify
 
-- Check that a plausible bug would fail the assertion and a harmless refactor would not. Remove assertions that merely repeat fixture inputs, implementation structure, or dependency guarantees.
-- Before deleting coverage, compare nearby tests and production ownership. Similar-looking tests may cover separate implementations or integration risks. Preserve distinct regression protection.
-- Build the workspace before focused tests; server/consumer tests resolve emitted engine exports. Run the smallest affected group, then broaden only for changed dependencies or unresolved risks. Diagnose timeouts, leaks, and flaky setup; do not mask them with retries, skips, or longer timeouts.
-- Do not add permanent tests just to prove the tooling is installed. Report meaningful checks and any gaps honestly.
+- Check that a plausible bug fails the assertions and that the condition named by the test affects its result. Combine, narrow, or delete redundant coverage only after comparing ownership and nearby tests; similar scenarios can protect independently maintained behavior.
+- For bug fixes, demonstrate failure against faulty behavior and success after the fix when feasible. Preserve current work during baseline checks and report when failure-before-fix was not demonstrated.
+- Build before focused tests because consumers resolve emitted engine exports. Use `pnpm exec vitest run <file>` for affected groups and `pnpm test` for the suite; broaden for shared infrastructure, dependency changes, or unresolved risks.
+- Diagnose timeouts and leaks in the smallest reproducing group; never mask them with retries, skips, or longer timeouts. Add no permanent tests merely to prove tooling is installed.
+- Report behavior covered, checks actually run, and material gaps. An empty suite is not passing coverage.

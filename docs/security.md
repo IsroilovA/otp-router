@@ -32,14 +32,14 @@ See [retention guarantees](data-model.md#replay-and-retention) for history, rece
 
 During encryption, verification, or fingerprint-key rotation, add a new key ID, use it for new writes, and retain old keys until no stored records need them. Never replace a key's bytes under an existing ID. Check stored references before removing a key.
 
-Keep the recipient-lookup key stable. Replacing it changes quota identities. Stop every API and worker, invalidate active challenges, then reconstruct complete usage from a trusted source or wait a full longest quota window from the stop time. Install the replacement consistently across roles and use the incident-only adoption command in the [operations guide](operations.md#recipient-key-replacement).
+Keep the recipient-lookup key stable: replacing it changes quota identities. Follow the [incident replacement procedure](operations.md#recipient-key-replacement).
 
-Outbound webhook authentication uses a dedicated 32-byte signing secret and the Standard Webhooks `webhook-id`, `webhook-timestamp`, and `webhook-signature` headers. It must be independent of API keys, encryption/verification keys, and provider callback secrets. Event bodies omit recipients, codes, context IDs, and raw provider data. Receivers authenticate exact bytes and timestamp before durable ingestion. Retained failed notifications contain only these safe snapshots and persist until diagnosis/replay succeeds. See [webhooks](webhooks.md).
+Use independent credentials for API access, provider callbacks, and outbound event signing. [Webhook contracts](webhooks.md) own receiver authentication and event privacy requirements.
 
-API credentials rotate independently through a brief overlap of two equally privileged keys. Rotation must not change idempotency identities or quotas.
+Follow the [API-key rotation procedure](operations.md#api-key-rotation) separately from data-key rotation.
 
 ## External code handoff
 
-External callers own generation, verification, authorization and the association between operation references and upstream flows. The router's [external lifecycle](engine.md#choosing-a-capability) provides delivery without an authentication claim.
+External callers own generation, verification, authorization and the association between operation references and upstream flows. The router's [external lifecycle](engine.md#external-delivery) provides delivery without an authentication claim.
 
 Delivery-only deployments need encryption, fingerprint and stable recipient keys, but no verification key. Attachment fingerprints have a separate cryptographic purpose from request fingerprints and managed verifiers. Both capabilities share admission and send quotas; guess limits remain managed-only.

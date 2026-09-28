@@ -1,45 +1,31 @@
 # Public updates
 
-Configure `engine.settings.webhook = { url, signingSecret }` to send meaningful public changes to one backend destination. `challenge.updated` carries a managed challenge snapshot; `delivery.updated` carries a delivery snapshot. A managed operation can produce both. Exported event schemas define their shapes.
-
-Events omit codes, recipients, context/binding data, raw provider payloads and attempt history. A verification notification is not a substitute for consuming the securely bound result from the verify endpoint.
+Outbound events carry committed managed or external-delivery snapshots. The [challenge](../packages/engine/src/challenges/contracts.ts) and [delivery](../packages/engine/src/delivery/contracts.ts) schemas own their shape. Events omit codes, recipients, binding/context data, raw provider payloads, and attempt history. A notification never substitutes for consuming a securely bound verification result.
 
 ## Ordering and reconciliation
 
-A webhook may arrive before its HTTP response, out of order, more than once, or after expiry. Deduplicate by `eventId` and apply only higher revisions for each `(type, subject ID)`, including snapshots from HTTP responses. Never compare revisions across subjects or event kinds.
+Events can arrive before their HTTP response, out of order, repeatedly, or after expiry. Deduplicate by event ID and apply only higher revisions for the same subject and event kind, including HTTP snapshots. Each event is self-contained; status reads provide reconciliation when needed.
 
-Each event describes the committed snapshot and needs no follow-up fetch. Retry preserves its ID and body. Use GET for reconciliation and [absolute deadlines and action forecasts](api.md#challenge-operations) for client behavior.
+## Authentication and ingestion
 
-## Configuration and authentication
+Configure one trusted backend destination in the deployment entry. Use HTTPS except for literal loopback in local development; container loopback refers to that container. Redirects are forbidden.
 
-The supplied configuration examples read `OTP_ROUTER_WEBHOOK_URL` and `OTP_ROUTER_WEBHOOK_SIGNING_SECRET`. Generate a dedicated secret:
+Use an independent signing secret and authenticate exact bytes and timestamp before decoding. The protocol follows [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md); provider callbacks and API credentials are separate.
+
+The [receiver example](../examples/webhook-receiver/README.md) demonstrates authenticated ingestion. Commit the receipt and projection before acknowledging. If business effects cannot commit with the receipt, use a receiver-owned outbox. Keep deduplication receipts as long as replay is permitted; revision checks alone do not deduplicate side effects.
+
+Generate a dedicated secret for the supplied configuration entry:
 
 ```sh
 node -e 'process.stdout.write("whsec_" + require("node:crypto").randomBytes(32).toString("base64") + "\n")'
 ```
 
-Store it in the deployment secret store and share it only with the receiver. HTTPS is required except on local loopback. In Docker, loopback is the router container itself; use a TLS destination to reach another host. Redirects are rejected. The destination is trusted deployment configuration, never request input.
-
-The sender follows [Standard Webhooks](https://github.com/standard-webhooks/standard-webhooks/blob/main/spec/standard-webhooks.md), signing the event ID, current Unix timestamp and exact stored bytes. Headers are `webhook-id`, `webhook-timestamp` and `webhook-signature`. Each retry gets a fresh timestamp/signature. Provider callback authentication and API credentials are independent.
-
-## Receiver
-
-The [TypeScript receiver example](../examples/webhook-receiver/receiver.ts) authenticates raw bytes, validates either event type, and commits the receipt plus highest-revision projection in one application-database transaction. Its `applySnapshot` also handles HTTP responses.
-
-At the HTTP boundary, read a bounded raw UTF-8 body, pass the signature headers, and acknowledge only after durable ingestion. Reject authentication/schema failures; return 503 for persistence failures. Never log the body or parse and reserialize it before signature verification.
-
-Keep deduplication receipts for as long as replay is permitted. Highest-revision application protects projections but does not replace deduplication for business side effects. If those effects cannot commit with the receipt, write a receiver-owned outbox in the same transaction.
+Store it securely in both sender and receiver. Never log event bodies or reserialize them before signature verification.
 
 ## Delivery and recovery
 
-Notification retries are independent of OTP dispatch. Any 2xx acknowledges; other responses, transport failures and timeouts retry with bounded exponential backoff. Interrupted sends and missing queue jobs recover through startup and maintenance. Lost acknowledgements can duplicate delivery. Run a worker even in an API-only deployment.
+Any 2xx acknowledges delivery. Other responses, failures, and timeouts retry with bounded backoff; lost acknowledgements can duplicate delivery. Retries preserve event ID and body, with fresh authentication timestamps. Notification retries never authorize OTP sends.
 
-After exhaustion, failed events remain for investigation and replay. Delivered events retain seven days after acknowledgement; pending/failed events survive subject-history cleanup. Without a configured destination, events retain seven days without notifications. Enabling a destination affects subsequent transitions.
+Failed events remain available for investigation and replay after retry exhaustion. Delivered events retain seven days after acknowledgement; pending/failed events survive subject-history cleanup. Without a configured destination, events retain seven days without notifications. Enabling a destination affects subsequent transitions.
 
-Inspect `otp_router.notifications` joined by `event_id` to `otp_router.events` for failed or overdue work. After fixing the receiver, replay a failed event:
-
-```sh
-node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/router.config.ts" --replay-webhook EVENT_UUID
-```
-
-Replay resets the notification attempt budget and requeues its original ID/body. It never sends an OTP. Retried events use the current destination and signing secret: coordinate destination changes across roles and temporarily accept both secrets during rotation.
+After repairing the receiver, follow [notification replay](operations.md#outbound-notifications). Replays use the current destination and signing secret; coordinate changes across roles and accept both secrets during rotation. Backups can restore already-delivered events and older revisions, so receiver deduplication must survive router recovery.

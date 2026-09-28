@@ -44,6 +44,8 @@ export const sendLimits = (
   ...commonSendLimits(settings, token),
   ...providerSendLimits(settings, providerId),
 ];
+// Lock order: request idempotency, sorted quota identities, operation, then challenge.
+// Callers must acquire quotas before row locks to avoid cross-operation deadlocks.
 export const lockQuotas = (limits: readonly Limit[]) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
