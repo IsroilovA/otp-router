@@ -152,6 +152,7 @@ it("integrates managed verification, external delivery, replay, auth and history
     purpose: "login",
     policyId: "login",
     contextId: "managed-flow",
+    integrationReference: "Flow.Client:AbC-09",
   };
   const key = randomUUID();
   const created = await client.createChallenge(input, { idempotencyKey: key });
@@ -171,12 +172,19 @@ it("integrates managed verification, external delivery, replay, auth and history
   const challengeId = created.data.challengeId;
   const status = await client.getChallenge(challengeId);
   expect(status.data.state).toBe("accepted");
+  expect(status.data.integrationReference).toBe(input.integrationReference);
+  expect(received).not.toHaveProperty("integrationReference");
   const verified = await client.verifyChallenge(
     challengeId,
     { purpose: "login", contextId: "managed-flow", code: received.code },
     { idempotencyKey: randomUUID() },
   );
-  expect(verified.data).toMatchObject({ challengeId, contextId: "managed-flow", purpose: "login" });
+  expect(verified.data).toMatchObject({
+    challengeId,
+    contextId: "managed-flow",
+    purpose: "login",
+    integrationReference: input.integrationReference,
+  });
   const prepared = await client.prepareDelivery(
     {
       ...input,
@@ -188,27 +196,34 @@ it("integrates managed verification, external delivery, replay, auth and history
   );
   const operationId = prepared.data.operationId;
   expect(prepared.data.state).toBe("prepared");
+  expect(prepared.data.integrationReference).toBe(input.integrationReference);
   const submitted = await client.submitDeliveryCode(
     operationId,
     { code: "000123" },
     { idempotencyKey: randomUUID() },
   );
   expect(submitted.data.state).toBe("queued");
+  expect(submitted.data.integrationReference).toBe(input.integrationReference);
   expect(
     (await client.closeDelivery(operationId, { idempotencyKey: randomUUID() })).data.state,
   ).toBe("closed");
   expect((await client.getDelivery(operationId)).data.state).toBe("closed");
   const operations = await client.listOperations({ limit: 1 });
   expect(operations.data.operations).toHaveLength(1);
+  expect(operations.data.operations[0]?.integrationReference).toBe(input.integrationReference);
   expect(operations.data.nextCursor).toEqual(expect.any(String));
   const attempts = await client.listAttempts(created.data.operationId);
   const attempt = attempts.data.attempts[0];
   if (attempt === undefined) throw new Error("Missing retained attempt");
+  expect(attempt.integrationReference).toBe(input.integrationReference);
   expect((await client.getAttempt(attempt.attemptId)).data).toEqual(attempt);
   const events = await client.listEvents({ operationId: created.data.operationId });
   expect(
     events.data.events.some(
-      (event) => event.type === "challenge.updated" && event.challenge.state === "verified",
+      (event) =>
+        event.type === "challenge.updated" &&
+        event.challenge.state === "verified" &&
+        event.challenge.integrationReference === input.integrationReference,
     ),
   ).toBe(true);
   const unauthorized = createClient({

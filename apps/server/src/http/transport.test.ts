@@ -304,12 +304,23 @@ describe("HTTP transport", () => {
       createRequest(validCreate, { "content-encoding": "gzip" }),
       createRequest(validCreate, { "idempotency-key": "" }),
       createRequest(validCreate, { "idempotency-key": "x".repeat(129) }),
+      ...["", null, "a".repeat(129), "line\n", "with space", "é"].map((integrationReference) =>
+        createRequest(
+          JSON.stringify({
+            recipient: { type: "phone", phoneNumber: "+998901234567" },
+            purpose: "login",
+            contextId: "flow_1",
+            policyId: "default",
+            integrationReference,
+          }),
+        ),
+      ),
       createRequest(`{"padding":"${"x".repeat(17 * 1024)}"}`),
     ];
     const responses = await Promise.all(cases.map((request) => server.handler(request)));
 
     expect(responses.map((response) => response.status)).toEqual([
-      400, 400, 400, 400, 400, 400, 413,
+      400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 400, 413,
     ]);
     expect(createRequests).toHaveLength(before);
     for (const response of responses) {

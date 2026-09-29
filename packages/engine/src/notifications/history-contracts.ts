@@ -3,6 +3,7 @@ import { ChallengeEvent } from "../challenges/contracts.js";
 import { DeliveryEvent } from "../delivery/contracts.js";
 import { AttemptEvent, EvidenceEvent, AttemptSnapshot } from "../delivery/history-contracts.js";
 import type { DomainError } from "../errors.js";
+import { IntegrationReference } from "../delivery/input.js";
 export const HistoryEvent = Schema.Union([
   ChallengeEvent,
   DeliveryEvent,
@@ -28,6 +29,7 @@ export const AttemptPage = Schema.Struct({
 export const OperationHistory = Schema.Struct({
   operationId: Schema.String,
   projectId: Schema.String,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   state: Schema.String,
   createdAt: Schema.String,
   completedAt: Schema.NullOr(Schema.String),

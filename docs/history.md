@@ -4,6 +4,8 @@ Operation and challenge snapshots describe current state. Use attempt history an
 
 ## Facts and projections
 
+Operation listings, attempt snapshots, and events carry the optional [integration reference](api.md#integration-correlation). Immutable events preserve their original value independently of later subject cleanup.
+
 Attempt identity and project/operation ownership are stable. Authorization and invocation are separate from provider evidence. A durable dispatch commitment means transmission is possible; it does not establish that the provider was called or accepted a message.
 
 Attempt updates preserve successive meaningful public projections. Private authorization lease and retry bookkeeping does not advance public revisions or extend history retention. Evidence events preserve normalized send responses and authenticated callbacks, including observations that do not change the routing decision. Router observation time establishes when evidence became known; provider-reported time is separate and does not determine feed order. Duplicate callback identities add no new facts.

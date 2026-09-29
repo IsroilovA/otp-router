@@ -24,6 +24,9 @@ const publishAttempt = (attempt: typeof PublishedAttempt.Type) =>
       attemptId: attempt.id,
       operationId: attempt.operation_id,
       projectId: attempt.project_id,
+      ...(attempt.integration_reference === null
+        ? {}
+        : { integrationReference: attempt.integration_reference }),
       revision: attempt.revision + 1,
       routingRevision: attempt.routing_revision,
       providerInstanceId: attempt.provider_instance_id,

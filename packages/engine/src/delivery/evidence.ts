@@ -18,6 +18,9 @@ export const appendEvidence = (
       projectId: operation.project_id,
       type: "attempt.evidence",
       operationId: operation.id,
+      ...(operation.integration_reference === null
+        ? {}
+        : { integrationReference: operation.integration_reference }),
       attemptId: attempt.id,
       occurredAt: time.toISOString(),
       evidence: {

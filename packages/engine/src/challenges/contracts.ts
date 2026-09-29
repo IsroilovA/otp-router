@@ -7,6 +7,7 @@ import {
   RoutingContext,
   Choice,
   DeliveryInput,
+  IntegrationReference,
 } from "../delivery/input.js";
 import type { Effect } from "effect";
 import { Context, Schema } from "effect";
@@ -18,6 +19,7 @@ export const CreateInput = Schema.Struct({
   }),
   purpose: Identifier,
   contextId: Opaque,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   policyId: Identifier,
   locale: Schema.optionalKey(Locale),
   deliveryChoice: Schema.optionalKey(Choice),
@@ -44,6 +46,7 @@ export const Action = Schema.Struct({
 export const Snapshot = Schema.Struct({
   projectId: Identifier,
   operationId: Schema.String,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   challengeId: Schema.String,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   state: Schema.Literals(["queued", "sending", "accepted", "uncertain", "verified", "failed"]),
@@ -95,6 +98,7 @@ export const ChallengeEvent = Schema.Struct({
 export type ChallengeEvent = typeof ChallengeEvent.Type;
 export const VerificationResult = Schema.Struct({
   projectId: Identifier,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   verificationId: Schema.String,
   challengeId: Schema.String,
   purpose: Identifier,

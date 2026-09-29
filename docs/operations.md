@@ -43,6 +43,8 @@ For an emergency provider disable, skip the planned drain: stop every API, worke
 
 Server `0.1.0` deliberately replaces the `0.0.1` router baseline and requires a fresh database. There is no incremental migration, import, backfill, or compatibility path. Old databases are explicitly rejected even when their migration number is also one. The router never resets a database automatically. pg-boss retains its own migration history unchanged.
 
+This baseline includes immutable operation integration references. Databases initialized from earlier development baselines are also incompatible. Coordinate the server/client update with strict authorization and webhook/event consumers before enabling callers that supply references; see [release compatibility](releases.md#pending-breaking-replacement).
+
 Before switching, stop creation and drain old operations, verification, callbacks, and history reconciliation using the old release. Preserve the old database and keys for the required reconciliation period. Create a separate empty database for the new release, install matching configuration, initialize it, and provision projects/grants through administration. Point updated callers at the new service only after readiness and provisioning succeed. Do not connect the new release to the old database or treat an old backup as a fresh installation. Later upgrades follow their published release instructions.
 
 ## API-key rotation

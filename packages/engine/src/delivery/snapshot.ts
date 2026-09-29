@@ -97,6 +97,9 @@ export const buildSnapshot = (config: RuntimeConfiguration, operation: Operation
     return {
       projectId: operation.project_id,
       operationId: operation.id,
+      ...(operation.integration_reference === null
+        ? {}
+        : { integrationReference: operation.integration_reference }),
       revision: operation.public_revision + 1,
       ...overallState(
         operation,
@@ -170,6 +173,9 @@ const preparedSnapshot = (operation: Operation, time: Date) => {
   return {
     projectId: operation.project_id,
     operationId: operation.id,
+    ...(operation.integration_reference === null
+      ? {}
+      : { integrationReference: operation.integration_reference }),
     revision: operation.public_revision + 1,
     state:
       operation.state === "prepared"

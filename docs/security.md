@@ -22,6 +22,8 @@ Store the recipient and recoverable code encrypted with authenticated encryption
 
 Load secrets from the environment or a secret store. Never put OTPs, credentials, full recipients, context IDs, routing context, message text, raw provider payloads, or authorization headers in logs, metrics, or errors. Persist only allowlisted provider diagnostics. Keep internal health and metrics endpoints private.
 
+Keep caller [integration references](api.md#integration-correlation) out of routine logs and metric labels, including in custom authorization services and event receivers.
+
 ## Retention
 
 Verification, cancellation, lockout, and expiry erase the code ciphertext, verifier, and verification-request code fingerprints. Remove the encrypted recipient when no bounded in-flight operation needs it. Delivery exhaustion alone does not erase the verifier.

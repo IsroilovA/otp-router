@@ -1,6 +1,7 @@
 import { Schema } from "effect";
 import { Ciphertext, Digest } from "../crypto.js";
 import { Snapshot } from "./contracts.js";
+import { IntegrationReference } from "./input.js";
 const AttemptState = Schema.Literals([
   "pending",
   "dispatching",
@@ -67,6 +68,7 @@ export const Attempt = Schema.Struct({
 export type Attempt = typeof Attempt.Type;
 export const Operation = Schema.Struct({
   project_id: Schema.String,
+  integration_reference: Schema.NullOr(IntegrationReference),
   id: Schema.String,
   owner: Schema.Literals(["external", "challenge"]),
   purpose: Schema.String,

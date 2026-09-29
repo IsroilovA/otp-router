@@ -30,7 +30,7 @@ export const migrate = Effect.gen(function* () {
           Schema.Struct({ baseline: Schema.String }),
           sql`SELECT baseline FROM otp_router.schema_identity WHERE singleton`,
         );
-        if (baseline[0]?.baseline !== "project-administration-v1")
+        if (baseline[0]?.baseline !== "project-administration-integration-reference-v1")
           return yield* Effect.fail(new SchemaCompatibilityError());
       }
       yield* PgMigrator.run({

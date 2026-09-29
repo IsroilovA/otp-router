@@ -5,7 +5,7 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE SCHEMA otp_router`;
   yield* sql`CREATE TABLE otp_router.schema_identity (singleton boolean PRIMARY KEY CHECK (singleton), baseline text NOT NULL)`;
-  yield* sql`INSERT INTO otp_router.schema_identity VALUES (true,'project-administration-v1')`;
+  yield* sql`INSERT INTO otp_router.schema_identity VALUES (true,'project-administration-integration-reference-v1')`;
   yield* sql`CREATE TABLE otp_router.projects (
     id text PRIMARY KEY, state text NOT NULL CHECK (state IN ('active','suspended','retired')),
     revision integer NOT NULL CHECK (revision > 0), send_epoch integer NOT NULL DEFAULT 1 CHECK (send_epoch > 0),
@@ -36,6 +36,7 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE otp_router.delivery_operations (
     id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), creation_sequence bigint, owner text NOT NULL CHECK (owner IN ('external','challenge')),
     purpose text NOT NULL, context_id text NOT NULL, recipient_token text NOT NULL,
+    integration_reference text CHECK (length(integration_reference) BETWEEN 1 AND 128 AND integration_reference COLLATE "C" !~ '[^A-Za-z0-9._:-]'),
     policy_id text NOT NULL,
     authorization_required boolean NOT NULL,
     max_sends integer NOT NULL CHECK (max_sends BETWEEN 1 AND 10),
@@ -147,8 +148,8 @@ export default Effect.gen(function* () {
     FOR EACH ROW WHEN (OLD.id IS DISTINCT FROM NEW.id OR (OLD.state = 'retired' AND NEW.state <> 'retired')) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER reserved_project_id BEFORE DELETE ON otp_router.projects
     FOR EACH ROW EXECUTE FUNCTION otp_router.reject_identity_change()`;
-  yield* sql`CREATE TRIGGER immutable_operation_project BEFORE UPDATE ON otp_router.delivery_operations
-    FOR EACH ROW WHEN (OLD.project_id IS DISTINCT FROM NEW.project_id) EXECUTE FUNCTION otp_router.reject_identity_change()`;
+  yield* sql`CREATE TRIGGER immutable_operation_identity BEFORE UPDATE ON otp_router.delivery_operations
+    FOR EACH ROW WHEN ((OLD.project_id,OLD.integration_reference) IS DISTINCT FROM (NEW.project_id,NEW.integration_reference)) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER immutable_intent BEFORE UPDATE ON otp_router.send_intents
     FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER immutable_grant BEFORE UPDATE ON otp_router.project_principal_grants

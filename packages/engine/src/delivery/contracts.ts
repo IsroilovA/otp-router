@@ -7,6 +7,7 @@ import {
   RoutingContext,
   Choice,
   DeliveryInput,
+  IntegrationReference,
 } from "./input.js";
 import type { DomainError } from "../errors.js";
 export const PrepareInput = Schema.Struct({
@@ -16,6 +17,7 @@ export const PrepareInput = Schema.Struct({
   }),
   purpose: Identifier,
   contextId: Opaque,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   policyId: Identifier,
   expiresAt: Schema.String.check(
     Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/u),
@@ -46,6 +48,7 @@ export const Action = Schema.Struct({
 export const Snapshot = Schema.Struct({
   projectId: Identifier,
   operationId: Schema.String,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   state: Schema.Literals([
     "prepared",

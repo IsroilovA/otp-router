@@ -1,10 +1,11 @@
 import { Schema } from "effect";
-import { Identifier } from "./input.js";
+import { Identifier, IntegrationReference } from "./input.js";
 
 export const AttemptSnapshot = Schema.Struct({
   attemptId: Schema.String,
   operationId: Schema.String,
   projectId: Identifier,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   revision: Schema.Int,
   routingRevision: Schema.Int,
   providerInstanceId: Identifier,
@@ -48,6 +49,7 @@ export const EvidenceEvent = Schema.Struct({
   ...envelope,
   type: Schema.Literal("attempt.evidence"),
   operationId: Schema.String,
+  integrationReference: Schema.optionalKey(IntegrationReference),
   attemptId: Schema.String,
   evidence: Schema.Struct({
     state: Schema.Literals(["accepted", "delivered", "failed", "uncertain"]),

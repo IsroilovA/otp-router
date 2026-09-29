@@ -20,6 +20,16 @@ For managed verification, submit the received code with its original purpose/con
 
 For external delivery, preserve the upstream deadline and attached code across channel changes. Close when the upstream flow ends; delivery status never authenticates the recipient.
 
+## Integration correlation
+
+Managed creation, external creation, and external preparation accept an optional `integrationReference`. Its [input schema](../packages/engine/src/delivery/input.ts) requires 1–128 ASCII letters, digits, `.`, `_`, `:`, or `-`; empty strings and `null` are invalid. Omit the field when no reference is needed. The router preserves its exact case and value without trimming or normalization.
+
+Interpret the reference together with `projectId`. Multiple operations may share it, including within one project. It provides correlation only: it grants no access and changes no routing, verification binding, quota identity, or executable configuration. There is no reference lookup or filter. Keep the operation/challenge ID for subsequent actions.
+
+The reference is immutable at creation or preparation. Code attachment cannot supply or change it. It survives attachment, fallback, resend, and manual selection, and appears when present in operation/challenge responses, verification receipts, history, supported events, and send-authorization requests. Public payloads omit it when absent. Delivery providers never receive it. Authorization reservations continue to use attempt identity.
+
+Supply opaque identifiers, never personal data or secrets. Authorization services and webhook consumers receive the reference; protect and retain those copies appropriately. The router excludes it from routine logs and metric labels. Each containing operation, receipt, or immutable event follows its existing [retention rules](data-model.md#replay-and-retention), with no independent archive. Retained events and replay receipts preserve their original reference even after operation cleanup.
+
 ## Status and action forecasts
 
 Acceptance means a provider accepted a send, not that the recipient received it. Delivery failure can leave verification available until its deadline and guess limit. A failed resend cannot erase another still-valid acceptance. Terminal verification states never reopen.
@@ -35,6 +45,8 @@ Action forecasts describe the last published transition. Use absolute retry/expi
 Use a fresh random `Idempotency-Key` for each intended mutation and retain it with the payload for retries. Do not embed secrets or deliberately recycle keys. Keys are scoped to deployment, project, operation, and target where applicable; changed validated input conflicts with a saved request.
 
 A matching replay returns the original status/body, marked by `Idempotency-Replayed`. The snapshot can be stale; use revisions and status reads to reconcile.
+
+Creation/preparation fingerprints include `integrationReference`. Changing its exact value, adding it, or removing it under the same request identity conflicts; matching retries return the original receipt.
 
 Verification compares the binding separately from the code. While active, a changed code conflicts. After a terminal transition erases code fingerprints, a syntactically valid changed code can replay the original result if the key and non-code fields match; this creates no new verification.
 

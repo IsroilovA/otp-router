@@ -102,6 +102,12 @@ describe("Promise HTTP client transport", () => {
     await expect(client.listEvents({ limit: 101 })).rejects.toMatchObject({
       kind: "invalid_request",
     });
+    await expect(
+      client.createChallenge(
+        { ...input, integrationReference: " padded" },
+        { idempotencyKey: "key" },
+      ),
+    ).rejects.toMatchObject({ kind: "invalid_request" });
     for (const send of [client.sendChallenge, client.sendDelivery]) {
       await expect(
         Reflect.apply(send, undefined, [

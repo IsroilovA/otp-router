@@ -4,6 +4,8 @@ Outbound events carry committed managed/external snapshots, attempt updates, and
 
 ## Ordering and reconciliation
 
+Events disclose the optional [integration reference](api.md#integration-correlation) to the configured consumer. Update strict event validators alongside the router/client; authenticate and protect these correlation values under the same receiver retention policy as their containing events.
+
 Events can arrive before their HTTP response, out of order, repeatedly, or after expiry. Deduplicate every event by event ID. Apply only higher revisions when updating subject snapshots, including HTTP snapshots; retain evidence events independently. Each event is self-contained. [Attempt history and the project event feed](history.md) provide reconciliation beyond the latest operation snapshot.
 
 ## Authentication and ingestion

@@ -14,6 +14,8 @@ Persist the reservation and immutable request identity before returning approval
 
 Requests exclude OTPs, full recipients, binding context, arbitrary caller metadata, and prices. Every initial send, fallback, resend, and explicit selection has a separate attempt identity, deadline, and authorization decision.
 
+Requests include the operation's optional [integration reference](api.md#integration-correlation) unchanged when present. Interpret it with `projectId` for correlation; multiple operations and attempts can share it. It is never the reservation or deduplication key. Strict request validators must accept this field as part of the coordinated contract update; decisions keep their existing attempt identity.
+
 ## Execution and recovery
 
 Approval does not reserve dispatch eligibility. Immediately before sending, the router rechecks approval validity, project blocks, routing revision, operation state, deadline, provider restrictions, and quotas. Reservation and the single dispatch commitment are durable before the provider call.

@@ -42,6 +42,9 @@ export const buildSnapshot = (
       projectId: challenge.delivery.project_id,
       challengeId: challenge.id,
       operationId: challenge.operation_id,
+      ...(delivery.integrationReference === undefined
+        ? {}
+        : { integrationReference: delivery.integrationReference }),
       revision: challenge.public_revision + 1,
       ...publicState(challenge, delivery),
       channel: delivery.channel,
