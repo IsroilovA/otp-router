@@ -1,3 +1,4 @@
+import { requireAccess } from "../projects/store.js";
 import { domainTransaction } from "../delivery/transaction.js";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
@@ -15,6 +16,7 @@ export const cancelChallenge = (
   domainTransaction(
     config,
     Effect.gen(function* () {
+      yield* requireAccess(request.projectId, request.principalId, false);
       const op = operation(config.settings.crypto, request, "cancel");
       yield* lockOperation(op);
       const previous = yield* replay(config.settings.crypto, op, StatusResult);

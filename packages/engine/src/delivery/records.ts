@@ -51,6 +51,7 @@ export const Attempt = Schema.Struct({
   invocation: Schema.Literals(["not_started", "committed", "not_invoked"]),
   id: Schema.String,
   operation_id: Schema.String,
+  intent_id: Schema.String,
   provider_instance_id: Schema.String,
   route_position: Schema.Int,
   routing_revision: Schema.Int,

@@ -1,3 +1,5 @@
+import { catalogFingerprint } from "./catalog.js";
+import { Administration } from "../projects/contracts.js";
 import {
   SendAuthorizer,
   type AuthorizationUnavailable,
@@ -34,15 +36,9 @@ export const Policy = Schema.Struct({
   managed: Schema.optionalKey(ManagedPolicy),
 });
 export type Policy = typeof Policy.Type;
-export const Project = Schema.Struct({
-  policyIds: Schema.Array(Identifier),
-  sendLimit15m: Schema.Int.check(Schema.isGreaterThan(0)),
-  sendLimit24h: Schema.Int.check(Schema.isGreaterThan(0)),
-  authorization: Schema.Literals(["required", "disabled"]),
-});
 export const Settings = Schema.Struct({
   crypto: CryptoConfig,
-  projects: Schema.Record(Identifier, Project),
+  administration: Administration,
   historyRetentionDays: bounded(1, 3650).pipe(Schema.withDecodingDefaultType(Effect.succeed(30))),
   webhook: Schema.optionalKey(
     Schema.Struct({
@@ -111,6 +107,7 @@ export interface Configuration {
   readonly selectors?: Readonly<Record<string, RoutingSelector>>;
 }
 export interface RuntimeConfiguration {
+  readonly catalogFingerprint: string;
   readonly authorizer?: Context.Service.Shape<typeof SendAuthorizer>;
   readonly settings: Settings;
   readonly providers: ReadonlyMap<string, ReadyProvider>;
@@ -118,6 +115,7 @@ export interface RuntimeConfiguration {
 }
 export const ConfigurationReason = Schema.Literals([
   "deployment_identity_changed",
+  "incompatible_catalog",
   "incompatible_provider_constraints",
   "invalid_keys",
   "invalid_manual_allowlist",
@@ -176,10 +174,7 @@ export const loadConfiguration = (configuration: Configuration) =>
             ),
             SendAuthorizer,
           );
-    if (
-      Object.values(settings.projects).some((project) => project.authorization === "required") &&
-      authorizer === undefined
-    )
+    if (settings.administration.authorizationFloor && authorizer === undefined)
       return yield* invalid("invalid_settings");
     const providers = yield* buildProviders(configuration);
     const locales = yield* Schema.decodeUnknownEffect(Schema.Array(LocaleSchema))([
@@ -194,11 +189,15 @@ export const loadConfiguration = (configuration: Configuration) =>
       }
     }
     yield* validateReferences(settings, configuration, providers);
-    return {
+    const runtime = {
       settings,
       providers,
       selectors: configuration.selectors ?? {},
       ...(authorizer === undefined ? {} : { authorizer }),
+    };
+    return {
+      ...runtime,
+      catalogFingerprint: catalogFingerprint(runtime),
     } satisfies RuntimeConfiguration;
   });
 
@@ -258,10 +257,13 @@ const validateReferences = (
   providers: ReadonlyMap<string, ReadyProvider>,
 ) =>
   Effect.gen(function* () {
-    if (Object.keys(settings.projects).length === 0) return yield* invalid("invalid_settings");
-    for (const project of Object.values(settings.projects))
-      for (const id of project.policyIds)
-        if (settings.policies[id] === undefined) return yield* invalid("unknown_policy");
+    for (const permissions of Object.values(settings.administration.administrators))
+      if (
+        permissions.grantablePrincipalIds.some(
+          (id) => !settings.administration.principalIds.includes(id),
+        )
+      )
+        return yield* invalid("invalid_settings");
     for (const ids of Object.values(settings.purposes))
       for (const id of ids)
         if (settings.policies[id] === undefined) return yield* invalid("unknown_policy");

@@ -1,3 +1,5 @@
+import { requireAccess } from "../projects/store.js";
+import { domainTransaction } from "../delivery/transaction.js";
 import { observeOperation } from "../diagnostics/operation.js";
 import { DeliveryOwner } from "../delivery/owner.js";
 import { SqlClient } from "effect/unstable/sql";
@@ -51,14 +53,18 @@ export const RouterLive = Layer.effect(
           ),
           request.requestId,
         ),
-      status: (projectId, id) =>
+      status: (projectId, id, principalId) =>
         observeOperation(
           "status",
           validate(Schema.String, id).pipe(
             Effect.flatMap((valid) =>
               provide(
-                findProjectChallenge(projectId, valid).pipe(
-                  Effect.andThen(challengeStatus(config, valid)),
+                domainTransaction(
+                  config,
+                  requireAccess(projectId, principalId).pipe(
+                    Effect.andThen(findProjectChallenge(projectId, valid)),
+                    Effect.andThen(challengeStatus(config, valid)),
+                  ),
                 ),
               ),
             ),

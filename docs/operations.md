@@ -29,19 +29,19 @@ Keep health/metrics private. Stop traffic and new job claims before draining wor
 
 ## Configuration changes
 
-For incompatible changes, stop creation and let active operations finish or expire under the old configuration. Keep verification, callbacks, and workers available during the drain. Stop old workers before starting replacement configuration. Use rolling deployments only when schemas, jobs, plugins, and settings remain compatible.
+For incompatible changes, stop creation and let active operations finish or expire under the old configuration. Keep verification, callbacks, and workers available during the drain. Stop all old API and worker roles before starting a replacement catalog. Project settings and grant changes use the administration API and require no restart. Use rolling deployments only when schemas, jobs, plugins, and settings remain compatible.
 
 Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials throughout the configured history reconciliation window, unless compromise requires revocation. Emergency disables require stopping workers and restarting with the affected instance disabled.
 
 ## Database upgrades
 
-Releases that change the router schema include ordered migrations and any required backfills. Startup applies pending migrations to an existing database; a fresh installation applies the complete migration history. Database resets are not an upgrade procedure.
+Server `0.1.0` deliberately replaces the `0.0.1` router baseline and requires a fresh database. There is no incremental migration, import, backfill, or compatibility path. Old databases are explicitly rejected even when their migration number is also one. The router never resets a database automatically. pg-boss retains its own migration history unchanged.
 
-Before upgrading, read the release notes for supported source versions, compatibility, and any drain requirements. Back up the database and preserve its keys, then validate the upgrade on a restored copy. Stop incompatible API and worker processes before applying migrations; never mix incompatible builds against the same database. Confirm readiness before restoring traffic. To recover from an incompatible upgrade, restore the matching database backup, application version, configuration, and keys using the [database restore procedure](#database-restore); do not run older code against the newer schema.
+Before switching, stop creation and drain old operations, verification, callbacks, and history reconciliation using the old release. Preserve the old database and keys for the required reconciliation period. Create a separate empty database for the new release, install matching configuration, initialize it, and provision projects/grants through administration. Point updated callers at the new service only after readiness and provisioning succeed. Do not connect the new release to the old database or treat an old backup as a fresh installation. Later upgrades follow their published release instructions.
 
 ## API-key rotation
 
-Deploy old and new keys to every API process, switch callers, then remove the old key. Keep both credentials under the same service principal and project grants. Rotation preserves replay identities, quotas, and challenge bindings. Other key rotation follows [security](security.md#key-rotation).
+Deploy old and new keys to every API process, switch callers, then remove the old key. Keep both credentials under the same stable principal; its database grants remain unchanged. Administrator credentials rotate under their stable administrator ID, preserving receipt identity. Rotation preserves replay identities, quotas, and challenge bindings. Other key rotation follows [security](security.md#key-rotation).
 
 ## Database restore
 
@@ -86,4 +86,4 @@ Run `docker compose ps` and `docker compose logs --tail=100 router` with the sam
 - Fake delivery remains accepted: expected; the fake provider sends no message or delivery receipt.
 - Quota or request conflicts: follow [HTTP retry rules](api.md#idempotency); fresh keys do not bypass limits.
 
-Budget PostgreSQL connections across replicas and worker concurrency. Measure capacity for the intended environment with `pnpm exec vitest run --config vitest.benchmark.config.ts`; local measurements are not production guarantees.
+Budget PostgreSQL connections across replicas and worker concurrency. Each role holds one connection for its live catalog registration, leaving nine of the application pool’s ten connections available for request work. Measure capacity for the intended environment with `pnpm exec vitest run --config vitest.benchmark.config.ts`; local measurements are not production guarantees.

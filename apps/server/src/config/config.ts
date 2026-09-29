@@ -12,7 +12,6 @@ export const Principal = Schema.Struct({
     Schema.isMinLength(1),
     Schema.isMaxLength(2),
   ),
-  projectIds: Schema.Array(Schema.String).check(Schema.isMinLength(1)),
 });
 export const Principals = Schema.Array(Principal).check(
   Schema.isMinLength(1),
@@ -25,6 +24,7 @@ export const Principals = Schema.Array(Principal).check(
 export const Settings = Schema.Struct({
   databaseUrl: Schema.RedactedFromValue(Schema.String.check(Schema.isMinLength(1))),
   principals: Principals,
+  administrators: Principals,
   role: Schema.Literals(["combined", "api", "worker"]).pipe(
     Schema.withDecodingDefaultType(Effect.succeed("combined")),
   ),
@@ -57,16 +57,28 @@ export const loadConfiguration = (entry: ConfigurationInput) =>
       Effect.mapError(() => new ApplicationConfigurationError({ reason: "invalid_settings" })),
     );
     const config = yield* loadEngineConfiguration(entry.engine);
-    for (const principal of settings.principals)
-      for (const id of principal.projectIds)
-        if (config.settings.projects[id] === undefined)
-          return yield* Effect.fail(
-            new ApplicationConfigurationError({ reason: "invalid_settings" }),
-          );
+    const configured = config.settings.administration;
+    const sameIds = (actual: readonly string[], expected: readonly string[]) =>
+      actual.length === expected.length && actual.every((id) => expected.includes(id));
+    const credentials = [...settings.principals, ...settings.administrators].flatMap(
+      (identity) => identity.keys,
+    );
+    if (
+      !sameIds(
+        settings.principals.map((p) => p.id),
+        configured.principalIds,
+      ) ||
+      !sameIds(
+        settings.administrators.map((p) => p.id),
+        Object.keys(configured.administrators),
+      ) ||
+      new Set(credentials).size !== credentials.length
+    )
+      return yield* Effect.fail(new ApplicationConfigurationError({ reason: "invalid_settings" }));
     const webhook = config.settings.webhook;
     if (
       webhook !== undefined &&
-      settings.principals
+      [...settings.principals, ...settings.administrators]
         .flatMap((principal) => principal.keys)
         .some(
           (key) =>

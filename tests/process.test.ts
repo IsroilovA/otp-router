@@ -193,7 +193,7 @@ export default defineConfig({
     fallbackLocales: [],
     policies: { default: { providerInstanceIds: ["process-fake"], managed: { lifetimeSeconds: 300 }, resendCooldownSeconds: 30 } },
     purposes: { login: ["default"] },
-    projects: { demo: { policyIds: ["default"], sendLimit15m: 10000, sendLimit24h: 100000, authorization: "disabled" } },
+    administration: { principalIds: ["backend"], administrators: { admin: { actions: ["create"], projectIds: ["demo"], creationPrefixes: [], grantablePrincipalIds: ["backend"], editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"], sendLimit15mCeiling: 10000, sendLimit24hCeiling: 100000, mayDisableAuthorization: true } }, authorizationFloor: false },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1000,
   },
@@ -201,7 +201,7 @@ export default defineConfig({
   },
   settings: {
     databaseUrl: process.env.DATABASE_URL,
-    principals: [{ id: "backend", projectIds: ["demo"], keys: [${JSON.stringify(API_KEY)}] }],
+    administrators: [{ id: "admin", keys: ["admin-test-credential-with-at-least-32-bytes"] }], principals: [{ id: "backend", keys: [${JSON.stringify(API_KEY)}] }],
     role: process.env.OTP_TEST_ROLE,
     port: Number(process.env.OTP_TEST_PORT),
     internalPort: Number(process.env.OTP_TEST_INTERNAL_PORT),
@@ -239,6 +239,21 @@ const createChallenge = async (
   contextId: string,
   phoneNumber: string,
 ): Promise<Snapshot> => {
+  const provisioned = await fetch(`http://127.0.0.1:${String(port)}/v1/admin/projects`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer admin-test-credential-with-at-least-32-bytes",
+      "content-type": "application/json",
+      "idempotency-key": "provision-demo",
+    },
+    body: JSON.stringify({
+      id: "demo",
+      settings: { authorizationRequired: false, sendLimit15m: 10000, sendLimit24h: 100000 },
+      principalIds: ["backend"],
+    }),
+  });
+  if (provisioned.status !== 201) throw new Error(`Provision failed: ${provisioned.status}`);
+  await provisioned.arrayBuffer();
   const response = await fetch(`http://127.0.0.1:${String(port)}/v1/projects/demo/challenges`, {
     method: "POST",
     headers: {
@@ -390,6 +405,7 @@ describe("built process", () => {
       {
         DATABASE_URL: fixture.postgres.databaseUrl,
         OTP_ROUTER_API_KEY: API_KEY,
+        OTP_ROUTER_ADMIN_KEY: "admin-test-credential-with-at-least-32-bytes",
         OTP_ROUTER_FAKE_CALLBACK_SECRET: "fake-example-callback",
         OTP_ROUTER_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64url"),
         OTP_ROUTER_VERIFICATION_KEY: Buffer.alloc(32, 2).toString("base64url"),

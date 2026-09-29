@@ -1,6 +1,6 @@
 # HTTP integration
 
-Call the router from an authorized backend over a private network or TLS. A configured backend service principal authenticates with a Bearer credential and explicit project grants; never expose that credential to browsers or mobile clients. See [project authentication and isolation](projects.md). Your backend must bind each operation to its authorized user/session and business action. An operation ID alone is not authorization.
+Call the router from an authorized backend over a private network or TLS. A configured backend service principal authenticates with a Bearer credential and database-backed project grants; never expose that credential to browsers or mobile clients. See [project authentication and isolation](projects.md). Your backend must bind each operation to its authorized user/session and business action. An operation ID alone is not authorization.
 
 TypeScript backends can use the [typed client](client.md), which follows this same HTTP contract.
 
@@ -47,3 +47,13 @@ After a lost response, ambiguous commit, or server error, retry with bounded bac
 Branch on stable error codes, never message text. Lockout ends further guesses; an ordinary incorrect guess does not. Expired/cancelled operations cannot resume. Responses must be non-cacheable and free of sensitive details; never log request bodies or authorization headers.
 
 Provider callbacks use independent authentication over bounded raw bytes. Acknowledge only after durable ingestion. Duplicate, early, or out-of-order reports cannot verify a challenge or repeat a routing transition. Each adapter owns its handshake protocol.
+
+## Administration
+
+Use `/v1/admin` with separate administrator credentials, or `createAdminClient()`. Endpoint schemas and generated OpenAPI own request shapes, paths, and error codes. Project reads and mutation responses include a strong `ETag`. All mutations require an `Idempotency-Key`; settings, lifecycle, and grant changes also require the previously read ETag in `If-Match`. Missing or malformed headers return `invalid_request`; stale revisions return `revision_conflict` (412). Current permission failures return `admin_forbidden` (403).
+
+Persist the validated action, target, payload, key, and expected revision before sending. After a lost response, retry that exact request with the same key, including the original `If-Match`. Current authorization is checked before replay; replay is checked before a revision made stale by the original request. Matching retries return the original status, body, and ETag, with `Idempotency-Replayed: true`. Changed input under the same administrator/key identity conflicts. Read current state before making a different change.
+
+Creation receipts never expire. Other administrative receipts retain seven days; after that window historical replay is not guaranteed and callers must reconcile current state. Retiring a project does not free its ID. Audit is separate from receipts and retained indefinitely. Project listings paginate by immutable ID; projects created before an already-consumed cursor appear on a fresh listing. Audit pagination follows project revision. Every page checks current administrator scope.
+
+Runtime requests without a current grant return `project_access_denied` (403). Sending against a suspended or retired project returns `project_inactive` (409). A current grant is required even for replay. An authorized same-key replay returns its saved result without admitting new work, including while suspended or retired. See [project lifecycle](projects.md#lifecycle-and-sends) for committed-send and verification guarantees.

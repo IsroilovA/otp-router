@@ -16,6 +16,23 @@ export const migrate = Effect.gen(function* () {
       // Precreate the pinned migrator's exact table under our lock so that probe cannot abort this transaction.
       // Pin its schema: creating otp_router changes the default search path for the otp_router role.
       yield* sql`CREATE TABLE IF NOT EXISTS public.effect_sql_migrations (migration_id integer PRIMARY KEY, created_at timestamptz NOT NULL DEFAULT now(), name text NOT NULL)`;
+      const existing = yield* rows(
+        Schema.Struct({ present: Schema.Boolean }),
+        sql`SELECT EXISTS (SELECT 1 FROM public.effect_sql_migrations) AS present`,
+      );
+      if (existing[0]?.present === true) {
+        const identity = yield* rows(
+          Schema.Struct({ name: Schema.NullOr(Schema.String) }),
+          sql`SELECT to_regclass('otp_router.schema_identity')::text AS name`,
+        );
+        if (identity[0]?.name === null) return yield* Effect.fail(new SchemaCompatibilityError());
+        const baseline = yield* rows(
+          Schema.Struct({ baseline: Schema.String }),
+          sql`SELECT baseline FROM otp_router.schema_identity WHERE singleton`,
+        );
+        if (baseline[0]?.baseline !== "project-administration-v1")
+          return yield* Effect.fail(new SchemaCompatibilityError());
+      }
       yield* PgMigrator.run({
         table: "public.effect_sql_migrations",
         loader: PgMigrator.fromRecord({

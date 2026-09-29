@@ -39,6 +39,7 @@ export interface ResponseMetadata {
   readonly requestId: string | null;
   readonly replayed: boolean;
   readonly retryAfter: string | null;
+  readonly etag: string | null;
 }
 
 export interface ClientResponse<A> extends ResponseMetadata {
@@ -51,4 +52,15 @@ export interface ClientOptions {
   readonly bearerToken: string;
   readonly timeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;
+}
+
+type Administration = typeof OtpRouterApi.groups.administration.endpoints;
+export type CreateProjectTransferDto = Administration["createProject"]["~Payload"]["Type"];
+export type ProjectSettingsTransferDto = Administration["updateProject"]["~Payload"]["Type"];
+export type ProjectDecodeDto = Administration["getProject"]["~Success"]["Type"]["body"];
+export type ProjectPageDecodeDto = Administration["listProjects"]["~Success"]["Type"];
+export type AuditPageDecodeDto = Administration["projectAudit"]["~Success"]["Type"];
+export type AdminClientOptions = Omit<ClientOptions, "projectId">;
+export interface AdminMutationOptions extends MutationOptions {
+  readonly etag: string;
 }

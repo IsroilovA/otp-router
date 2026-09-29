@@ -83,9 +83,10 @@ export const serveApplication = (config: Effect.Success<ReturnType<typeof loadCo
         : { isRunning: () => true, interrupt: () => {}, stopClaims: Effect.void };
     let accepting = true;
     if (config.settings.role !== "worker") {
-      const api = makeHttpApiLayer({ principals: config.settings.principals }).pipe(
-        HttpRouter.provideRequest(WebhooksLive),
-      );
+      const api = makeHttpApiLayer({
+        principals: config.settings.principals,
+        administrators: config.settings.administrators,
+      }).pipe(HttpRouter.provideRequest(WebhooksLive));
       const http = HttpRouter.serve(api, { disableLogger: true }).pipe(
         Layer.provide(
           NodeHttpServer.layer(makeServer, {

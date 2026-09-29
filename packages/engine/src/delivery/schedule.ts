@@ -1,3 +1,4 @@
+import { requireAccess } from "../projects/store.js";
 import { transitionAttempts } from "./attempts.js";
 import { changed } from "./changes.js";
 import { randomUUID } from "node:crypto";
@@ -11,15 +12,28 @@ export const schedule = (
   operation: Operation,
   position: number,
   reason: Attempt["reason"],
-  time: Date,
+  authority: { readonly time: Date } & (
+    | { readonly principalId: string }
+    | { readonly intentId: string }
+  ),
 ) =>
   Effect.gen(function* () {
+    const { time } = authority;
     const sql = yield* SqlClient.SqlClient;
     const provider = operation.snapshot.providers[position];
     if (provider === undefined)
       return yield* Effect.die(new Error("Invalid persisted route position"));
     const id = randomUUID();
-    yield* sql`INSERT INTO otp_router.delivery_attempts(id,operation_id,route_position,routing_revision,reason,created_at,state,authorization_state) VALUES (${id},${operation.id},${position},${operation.routing_revision},${reason},${time},'pending',${operation.snapshot.authorizationRequired ? "pending" : "not_required"})`;
+    let intentId: string;
+    if ("intentId" in authority) intentId = authority.intentId;
+    else {
+      const access = yield* requireAccess(operation.project_id, authority.principalId, true);
+      intentId = randomUUID();
+      if (reason === "fallback")
+        return yield* Effect.die(new Error("Fallback requires an existing intent"));
+      yield* sql`INSERT INTO otp_router.send_intents(id,operation_id,principal_grant_id,project_send_epoch,action,created_at) VALUES (${intentId},${operation.id},${access.grantId},${access.project.send_epoch},${reason},${time})`;
+    }
+    yield* sql`INSERT INTO otp_router.delivery_attempts(id,operation_id,intent_id,route_position,routing_revision,reason,created_at,state,authorization_state) VALUES (${id},${operation.id},${intentId},${position},${operation.routing_revision},${reason},${time},'pending',${operation.snapshot.authorizationRequired ? "pending" : "not_required"})`;
     yield* transitionAttempts(sql`SELECT id FROM otp_router.delivery_attempts WHERE id = ${id}`);
     yield* sql`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,attempt_id) VALUES (${provider.providerInstanceId},${attemptReference(id)},${id})`;
     yield* sql`UPDATE otp_router.delivery_operations SET current_attempt_id = ${id} WHERE id = ${operation.id}`;

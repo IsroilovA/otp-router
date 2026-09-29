@@ -1,3 +1,4 @@
+import { lockProject, intentEligible } from "../projects/store.js";
 import { transitionAttempts } from "./attempts.js";
 import type { Attempt, Operation } from "./records.js";
 import { Effect, Schema } from "effect";
@@ -14,7 +15,11 @@ import { changed } from "./changes.js";
 import { lockQuotas } from "./quotas.js";
 
 export const lockProjectSends = (projectId: string) =>
-  lockQuotas([{ scope: "project", scopeId: projectId, kind: "send", maximum: 1, windowMs: 1 }]);
+  lockProject(projectId).pipe(
+    Effect.andThen(
+      lockQuotas([{ scope: "project", scopeId: projectId, kind: "send", maximum: 1, windowMs: 1 }]),
+    ),
+  );
 export const projectBlock = (projectId: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -38,6 +43,7 @@ const claimAuthorization = (config: RuntimeConfiguration, job: DeliveryJob) =>
         return undefined;
       const sql = yield* SqlClient.SqlClient;
       if (
+        !(yield* intentEligible(attempt.intent_id)) ||
         operation.state !== "active" ||
         operation.routing_revision !== job.routingRevision ||
         time >= attempt.dispatch_deadline
@@ -151,6 +157,7 @@ const finishAuthorization = (
       );
       const block = yield* projectBlock(operation.project_id);
       const usable =
+        (yield* intentEligible(attempt.intent_id)) &&
         attempt.state === "pending" &&
         operation.state === "active" &&
         operation.routing_revision === attempt.routing_revision &&

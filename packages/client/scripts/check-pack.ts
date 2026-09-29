@@ -71,9 +71,15 @@ try {
   await writeFile(
     join(temporary, "consumer.ts"),
     `
-import { createClient, OtpRouterApiError, type CreateChallengeTransferDto, type ChallengeDecodeDto, type IncorrectCodeErrorDto } from "@otp-router/client";
+import { createAdminClient, type ProjectDecodeDto, createClient, OtpRouterApiError, type CreateChallengeTransferDto, type ChallengeDecodeDto, type IncorrectCodeErrorDto } from "@otp-router/client";
 const client = createClient({ baseUrl: "https://router.example", projectId: "demo", bearerToken: "secret" });
 const input: CreateChallengeTransferDto = { recipient: { type: "phone", phoneNumber: "+998901234567" }, purpose: "login", contextId: "session", policyId: "login" };
+const administrator = createAdminClient({ baseUrl: "https://router.example", bearerToken: "admin-secret" });
+export async function verifyAdminTypes(): Promise<ProjectDecodeDto> {
+  const current = await administrator.getProject("demo");
+  if (current.etag === null) throw new Error("Missing ETag");
+  return (await administrator.suspendProject("demo", { etag: current.etag, idempotencyKey: "retained-admin-key" })).data;
+}
 export async function verifyTypes(): Promise<ChallengeDecodeDto> {
   try { return (await client.createChallenge(input, { idempotencyKey: "retained-key" })).data; }
   catch (error: unknown) {

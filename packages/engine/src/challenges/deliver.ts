@@ -1,3 +1,4 @@
+import { requireAccess, requireActiveProject } from "../projects/store.js";
 import { admissionLimit, lockQuotas } from "../delivery/quotas.js";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
@@ -17,17 +18,22 @@ export const requestDelivery = (
   domainTransaction(
     config,
     Effect.gen(function* () {
+      const access = yield* requireAccess(request.projectId, request.principalId);
       const op = operation(config.settings.crypto, request, "deliver");
       yield* lockOperation(op);
       const previous = yield* replay(config.settings.crypto, op, SendResult);
       if (previous !== undefined) return previous;
+      yield* requireActiveProject(access.project);
       const initial = yield* findProjectChallenge(request.projectId, request.challengeId);
       yield* lockQuotas([admissionLimit(initial.delivery.recipient_token)]);
       const locked = yield* findChallenge(request.challengeId, true);
       const time = yield* databaseTime;
       const challenge = yield* expire(locked, time);
       yield* requireActive(challenge);
-      const attemptId = yield* requestSend(config, challenge.delivery, request.input, time);
+      const attemptId = yield* requestSend(config, challenge.delivery, request.input, {
+        time,
+        principalId: request.principalId,
+      });
       const response: SendResult = {
         outcome: "delivery_queued",
         replayed: false,

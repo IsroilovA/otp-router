@@ -36,6 +36,10 @@
     "./delivery": {
       "types": "./dist/delivery/index.d.ts",
       "import": "./dist/delivery/index.js"
+    },
+    "./projects": {
+      "types": "./dist/projects/index.d.ts",
+      "import": "./dist/projects/index.js"
     }
   },
   "files": [

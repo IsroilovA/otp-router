@@ -1,3 +1,4 @@
+import { cleanupAdminReceipts } from "./projects/retention.js";
 import { recoverAuthorizations } from "./delivery/authorization.js";
 import { recoverDispatches } from "./delivery/recovery.js";
 import { cleanupNotifications } from "./notifications/retention.js";
@@ -58,6 +59,7 @@ export const cleanup = (config: RuntimeConfiguration) =>
     yield* recoverDispatches(config);
     yield* recoverAuthorizations(config);
     while (yield* cleanupBatch(config)) {}
+    while ((yield* cleanupAdminReceipts) === 1000) {}
     while (
       (yield* cleanupNotifications(yield* databaseTime, config.settings.historyRetentionDays))
         .length === 1000

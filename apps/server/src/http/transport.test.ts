@@ -118,10 +118,17 @@ describe("HTTP transport", () => {
 
   const server = makeWebHandler(
     {
-      principals: [{ id: "backend", projectIds: ["demo"], keys: [API_KEY] }],
+      administrators: [{ id: "admin", keys: ["admin-test-credential-with-at-least-32-bytes"] }],
+      principals: [{ id: "backend", keys: [API_KEY] }],
       webhookBodyLimitBytes: 64,
     },
     {
+      projects: {
+        mutate: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+        get: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+        list: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+        audit: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+      },
       router,
       webhooks,
       history: {
@@ -260,18 +267,21 @@ describe("HTTP transport", () => {
     ]);
     expect(statusRequests.at(-1)).toBe("challenge_1");
     expect(verifyRequests.at(-1)).toMatchObject({
+      principalId: "backend",
       challengeId: "challenge_1",
       projectId: "demo",
       key: "operation_2",
       input: { code: "123456", purpose: "login", contextId: "flow_1" },
     });
     expect(deliveryRequests.at(-1)).toMatchObject({
+      principalId: "backend",
       challengeId: "challenge_1",
       projectId: "demo",
       key: "operation_2",
       input: { action: "select", choice: { type: "channel", channel: "sms" } },
     });
     expect(cancelRequests.at(-1)).toMatchObject({
+      principalId: "backend",
       challengeId: "challenge_1",
       projectId: "demo",
       key: "operation_2",

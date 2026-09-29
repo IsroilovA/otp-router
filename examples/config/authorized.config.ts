@@ -17,14 +17,7 @@ export default defineConfig({
     ...base.engine,
     settings: {
       ...base.engine.settings,
-      projects: {
-        demo: {
-          policyIds: ["login"],
-          sendLimit15m: 100,
-          sendLimit24h: 1000,
-          authorization: "required",
-        },
-      },
+      administration: { ...base.engine.settings.administration, authorizationFloor: true },
     },
     authorizer: httpSendAuthorizer({
       url: required("OTP_ROUTER_AUTHORIZATION_URL"),

@@ -75,6 +75,7 @@ const create = async () =>
     (
       await Effect.runPromise(
         app().router.create({
+          principalId: "backend",
           projectId: "demo",
           key: randomUUID(),
           requestId: randomUUID(),
@@ -90,7 +91,7 @@ const create = async () =>
   );
 const status = async (id: string) =>
   Schema.decodeUnknownSync(Snapshot)(
-    (await Effect.runPromise(app().router.status("demo", id))).body,
+    (await Effect.runPromise(app().router.status("demo", id, "backend"))).body,
   );
 const events = async (id: string) => {
   const harness = app();
@@ -131,6 +132,7 @@ const resend = async (id: string) => {
   await ageAdmission(harness);
   await Effect.runPromise(
     harness.router.deliver({
+      principalId: "backend",
       challengeId: id,
       projectId: "demo",
       key: randomUUID(),
@@ -178,13 +180,32 @@ beforeAll(async () => {
       },
       providerLabels: { primary: "Primary channel", secondary: "Backup channel" },
       purposes: { login: ["login"] },
-      projects: {
-        demo: {
-          policyIds: ["login"],
-          sendLimit15m: 10000,
-          sendLimit24h: 100000,
-          authorization: "disabled",
+      administration: {
+        principalIds: ["backend"],
+        administrators: {
+          admin: {
+            actions: [
+              "create",
+              "read",
+              "list",
+              "update",
+              "suspend",
+              "reactivate",
+              "retire",
+              "grant",
+              "revoke",
+              "audit",
+            ],
+            projectIds: [],
+            creationPrefixes: ["demo", "alpha", "beta"],
+            grantablePrincipalIds: ["backend"],
+            editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+            sendLimit15mCeiling: 1000000,
+            sendLimit24hCeiling: 1000000,
+            mayDisableAuthorization: true,
+          },
         },
+        authorizationFloor: false,
       },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
@@ -323,6 +344,7 @@ describe("public snapshots and transactional events", () => {
       deliveryTransaction(
         harness.configuration,
         createChallenge(harness.configuration, {
+          principalId: "backend",
           projectId: "demo",
           key: randomUUID(),
           requestId: randomUUID(),
@@ -356,6 +378,7 @@ describe("public snapshots and transactional events", () => {
       if (terminal === "cancelled")
         await Effect.runPromise(
           harness.router.cancel({
+            principalId: "backend",
             challengeId: created.challengeId,
             projectId: "demo",
             key: randomUUID(),
@@ -386,6 +409,7 @@ describe("public snapshots and transactional events", () => {
         };
         await Effect.runPromise(
           harness.router.verify({
+            principalId: "backend",
             challengeId: created.challengeId,
             projectId: "demo",
             key: randomUUID(),
@@ -396,6 +420,7 @@ describe("public snapshots and transactional events", () => {
         if (terminal === "locked")
           await Effect.runPromise(
             harness.router.verify({
+              principalId: "backend",
               challengeId: created.challengeId,
               projectId: "demo",
               key: randomUUID(),
@@ -476,6 +501,7 @@ it("retries immutable signed events independently, recovers missing jobs, retain
   // Retained failed events must survive deletion of their challenge history.
   await Effect.runPromise(
     harness.router.cancel({
+      principalId: "backend",
       challengeId: created.challengeId,
       projectId: "demo",
       key: randomUUID(),
@@ -558,6 +584,7 @@ it("runs notification workers independently and retains an expiry job for every 
       for (let index = 0; index < 2; index++) {
         yield* harness.pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '31 seconds' WHERE kind = 'admission'`;
         yield* createChallenge(harness.configuration, {
+          principalId: "backend",
           projectId: "demo",
           key: randomUUID(),
           requestId: randomUUID(),

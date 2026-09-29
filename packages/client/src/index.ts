@@ -1,3 +1,5 @@
+import { OtpRouterClientError } from "./errors.js";
+export { createAdminClient, type OtpRouterAdminClient } from "./admin.js";
 import { DeliveryInput } from "@otp-router/server/api";
 import { Effect, Schema } from "effect";
 import type {
@@ -52,6 +54,8 @@ const deliveryRequest = <P>(
 
 /** A backend-only client. Mutations never retry or generate idempotency keys. */
 export const createClient = (options: ClientOptions) => {
+  if (!Schema.is(Schema.String.check(Schema.isMinLength(1)))(options.projectId))
+    throw new OtpRouterClientError("configuration");
   const execute = makeTransport(options);
   const params = { projectId: options.projectId };
   const mutationHeaders = (request: MutationOptions) => ({

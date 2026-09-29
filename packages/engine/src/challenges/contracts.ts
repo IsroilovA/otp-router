@@ -155,7 +155,13 @@ export type SendResult = typeof SendResult.Type;
 export const OperationResult = Schema.Union([CreateResult, StatusResult, VerifyResult, SendResult]);
 export type OperationResult = typeof OperationResult.Type;
 const mutation = <S extends Schema.Top>(input: S) =>
-  Schema.Struct({ projectId: Identifier, key: Opaque, input, requestId: Opaque });
+  Schema.Struct({
+    principalId: Identifier,
+    projectId: Identifier,
+    key: Opaque,
+    input,
+    requestId: Opaque,
+  });
 const challengeMutation = <S extends Schema.Top>(input: S) =>
   Schema.Struct({ ...mutation(input).fields, challengeId: Schema.String });
 export const CreateRequest = mutation(CreateInput);
@@ -163,6 +169,7 @@ export const VerifyRequest = challengeMutation(VerifyInput);
 export const DeliveryRequest = challengeMutation(DeliveryInput);
 export const CancelRequest = challengeMutation(Schema.Record(Schema.String, Schema.Never));
 export type Mutation<A> = {
+  readonly principalId: string;
   readonly projectId: string;
   readonly key: string;
   readonly input: A;
@@ -173,7 +180,11 @@ export class Router extends Context.Service<
   Router,
   {
     readonly create: (request: Mutation<CreateInput>) => Effect.Effect<CreateResult, DomainError>;
-    readonly status: (projectId: string, id: string) => Effect.Effect<StatusResult, DomainError>;
+    readonly status: (
+      projectId: string,
+      id: string,
+      principalId: string,
+    ) => Effect.Effect<StatusResult, DomainError>;
     readonly verify: (
       request: ChallengeMutation<VerifyInput>,
     ) => Effect.Effect<VerifyResult, DomainError>;

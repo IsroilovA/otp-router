@@ -45,9 +45,10 @@ export const requestSend = (
   config: RuntimeConfiguration,
   operation: Operation,
   input: DeliveryInput,
-  time: Date,
+  authority: { readonly time: Date; readonly principalId: string },
 ) =>
   Effect.gen(function* () {
+    const { time, principalId } = authority;
     yield* requireActive(operation);
     if (operation.current_attempt_id === null || operation.recipient_invalid)
       return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
@@ -72,7 +73,7 @@ export const requestSend = (
       yield* findOperation(operation.id),
       target.position,
       input.action,
-      time,
+      { time, principalId },
     );
     yield* countQuotas([admissionLimit(operation.recipient_token)], attemptId, time);
     return attemptId;

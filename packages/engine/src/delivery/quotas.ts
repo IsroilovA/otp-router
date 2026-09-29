@@ -1,3 +1,4 @@
+import { findProject } from "../projects/store.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
@@ -17,41 +18,41 @@ export const recipientLimit = (token: string, kind: Limit["kind"], maximum: numb
   maximum,
   windowMs: 900000,
 });
-export const commonSendLimits = (
-  settings: Settings,
-  token: string,
-  projectId: string,
-): readonly Limit[] => [
-  {
-    scope: "project",
-    scopeId: projectId,
-    kind: "send",
-    maximum: settings.projects[projectId]?.sendLimit15m ?? 0,
-    windowMs: 900000,
-  },
-  {
-    scope: "project",
-    scopeId: projectId,
-    kind: "send",
-    maximum: settings.projects[projectId]?.sendLimit24h ?? 0,
-    windowMs: 86400000,
-  },
-  recipientLimit(token, "send", settings.recipientSendLimit15m),
-  {
-    scope: "deployment",
-    scopeId: "",
-    kind: "send",
-    maximum: settings.deploymentSendLimit15m,
-    windowMs: 900000,
-  },
-  {
-    scope: "deployment",
-    scopeId: "",
-    kind: "send",
-    maximum: settings.deploymentSendLimit24h,
-    windowMs: 86400000,
-  },
-];
+export const commonSendLimits = (settings: Settings, token: string, projectId: string) =>
+  Effect.gen(function* () {
+    const project = yield* findProject(projectId);
+    return [
+      {
+        scope: "project",
+        scopeId: projectId,
+        kind: "send",
+        maximum: project.send_limit_15m,
+        windowMs: 900000,
+      },
+      {
+        scope: "project",
+        scopeId: projectId,
+        kind: "send",
+        maximum: project.send_limit_24h,
+        windowMs: 86400000,
+      },
+      recipientLimit(token, "send", settings.recipientSendLimit15m),
+      {
+        scope: "deployment",
+        scopeId: "",
+        kind: "send",
+        maximum: settings.deploymentSendLimit15m,
+        windowMs: 900000,
+      },
+      {
+        scope: "deployment",
+        scopeId: "",
+        kind: "send",
+        maximum: settings.deploymentSendLimit24h,
+        windowMs: 86400000,
+      },
+    ] satisfies readonly Limit[];
+  });
 export const providerSendLimits = (settings: Settings, providerId: string): readonly Limit[] => {
   const maximum = settings.providerSendLimits15m[providerId];
   return maximum === undefined
@@ -63,11 +64,11 @@ export const sendLimits = (
   token: string,
   providerId: string,
   projectId: string,
-): readonly Limit[] => [
-  ...commonSendLimits(settings, token, projectId),
-  ...providerSendLimits(settings, providerId),
-];
-// Lock order: request idempotency, sorted quota identities, operation, then challenge.
+) =>
+  commonSendLimits(settings, token, projectId).pipe(
+    Effect.map((limits) => [...limits, ...providerSendLimits(settings, providerId)]),
+  );
+// Lock order: project, request idempotency, sorted quota identities, operation, then challenge.
 // Callers must acquire quotas before row locks to avoid cross-operation deadlocks.
 export const lockQuotas = (limits: readonly Limit[]) =>
   Effect.gen(function* () {

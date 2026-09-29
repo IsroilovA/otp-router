@@ -66,13 +66,32 @@ const configuration: Configuration = {
     fallbackLocales: [],
     policies: { login: { managed: {}, providerInstanceIds: [providerId] } },
     purposes: { login: ["login"] },
-    projects: {
-      demo: {
-        policyIds: ["login"],
-        sendLimit15m: 10000,
-        sendLimit24h: 100000,
-        authorization: "disabled",
+    administration: {
+      principalIds: ["backend"],
+      administrators: {
+        admin: {
+          actions: [
+            "create",
+            "read",
+            "list",
+            "update",
+            "suspend",
+            "reactivate",
+            "retire",
+            "grant",
+            "revoke",
+            "audit",
+          ],
+          projectIds: [],
+          creationPrefixes: ["demo", "alpha", "beta"],
+          grantablePrincipalIds: ["backend"],
+          editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+          sendLimit15mCeiling: 1000000,
+          sendLimit24hCeiling: 1000000,
+          mayDisableAuthorization: true,
+        },
       },
+      authorizationFloor: false,
     },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1_000,
@@ -144,6 +163,7 @@ describe("PostgreSQL fault boundaries", () => {
   const create = (operationKey: string) =>
     Effect.runPromise(
       app().router.create({
+        principalId: "backend",
         projectId: "demo",
         key: operationKey,
         input: createInput,
@@ -179,7 +199,8 @@ describe("PostgreSQL fault boundaries", () => {
   }> => {
     const database = app();
     const release = Promise.withResolvers<void>();
-    const entered = Array.from({ length: 10 }, () => Promise.withResolvers<void>());
+    // One connection holds the live catalog registration; exhaust the nine request connections.
+    const entered = Array.from({ length: 9 }, () => Promise.withResolvers<void>());
     const holders = entered.map((barrier) =>
       database.run(
         transaction(
@@ -277,6 +298,7 @@ describe("PostgreSQL fault boundaries", () => {
       const result = await Effect.runPromise(
         app()
           .router.deliver({
+            principalId: "backend",
             projectId: "demo",
             key: "pool-exhaustion-resend",
             challengeId,
@@ -309,6 +331,7 @@ describe("PostgreSQL fault boundaries", () => {
 
     const retried = await Effect.runPromise(
       app().router.deliver({
+        principalId: "backend",
         projectId: "demo",
         key: "pool-exhaustion-resend",
         challengeId,
@@ -337,6 +360,7 @@ describe("PostgreSQL fault boundaries", () => {
       const attempted = Effect.runPromise(
         app()
           .router.create({
+            principalId: "backend",
             projectId: "demo",
             key: operationKey,
             input: createInput,

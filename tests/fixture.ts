@@ -1,3 +1,6 @@
+import { Projects } from "../packages/engine/src/projects/contracts.js";
+import { ProjectsLive } from "../packages/engine/src/projects/service.js";
+import { validateCatalog } from "../packages/engine/src/projects/catalog.js";
 import { DeliveryHistory } from "../packages/engine/src/notifications/history-contracts.js";
 import { DeliveryHistoryLive } from "../packages/engine/src/notifications/history.js";
 import { DeliveryOwner } from "../packages/engine/src/delivery/owner.js";
@@ -147,6 +150,7 @@ export interface IntegrationRuntime {
   readonly pg: Context.Service.Shape<typeof PgClient.PgClient>;
   readonly queue: PgBoss;
   readonly router: Context.Service.Shape<typeof Router>;
+  readonly projects: Context.Service.Shape<typeof Projects>;
   readonly history: Context.Service.Shape<typeof DeliveryHistory>;
   readonly delivery: Context.Service.Shape<typeof Delivery>;
   readonly run: <A, E>(
@@ -201,6 +205,12 @@ export const startRuntime = async (
     const runtimeConfiguration = await Effect.runPromise(
       loadConfiguration(configuration).pipe(Effect.provideService(Scope.Scope, scope)),
     );
+    await Effect.runPromise(
+      validateCatalog(runtimeConfiguration).pipe(
+        Effect.provide(databaseContext),
+        Effect.provideService(Scope.Scope, scope),
+      ),
+    );
     const ownerContext = await Effect.runPromise(
       buildInScope(
         DeliveryOwnerLive.pipe(Layer.provide(Layer.succeed(RouterConfig, runtimeConfiguration))),
@@ -210,7 +220,7 @@ export const startRuntime = async (
     const owner = Context.get(ownerContext, DeliveryOwner);
     const routerContext = await Effect.runPromise(
       buildInScope(
-        Layer.mergeAll(RouterLive, DeliveryLive, DeliveryHistoryLive).pipe(
+        Layer.mergeAll(RouterLive, DeliveryLive, DeliveryHistoryLive, ProjectsLive).pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(RouterConfig, runtimeConfiguration),
@@ -236,19 +246,47 @@ export const startRuntime = async (
           Effect.provideService(DeliveryOwner, owner),
         ),
       );
+    const projects = Context.get(routerContext, Projects);
+    const seed = async () => {
+      for (const id of ["demo", "alpha", "beta"]) {
+        const existing = await Effect.runPromise(projects.get("admin", id).pipe(Effect.result));
+        if (existing._tag === "Failure" && existing.failure.code === "project_not_found")
+          await Effect.runPromise(
+            projects.mutate({
+              actorId: "admin",
+              key: `fixture-${id}`,
+              command: {
+                action: "create",
+                input: {
+                  id,
+                  settings: {
+                    authorizationRequired: configuration.authorizer !== undefined,
+                    sendLimit15m: 10000,
+                    sendLimit24h: 100000,
+                  },
+                  principalIds: ["backend"],
+                },
+              },
+            }),
+          );
+      }
+    };
+    await seed();
     const reset = async (): Promise<void> => {
       await queue.deleteAllJobs();
       await run(
         sql.unsafe(
-          "TRUNCATE TABLE otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.request_receipts, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_operations CASCADE",
+          "TRUNCATE TABLE otp_router.projects, otp_router.project_principal_grants, otp_router.admin_request_receipts, otp_router.project_admin_events, otp_router.project_send_blocks, otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.request_receipts, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_operations CASCADE",
         ),
       );
+      await seed();
     };
     return {
       configuration: runtimeConfiguration,
       pg,
       queue,
       router,
+      projects,
       delivery: Context.get(routerContext, Delivery),
       history: Context.get(routerContext, DeliveryHistory),
       run,

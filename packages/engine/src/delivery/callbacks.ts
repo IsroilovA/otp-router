@@ -1,3 +1,4 @@
+import { lockProject } from "../projects/store.js";
 import { deliveryTransaction as transaction } from "./transaction.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
@@ -53,6 +54,11 @@ const lockInboxOperations = (
     );
     const ids = new Set(correlated.map((row) => row.operation_id));
     if (operationId !== undefined) ids.add(operationId);
+    const projects = yield* rows(
+      Schema.Struct({ project_id: Schema.String }),
+      sql`SELECT DISTINCT project_id FROM otp_router.delivery_operations WHERE ${sql.in("id", [...ids])} ORDER BY project_id`,
+    );
+    for (const project of projects) yield* lockProject(project.project_id);
     for (const id of [...ids].sort()) yield* findOperation(id, true);
   });
 

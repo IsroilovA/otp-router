@@ -1,4 +1,11 @@
 import {
+  Projects,
+  CreateProjectInput,
+  ProjectSettings,
+  type AdminCommand,
+  type AdminResult,
+} from "@otp-router/engine/projects";
+import {
   DeliveryHistory,
   Delivery,
   PrepareInput,
@@ -31,7 +38,14 @@ import {
   Router,
   VerifyInput as VerifyInputSchema,
 } from "@otp-router/engine/challenges";
-import { ApplicationAuth, OtpRouterApi, RequestContext, RequestValidation } from "./api.js";
+import {
+  AdminAuth,
+  AdminContext,
+  ApplicationAuth,
+  OtpRouterApi,
+  RequestContext,
+  RequestValidation,
+} from "./api.js";
 import { decodeJson } from "./json.js";
 import {
   type WebhookError,
@@ -47,10 +61,12 @@ const DEFAULT_WEBHOOK_BODY_LIMIT = 256 * 1024;
 
 export interface HttpTransportOptions {
   readonly principals: typeof Principals.Type;
+  readonly administrators: typeof Principals.Type;
   readonly webhookBodyLimitBytes?: number;
 }
 
 export interface HttpDependencies {
+  readonly projects: Context.Service.Shape<typeof Projects>;
   readonly router: Context.Service.Shape<typeof Router>;
   readonly delivery: Context.Service.Shape<typeof Delivery>;
   readonly history: Context.Service.Shape<typeof DeliveryHistory>;
@@ -126,6 +142,12 @@ const readApplicationJson = <A, I>(
   );
 
 const errorMessages = {
+  project_not_found: "The project was not found.",
+  project_access_denied: "Project access is denied.",
+  project_inactive: "The project is not active.",
+  admin_forbidden: "Administration permission is denied.",
+  revision_conflict: "The project revision has changed.",
+  project_conflict: "The project state conflicts with this request.",
   invalid_request: "The request is invalid.",
   history_cursor_expired: "The history cursor is outside the reconciliation window.",
   operation_not_found: "The delivery operation was not found.",
@@ -154,12 +176,20 @@ type ErrorBody = typeof ErrorBodySchema.Type;
 type ResponseBody = typeof ResponseBodySchema.Type;
 
 const makeErrorBody = (code: ErrorCode, requestId: string, retryAt?: string): ErrorBody => ({
-  error: {
-    code,
-    message: errorMessages[code],
-    requestId,
-    ...(retryAt === undefined ? {} : { retryAt }),
-  },
+  error:
+    code === "incorrect_code"
+      ? {
+          code,
+          message: errorMessages[code],
+          requestId,
+          ...(retryAt === undefined ? {} : { retryAt }),
+        }
+      : {
+          code,
+          message: errorMessages[code],
+          requestId,
+          ...(retryAt === undefined ? {} : { retryAt }),
+        },
 });
 
 const retryAfter = (retryAt: string): string | undefined => {
@@ -235,13 +265,13 @@ const completeMutation = <A, I>(
   run: (mutation: Mutation<A>) => Effect.Effect<OperationResult | ExternalResult, DomainError>,
 ) =>
   Effect.gen(function* () {
-    const { requestId, projectId } = yield* RequestContext;
+    const { requestId, projectId, principalId } = yield* RequestContext;
     const input = yield* readApplicationJson(request, schema).pipe(
       Effect.catch((error) => transportFailure(error, requestId)),
     );
     if (HttpServerResponse.isHttpServerResponse(input)) return input;
     return yield* complete(
-      run({ projectId, key: headers["idempotency-key"], input, requestId }),
+      run({ principalId, projectId, key: headers["idempotency-key"], input, requestId }),
       requestId,
     );
   });
@@ -281,8 +311,7 @@ const makeAuthLayer = (principals: typeof Principals.Type) => {
           !authorization.startsWith("Bearer ") ||
           authorization.length !== token.length + 7 ||
           principal === undefined ||
-          projectId === undefined ||
-          !principal.projectIds.includes(projectId)
+          projectId === undefined
         )
           return yield* Effect.fail({
             error: {
@@ -344,9 +373,12 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     )
     .handleRaw("getDelivery", ({ params: path }) =>
       Effect.gen(function* () {
-        const { requestId, projectId } = yield* RequestContext;
+        const { requestId, projectId, principalId } = yield* RequestContext;
         const delivery = yield* Delivery;
-        return yield* complete(delivery.status(projectId, path.operationId), requestId);
+        return yield* complete(
+          delivery.status(projectId, path.operationId, principalId),
+          requestId,
+        );
       }),
     )
     .handleRaw("createChallenge", ({ request, headers }) =>
@@ -359,9 +391,9 @@ const makeApplicationHandlers = HttpApiBuilder.group(OtpRouterApi, "application"
     )
     .handleRaw("getChallengeStatus", ({ params: path }) =>
       Effect.gen(function* () {
-        const { requestId, projectId } = yield* RequestContext;
+        const { requestId, projectId, principalId } = yield* RequestContext;
         const router = yield* Router;
-        return yield* complete(router.status(projectId, path.challengeId), requestId);
+        return yield* complete(router.status(projectId, path.challengeId, principalId), requestId);
       }),
     )
     .handleRaw("verifyChallenge", ({ params: path, request, headers }) =>
@@ -402,22 +434,32 @@ const makeHistoryHandlers = HttpApiBuilder.group(OtpRouterApi, "history", (handl
   handlers
     .handleRaw("events", ({ params, query }) =>
       Effect.flatMap(DeliveryHistory, (history) =>
-        historyResponse(history.events(params.projectId, query)),
+        Effect.flatMap(RequestContext, ({ principalId }) =>
+          historyResponse(history.events(params.projectId, query, principalId)),
+        ),
       ),
     )
     .handleRaw("attempts", ({ params, query }) =>
       Effect.flatMap(DeliveryHistory, (history) =>
-        historyResponse(history.attempts(params.projectId, params.operationId, query)),
+        Effect.flatMap(RequestContext, ({ principalId }) =>
+          historyResponse(
+            history.attempts(params.projectId, params.operationId, query, principalId),
+          ),
+        ),
       ),
     )
     .handleRaw("attempt", ({ params }) =>
       Effect.flatMap(DeliveryHistory, (history) =>
-        historyResponse(history.attempt(params.projectId, params.attemptId)),
+        Effect.flatMap(RequestContext, ({ principalId }) =>
+          historyResponse(history.attempt(params.projectId, params.attemptId, principalId)),
+        ),
       ),
     )
     .handleRaw("operations", ({ params, query }) =>
       Effect.flatMap(DeliveryHistory, (history) =>
-        historyResponse(history.operations(params.projectId, query)),
+        Effect.flatMap(RequestContext, ({ principalId }) =>
+          historyResponse(history.operations(params.projectId, query, principalId)),
+        ),
       ),
     ),
 );
@@ -499,6 +541,14 @@ export const makeHttpApiLayer = (options: HttpTransportOptions) => {
         ),
       ),
     ),
+    makeAdminHandlers.pipe(
+      Layer.provide(makeAdminAuth(options.administrators)),
+      Layer.provide(
+        HttpApiMiddleware.layerSchemaErrorTransform(RequestValidation, () =>
+          errorResponse("invalid_request", randomUUID()),
+        ),
+      ),
+    ),
     makeWebhookHandlers(webhookBodyLimit),
     auth,
   );
@@ -512,6 +562,7 @@ export const makeWebHandler = (options: HttpTransportOptions, dependencies: Http
   const api = makeHttpApiLayer(options).pipe(
     HttpRouter.provideRequest(
       Layer.mergeAll(
+        Layer.succeed(Projects, dependencies.projects),
         Layer.succeed(Delivery, dependencies.delivery),
         Layer.succeed(DeliveryHistory, dependencies.history),
         Layer.succeed(Router, dependencies.router),
@@ -530,3 +581,133 @@ const httpResponseMiddleware = <E, R>(
   app.pipe(
     Effect.map((response) => HttpServerResponse.setHeader(response, "cache-control", "no-store")),
   );
+
+const makeAdminAuth = (administrators: typeof Principals.Type) => {
+  const expected = Schema.decodeUnknownSync(Principals)(administrators).flatMap((actor) =>
+    actor.keys.map((key) => ({ actorId: actor.id, digest: digest(key) })),
+  );
+  return Layer.succeed(AdminAuth, {
+    bearer: (effect, { credential }) =>
+      Effect.gen(function* () {
+        const request = yield* HttpServerRequest.HttpServerRequest;
+        const token = Redacted.value(credential);
+        const supplied = digest(token);
+        let actorId: string | undefined;
+        for (const candidate of expected)
+          if (timingSafeEqual(supplied, candidate.digest)) actorId = candidate.actorId;
+        const requestId = randomUUID();
+        if (actorId === undefined || request.headers["authorization"] !== `Bearer ${token}`)
+          return yield* Effect.fail({
+            error: {
+              code: "unauthorized" as const,
+              message: errorMessages.unauthorized,
+              requestId,
+            },
+          });
+        return yield* Effect.provideService(effect, AdminContext, { actorId, requestId });
+      }),
+  });
+};
+const adminRead = <A extends object>(effect: Effect.Effect<A, DomainError>) =>
+  Effect.gen(function* () {
+    const { requestId } = yield* AdminContext;
+    return yield* effect.pipe(
+      Effect.map((body) =>
+        HttpServerResponse.jsonUnsafe(body, {
+          headers: {
+            "x-request-id": requestId,
+            ...("revision" in body ? { etag: `"${String(body.revision)}"` } : {}),
+          },
+        }),
+      ),
+      Effect.catchTag("DomainError", (error) => errorResponse(error.code, requestId)),
+    );
+  });
+const adminMutation = <A, I>(
+  request: HttpServerRequest.HttpServerRequest,
+  headers: { readonly "idempotency-key": string },
+  schema: Schema.Codec<A, I>,
+  command: (input: A) => typeof AdminCommand.Type,
+) =>
+  Effect.gen(function* () {
+    const { actorId, requestId } = yield* AdminContext;
+    const projects = yield* Projects;
+    const input = yield* readApplicationJson(request, schema).pipe(
+      Effect.catch((error) => transportFailure(error, requestId)),
+    );
+    if (HttpServerResponse.isHttpServerResponse(input)) return input;
+    return yield* projects
+      .mutate({ actorId, key: headers["idempotency-key"], command: command(input) })
+      .pipe(
+        Effect.map((result: typeof AdminResult.Type) =>
+          HttpServerResponse.jsonUnsafe(result.body, {
+            status: result.status,
+            headers: {
+              etag: `"${result.body.revision}"`,
+              "x-request-id": requestId,
+              ...(result.replayed ? { "idempotency-replayed": "true" } : {}),
+            },
+          }),
+        ),
+        Effect.catchTag("DomainError", (error) => errorResponse(error.code, requestId)),
+      );
+  });
+const makeAdminHandlers = HttpApiBuilder.group(OtpRouterApi, "administration", (handlers) =>
+  handlers
+    .handleRaw("createProject", ({ request, headers }) =>
+      adminMutation(request, headers, CreateProjectInput, (input) => ({ action: "create", input })),
+    )
+    .handleRaw("updateProject", ({ request, headers, params }) =>
+      adminMutation(request, headers, ProjectSettings, (settings) => ({
+        action: "update",
+        projectId: params.projectId,
+        expectedRevision: Number(headers["if-match"].slice(1, -1)),
+        settings,
+      })),
+    )
+    .handleRaw("transitionProject", ({ request, headers, params }) =>
+      adminMutation(
+        request,
+        headers,
+        Schema.Struct({ action: Schema.Literals(["suspend", "reactivate", "retire"]) }),
+        (input) => ({
+          ...input,
+          projectId: params.projectId,
+          expectedRevision: Number(headers["if-match"].slice(1, -1)),
+        }),
+      ),
+    )
+    .handleRaw("changeGrant", ({ request, headers, params }) =>
+      adminMutation(
+        request,
+        headers,
+        Schema.Struct({ action: Schema.Literals(["grant", "revoke"]), principalId: Schema.String }),
+        (input) => ({
+          ...input,
+          projectId: params.projectId,
+          expectedRevision: Number(headers["if-match"].slice(1, -1)),
+        }),
+      ),
+    )
+    .handleRaw("getProject", ({ params }) =>
+      Effect.gen(function* () {
+        const projects = yield* Projects;
+        const { actorId } = yield* AdminContext;
+        return yield* adminRead(projects.get(actorId, params.projectId));
+      }),
+    )
+    .handleRaw("listProjects", ({ query }) =>
+      Effect.gen(function* () {
+        const projects = yield* Projects;
+        const { actorId } = yield* AdminContext;
+        return yield* adminRead(projects.list(actorId, query));
+      }),
+    )
+    .handleRaw("projectAudit", ({ params, query }) =>
+      Effect.gen(function* () {
+        const projects = yield* Projects;
+        const { actorId } = yield* AdminContext;
+        return yield* adminRead(projects.audit(actorId, params.projectId, query));
+      }),
+    ),
+);

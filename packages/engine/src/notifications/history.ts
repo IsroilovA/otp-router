@@ -1,3 +1,5 @@
+import { assertCatalog } from "../projects/catalog.js";
+import { requireAccess } from "../projects/store.js";
 import { AttemptSnapshot } from "../delivery/history-contracts.js";
 import { Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -108,15 +110,20 @@ export const DeliveryHistoryLive = Layer.effect(
     const retentionMs = config.settings.historyRetentionDays * 86400000;
     const wrap = <A, E>(
       project: string,
+      principalId: string,
       input: typeof PageInput.Type,
       effect: Effect.Effect<A, E, SqlClient.SqlClient>,
     ) =>
       Schema.decodeUnknownEffect(PageInput)(input).pipe(
         Effect.mapError(invalid),
         Effect.andThen(
-          config.settings.projects[project] === undefined ? Effect.fail(invalid()) : Effect.void,
+          sql.withTransaction(
+            assertCatalog(config).pipe(
+              Effect.andThen(requireAccess(project, principalId)),
+              Effect.andThen(effect),
+            ),
+          ),
         ),
-        Effect.andThen(effect),
         Effect.provideService(SqlClient.SqlClient, sql),
         Effect.mapError((error) =>
           error instanceof DomainError
@@ -129,9 +136,10 @@ export const DeliveryHistoryLive = Layer.effect(
         ? null
         : new Date(Math.max(terminal.getTime(), updated.getTime()) + retentionMs).toISOString();
     return {
-      events: (project, input) =>
+      events: (project, input, principalId) =>
         wrap(
           project,
+          principalId,
           input,
           sql.withTransaction(
             Effect.gen(function* () {
@@ -180,9 +188,10 @@ export const DeliveryHistoryLive = Layer.effect(
             }),
           ),
         ),
-      attempt: (project, id) =>
+      attempt: (project, id, principalId) =>
         wrap(
           project,
+          principalId,
           {},
           Effect.gen(function* () {
             if (!Schema.is(Schema.String.check(Schema.isUUID()))(id))
@@ -197,9 +206,10 @@ export const DeliveryHistoryLive = Layer.effect(
             return attempt.public_snapshot;
           }),
         ),
-      attempts: (project, operationId, input) =>
+      attempts: (project, operationId, input, principalId) =>
         wrap(
           project,
+          principalId,
           input,
           Effect.gen(function* () {
             const operation = yield* findProjectOperation(project, operationId);
@@ -235,9 +245,10 @@ export const DeliveryHistoryLive = Layer.effect(
             };
           }),
         ),
-      operations: (project, input) =>
+      operations: (project, input, principalId) =>
         wrap(
           project,
+          principalId,
           input,
           Effect.gen(function* () {
             const { after, ceiling } = yield* readWindow(config.settings.crypto, project, {

@@ -1,3 +1,4 @@
+import { lockProject } from "../projects/store.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows, single } from "../database/query.js";
@@ -13,6 +14,13 @@ const readOperation = (id: string, lock: boolean, project?: { readonly id: strin
     const owned = project === undefined ? sql`` : sql`AND o.project_id = ${project.id}`;
     // Acquire the parent lock before reading dependent facts; a waiter must observe
     // the dispatches committed by the previous lock holder.
+    if (lock) {
+      const owners = yield* rows(
+        Schema.Struct({ project_id: Schema.String }),
+        sql`SELECT project_id FROM otp_router.delivery_operations o WHERE id = ${id} ${owned}`,
+      );
+      if (owners[0] !== undefined) yield* lockProject(owners[0].project_id);
+    }
     if (lock)
       yield* sql`SELECT id FROM otp_router.delivery_operations o WHERE id = ${id} ${owned} FOR UPDATE`;
     const values = yield* rows(

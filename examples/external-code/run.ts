@@ -1,3 +1,4 @@
+import { Projects } from "@otp-router/engine/projects";
 import { randomUUID } from "node:crypto";
 import { NodeServices } from "@effect/platform-node";
 import { Context, Data, Effect, Layer, Redacted, Schema } from "effect";
@@ -29,13 +30,32 @@ const program = Effect.gen(function* () {
       fallbackLocales: [],
       policies: { login: { providerInstanceIds: ["fake"], maxLifetimeSeconds: 900 } },
       purposes: { login: ["login"] },
-      projects: {
-        demo: {
-          policyIds: ["login"],
-          sendLimit15m: 10000,
-          sendLimit24h: 100000,
-          authorization: "disabled",
+      administration: {
+        principalIds: ["backend"],
+        administrators: {
+          admin: {
+            actions: [
+              "create",
+              "read",
+              "list",
+              "update",
+              "suspend",
+              "reactivate",
+              "retire",
+              "grant",
+              "revoke",
+              "audit",
+            ],
+            projectIds: [],
+            creationPrefixes: ["demo", "alpha", "beta"],
+            grantablePrincipalIds: ["backend"],
+            editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+            sendLimit15mCeiling: 1000000,
+            sendLimit24hCeiling: 1000000,
+            mayDisableAuthorization: true,
+          },
         },
+        authorizationFloor: false,
       },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
@@ -53,10 +73,24 @@ const program = Effect.gen(function* () {
   const context = yield* Layer.build(
     makeEngineLayer({ databaseUrl: Redacted.make(databaseUrl), configuration }),
   );
+  const projects = Context.get(context, Projects);
+  yield* projects.mutate({
+    actorId: "admin",
+    key: "external-demo-project",
+    command: {
+      action: "create",
+      input: {
+        id: "demo",
+        settings: { authorizationRequired: false, sendLimit15m: 10000, sendLimit24h: 100000 },
+        principalIds: ["backend"],
+      },
+    },
+  });
   const delivery = Context.get(context, Delivery);
   const control = Context.get(context, EngineControl);
   yield* control.startWorkers({ concurrency: 1, shutdownGraceMs: 5000 });
   const prepared = yield* delivery.prepare({
+    principalId: "backend",
     projectId: "demo",
     key: randomUUID(),
     requestId: randomUUID(),
@@ -71,6 +105,7 @@ const program = Effect.gen(function* () {
   const operationId = prepared.body.operationId;
   // In a real consumer, its external authority supplies this code and verifies it.
   yield* delivery.submitCode({
+    principalId: "backend",
     operationId,
     projectId: "demo",
     key: randomUUID(),
@@ -78,10 +113,11 @@ const program = Effect.gen(function* () {
     input: { code: "123456" },
   });
   for (let attempt = 0; attempt < 30; attempt++) {
-    const status = yield* delivery.status("demo", operationId);
+    const status = yield* delivery.status("demo", operationId, "backend");
     if (status.body.state === "accepted") {
       yield* Effect.sync(() => process.stdout.write(`${JSON.stringify(status.body)}\n`));
       yield* delivery.close({
+        principalId: "backend",
         operationId,
         projectId: "demo",
         key: randomUUID(),

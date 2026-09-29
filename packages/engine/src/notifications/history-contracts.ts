@@ -43,19 +43,23 @@ export class DeliveryHistory extends Context.Service<
     readonly events: (
       projectId: string,
       input: typeof PageInput.Type & { readonly operationId?: string; readonly attemptId?: string },
+      principalId: string,
     ) => Effect.Effect<typeof EventPage.Type, DomainError>;
     readonly attempts: (
       projectId: string,
       operationId: string,
       input: typeof PageInput.Type,
+      principalId: string,
     ) => Effect.Effect<typeof AttemptPage.Type, DomainError>;
     readonly attempt: (
       projectId: string,
       attemptId: string,
+      principalId: string,
     ) => Effect.Effect<typeof AttemptSnapshot.Type, DomainError>;
     readonly operations: (
       projectId: string,
       input: typeof PageInput.Type,
+      principalId: string,
     ) => Effect.Effect<typeof OperationPage.Type, DomainError>;
   }
 >()("otp-router/DeliveryHistory") {}

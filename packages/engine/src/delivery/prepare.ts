@@ -25,7 +25,6 @@ export const prepareRoute = (
   Effect.gen(function* () {
     const policy = config.settings.policies[input.policyId];
     if (
-      config.settings.projects[projectId]?.policyIds.includes(input.policyId) !== true ||
       policy === undefined ||
       config.settings.purposes[input.purpose]?.includes(input.policyId) !== true
     )
@@ -69,8 +68,7 @@ export const prepareRoute = (
         };
       }),
     );
-    const saved: PolicySnapshot = {
-      authorizationRequired: config.settings.projects[projectId].authorization === "required",
+    const saved: Omit<PolicySnapshot, "authorizationRequired"> = {
       maxSends: policy.maxSends,
       resendCooldownSeconds: policy.resendCooldownSeconds,
       manualSelectionEnabled: policy.manualSelectionEnabled,
