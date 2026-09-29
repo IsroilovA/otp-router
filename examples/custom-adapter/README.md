@@ -1,6 +1,6 @@
 # Custom adapter consumer
 
-This workspace example uses `defineProvider` from `@otp-router/engine/providers` and selector types from `@otp-router/engine/config`. The helper validates adapter settings and metadata when the deployment constructs the provider. The example compiles against emitted package declarations and executes a deterministic text sink without sending a message.
+This workspace example builds a provider and selector using supported engine exports. Its text sink sends no messages. Follow the [extension contracts](../../docs/plugins.md) for adapter requirements.
 
 From the repository root:
 
@@ -13,4 +13,4 @@ docker build -f examples/custom-adapter/Dockerfile -t otp-router-custom-adapter:
 docker run --rm otp-router-custom-adapter:local
 ```
 
-There is one workspace lockfile. A deployment configuration registers `TextProvider.make(...)` and `textSelector`. Packages remain private; there is no registry publishing step.
+Register the adapter and selector in the deployment configuration. The engine and adapter remain private workspace packages built into the image.

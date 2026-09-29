@@ -1,16 +1,8 @@
 import { verifierInput } from "./crypto.js";
-import { createHmac } from "node:crypto";
 import { it } from "@effect/vitest";
 import { Effect } from "effect";
 import { expect } from "vitest";
-import {
-  decrypt,
-  digest,
-  encrypt,
-  equalDigest,
-  operationIdentity,
-  validateCrypto,
-} from "../crypto.js";
+import { decrypt, digest, encrypt, operationIdentity } from "../crypto.js";
 const config = {
   deploymentId: "test",
   encryption: { active: "a", keys: { a: Buffer.alloc(32, 1).toString("base64url") } },
@@ -18,9 +10,8 @@ const config = {
   fingerprint: { active: "f", keys: { f: Buffer.alloc(32, 3).toString("base64url") } },
   recipientKey: Buffer.alloc(32, 4).toString("base64url"),
 };
-it.effect("binds encryption to its deployment, challenge and field, preserving leading zeros", () =>
+it.effect("binds encryption to its deployment, project, operation and field", () =>
   Effect.gen(function* () {
-    yield* validateCrypto(config);
     const encrypted = encrypt(
       config,
       { projectId: "demo", operationId: "challenge" },
@@ -41,6 +32,22 @@ it.effect("binds encryption to its deployment, challenge and field, preserving l
     expect(
       (yield* decrypt(
         config,
+        { projectId: "other", operationId: "challenge" },
+        "code",
+        encrypted,
+      ).pipe(Effect.result))._tag,
+    ).toBe("Failure");
+    expect(
+      (yield* decrypt(
+        { ...config, deploymentId: "other" },
+        { projectId: "demo", operationId: "challenge" },
+        "code",
+        encrypted,
+      ).pipe(Effect.result))._tag,
+    ).toBe("Failure");
+    expect(
+      (yield* decrypt(
+        config,
         { projectId: "demo", operationId: "challenge" },
         "phone",
         encrypted,
@@ -54,7 +61,7 @@ it.effect("binds encryption to its deployment, challenge and field, preserving l
     ).toBe("Failure");
   }),
 );
-it.effect("retains old decryption and fingerprint keys during writer rotation", () =>
+it.effect("decrypts existing ciphertext after writer rotation only while its key is retained", () =>
   Effect.gen(function* () {
     const encrypted = encrypt(config, { projectId: "demo", operationId: "c" }, "code", "000001");
     const rotated = {
@@ -78,20 +85,22 @@ it.effect("retains old decryption and fingerprint keys during writer rotation", 
         encrypted,
       ).pipe(Effect.result))._tag,
     ).toBe("Failure");
-    const input = verifierInput(
-      config,
-      { projectId: "demo", id: "c", purpose: "login", contextId: "flow" },
-      "000001",
-    );
-    const expected = createHmac("sha256", Buffer.alloc(32, 2))
-      .update('[1,"verifier","test","demo","c","login","flow","000001"]')
-      .digest("hex");
-    expect(equalDigest(digest(config.verification, input).value, expected)).toBe(true);
-    expect(equalDigest(digest(config.verification, [...input, "different"]).value, expected)).toBe(
-      false,
-    );
-    expect(operationIdentity("test", "demo", { name: "verify", target: "c", key: "key" })).not.toBe(
-      operationIdentity("test", "demo", { name: "cancel", target: "c", key: "key" }),
-    );
   }),
 );
+
+it("separates verification bindings and mutation receipt scopes", () => {
+  const challenge = { projectId: "demo", id: "c", purpose: "login", contextId: "flow" };
+  const inputs = [
+    verifierInput(config, challenge, "000001"),
+    verifierInput({ ...config, deploymentId: "other" }, challenge, "000001"),
+    ...Object.keys(challenge).map((field) =>
+      verifierInput(config, { ...challenge, [field]: "other" }, "000001"),
+    ),
+    verifierInput(config, challenge, "000002"),
+  ];
+  const values = inputs.map((input) => digest(config.verification, input).value);
+  expect(new Set(values).size).toBe(inputs.length);
+  expect(operationIdentity("test", "demo", { name: "verify", target: "c", key: "key" })).not.toBe(
+    operationIdentity("test", "demo", { name: "cancel", target: "c", key: "key" }),
+  );
+});

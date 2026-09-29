@@ -6,7 +6,12 @@ export default defineConfig({
     // Each PostgreSQL suite owns a container and two pools. Bound suite-level resource pressure;
     // the tests themselves still exercise concurrent clients, transactions, and processes.
     maxWorkers: 2,
-    include: ["packages/**/*.test.ts", "apps/**/*.test.ts", "tests/**/*.test.ts"],
+    include: [
+      "packages/**/*.test.ts",
+      "apps/**/*.test.ts",
+      "tests/**/*.test.ts",
+      "scripts/**/*.test.ts",
+    ],
     restoreMocks: true,
     unstubEnvs: true,
     unstubGlobals: true,

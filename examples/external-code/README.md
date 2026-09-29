@@ -9,6 +9,6 @@ DATABASE_URL=postgres://postgres:demo@127.0.0.1:55432/postgres node examples/ext
 docker rm -f otp-external-demo
 ```
 
-Wait for PostgreSQL readiness before running the script. It prepares a fixed deadline, attaches an externally supplied example code, waits for fake provider acceptance, prints only the safe snapshot, and closes the operation. Repeat runs share recipient cooldowns and rolling budgets; wait at least 30 seconds between runs.
+Wait for PostgreSQL readiness before running the script. It exercises code attachment, fake-provider acceptance, and closure. Repeat runs share recipient cooldowns and rolling budgets; wait at least 30 seconds between runs.
 
-Preparation guarantees durable handoff identity, not provider capacity. Submission commits queued work; provider acceptance is asynchronous. The external authority owns verification, authentication, and sessions. Closure only stops router work and erases recoverable secrets; it cannot recall an in-flight message and is never proof of verification.
+Follow the [external-delivery contract](../../docs/engine.md#external-delivery). The caller owns verification; provider acceptance and closure do not authenticate a recipient.

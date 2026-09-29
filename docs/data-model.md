@@ -10,7 +10,7 @@ Before invoking a provider, durably establish eligibility, any required [send au
 
 Public snapshots, immutable events, notification work, and mutation receipts must agree with the committed domain change. A crash must not leave committed work without durable scheduling or publish an uncommitted change.
 
-Managed challenges take their purpose, context binding, and lifecycle timestamps from their delivery operation. Saved routes preserve the selected provider order, resolved templates, and policy settings for that operation. Attempts reference those saved choices; authorization decisions, dispatch commitments, and provider evidence are distinct facts. Public snapshots and replay receipts retain their historical meaning independently of current provider configuration.
+Operations preserve their original binding, deadline, route, templates, and policy settings. Authorization decisions, dispatch commitments, and provider evidence remain distinct. Later configuration changes cannot rewrite historical snapshots or replay receipts.
 
 ## Time and concurrency
 

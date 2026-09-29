@@ -5,6 +5,7 @@
     "packages/**/*.ts",
     "apps/**/*.ts",
     "tests/**/*.ts",
+    "scripts/**/*.ts",
     "vitest*.ts",
     "examples/**/*.ts",
     "oxlint.config.ts"

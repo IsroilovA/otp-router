@@ -1,6 +1,6 @@
 {
   "name": "@otp-router/server",
-  "version": "0.1.0",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -24,6 +24,10 @@
     "./config": {
       "types": "./dist/config/config.d.ts",
       "import": "./dist/config/config.js"
+    },
+    "./api": {
+      "types": "./dist/http/api.d.ts",
+      "import": "./dist/http/api.js"
     }
   },
   "files": [

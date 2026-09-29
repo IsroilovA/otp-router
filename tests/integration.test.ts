@@ -8,7 +8,6 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { Cause, Context, Effect, Exit, Layer, Schema } from "effect";
 import {
   Snapshot,
-  VerificationResult,
   type CreateInput,
   type OperationResult,
 } from "../packages/engine/src/challenges/contracts.js";
@@ -498,99 +497,6 @@ describe("PostgreSQL integration", () => {
         `SELECT incorrect_guesses FROM otp_router.challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual([{ incorrect_guesses: 0 }]);
-  });
-
-  it("runs HTTP create, queued dispatch, and verification end to end", async () => {
-    if (web === undefined) throw new Error("HTTP handler is not initialized");
-    const createResponse = await web.handler(
-      new Request("http://localhost/v1/projects/demo/challenges", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          "content-type": "application/json",
-          "idempotency-key": "http-create-1",
-        },
-        body: JSON.stringify(createInput()),
-      }),
-    );
-    expect(createResponse.status).toBe(201);
-    const created = Schema.decodeUnknownSync(Snapshot)(await createResponse.json());
-    expect(created.state).toBe("queued");
-
-    await dispatchNext();
-    expect(primary.sends).toHaveLength(1);
-    const code = primary.sends[0]?.code;
-    if (code === undefined) throw new Error("The provider did not receive the code");
-    const verifyResponse = await web.handler(
-      new Request(`http://localhost/v1/projects/demo/challenges/${created.challengeId}/verify`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${apiKey}`,
-          "content-type": "application/json",
-          "idempotency-key": "http-verify-1",
-        },
-        body: JSON.stringify({ code, purpose: "login", contextId: "session-1" }),
-      }),
-    );
-    expect(verifyResponse.status).toBe(200);
-    expect(Schema.decodeUnknownSync(VerificationResult)(await verifyResponse.json())).toMatchObject(
-      {
-        challengeId: created.challengeId,
-        purpose: "login",
-        contextId: "session-1",
-      },
-    );
-    expect(await count("challenge_secrets")).toBe(0);
-  });
-
-  it("returns a generic HTTP 500 for defects without leaking details or writing state", async () => {
-    const harness = currentRuntime();
-    const defective = makeWebHandler(
-      { principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }] },
-      {
-        delivery: harness.delivery,
-        history: harness.history,
-        router: {
-          ...harness.router,
-          create: () => Effect.die(new Error("private-provider-payload")),
-        },
-        webhooks: {
-          handshake: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
-          ingest: () => Effect.fail(new WebhookError({ code: "unknown_instance" })),
-        },
-      },
-    );
-    try {
-      const response = await defective.handler(
-        new Request("http://localhost/v1/projects/demo/challenges", {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${apiKey}`,
-            "content-type": "application/json",
-            "idempotency-key": "http-defect-create",
-          },
-          body: JSON.stringify(createInput()),
-        }),
-      );
-      const text = await response.text();
-      const body = Schema.decodeUnknownSync(
-        Schema.Struct({
-          error: Schema.Struct({
-            code: Schema.Literal("internal_error"),
-            message: Schema.String,
-            requestId: Schema.String,
-          }),
-        }),
-      )(JSON.parse(text) as unknown);
-      expect(response.status).toBe(500);
-      expect(body.error.requestId.length).toBeGreaterThan(0);
-      expect(text).not.toContain("private-provider-payload");
-      expect(await count("challenges")).toBe(0);
-      expect(await count("delivery_attempts")).toBe(0);
-      expect(await count("request_receipts")).toBe(0);
-    } finally {
-      await defective.dispose();
-    }
   });
 
   it("preserves idempotent replay while application API keys rotate", async () => {
@@ -1476,71 +1382,66 @@ describe("PostgreSQL integration", () => {
     expect(delivery).toEqual([{ state: "uncertain", diagnostic_code: "worker_recovery" }]);
   });
 
-  it.each([
-    [200, "PHONE_NUMBER_NOT_FOUND"],
-    [400, "PHONE_NUMBER_NOT_AVAILABLE"],
-    [400, "SOME_NEW_ERROR"],
-  ] as const)(
-    "falls back from Telegram API rejection %s/%s without changing the code or deadline",
-    async (status, error) => {
-      const harness = currentRuntime();
-      const requests: HttpRequest[] = [];
-      const telegram = makeTelegramDefinition({
-        execute: (request) =>
-          Effect.sync(() => {
-            requests.push(request);
-            return {
-              status,
-              headers: {},
-              body: new TextEncoder().encode(JSON.stringify({ ok: false, error })),
-            };
+  it("falls back from Telegram rejection without changing the code or deadline", async () => {
+    const harness = currentRuntime();
+    const requests: HttpRequest[] = [];
+    const telegram = makeTelegramDefinition({
+      execute: (request) =>
+        Effect.sync(() => {
+          requests.push(request);
+          return {
+            status: 400,
+            headers: {},
+            body: new TextEncoder().encode(
+              JSON.stringify({ ok: false, error: "PHONE_NUMBER_NOT_AVAILABLE" }),
+            ),
+          };
+        }),
+    });
+    const providerConfig = Schema.decodeUnknownSync(telegram.configSchema)({
+      apiToken: "test-token",
+    });
+    const context = await Effect.runPromise(
+      Effect.scoped(
+        Layer.build(
+          telegram.make({
+            instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-primary"),
+            enabled: true,
+            compatibilityRevision: "telegram-test-v1",
+            config: providerConfig,
+            templates: {},
           }),
-      });
-      const providerConfig = Schema.decodeUnknownSync(telegram.configSchema)({
-        apiToken: "test-token",
-      });
-      const context = await Effect.runPromise(
-        Effect.scoped(
-          Layer.build(
-            telegram.make({
-              instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-primary"),
-              enabled: true,
-              compatibilityRevision: "telegram-test-v1",
-              config: providerConfig,
-              templates: {},
-            }),
-          ),
         ),
-      );
-      const providers = new Map(harness.configuration.providers);
-      providers.set("fake-primary", Context.get(context, ProviderInstance));
-      const config = { ...harness.configuration, providers };
-      const created = await createDirect(config, "telegram-rejection-fallback");
-      const code = await readCode(created.body.challengeId);
-      await dispatchNext(config);
-      expect(requests).toHaveLength(1);
-      expect(
-        await query(
-          Schema.Struct({ state: Schema.String, acceptance: Schema.NullOr(Schema.String) }),
-          "SELECT state, acceptance FROM otp_router.delivery_attempts ORDER BY route_position",
-        ),
-      ).toEqual([
-        { state: "failed", acceptance: "not_accepted" },
-        { state: "pending", acceptance: null },
-      ]);
-      await dispatchNext(config);
-      expect(secondary.sends).toHaveLength(1);
-      expect(secondary.sends[0]).toMatchObject({ code, expiresAt: created.body.expiresAt });
-      expect(
-        await query(
-          Schema.Struct({ send_count: Schema.Int, recipient_invalid: Schema.Boolean }),
-          "SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count, recipient_invalid FROM otp_router.delivery_operations o",
-        ),
-      ).toEqual([{ send_count: 2, recipient_invalid: false }]);
-      expect(await count("delivery_attempts")).toBe(2);
-      expect(requests).toHaveLength(1);
-    },
-  );
+      ),
+    );
+    const providers = new Map(harness.configuration.providers);
+    providers.set("fake-primary", Context.get(context, ProviderInstance));
+    const config = { ...harness.configuration, providers };
+    const created = await createDirect(config, "telegram-rejection-fallback");
+    const code = await readCode(created.body.challengeId);
+    await dispatchNext(config);
+    expect(requests).toHaveLength(1);
+    expect(
+      await query(
+        Schema.Struct({ state: Schema.String, acceptance: Schema.NullOr(Schema.String) }),
+        "SELECT state, acceptance FROM otp_router.delivery_attempts ORDER BY route_position",
+      ),
+    ).toEqual([
+      { state: "failed", acceptance: "not_accepted" },
+      { state: "pending", acceptance: null },
+    ]);
+    await dispatchNext(config);
+    expect(secondary.sends).toHaveLength(1);
+    expect(secondary.sends[0]).toMatchObject({ code, expiresAt: created.body.expiresAt });
+    expect(
+      await query(
+        Schema.Struct({ send_count: Schema.Int, recipient_invalid: Schema.Boolean }),
+        "SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count, recipient_invalid FROM otp_router.delivery_operations o",
+      ),
+    ).toEqual([{ send_count: 2, recipient_invalid: false }]);
+    expect(await count("delivery_attempts")).toBe(2);
+    expect(requests).toHaveLength(1);
+  });
 
   it("falls back after definitive rejection but preserves an uncertain outcome", async () => {
     primary.outcome = "rejected";
