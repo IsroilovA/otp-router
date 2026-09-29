@@ -85,14 +85,14 @@ const mutate = (config: RuntimeConfiguration, command: Mutation) =>
     config,
     Effect.gen(function* () {
       const { request, action } = command;
-      yield* findProjectOperation(request.projectId, request.operationId);
       const code = command.action === "submit" ? command.request.input.code : undefined;
       const input = command.action === "submit" ? {} : request.input;
       const id = identity(config.settings.crypto, action, request);
+      // The receipt identity includes the project and remains valid after history cleanup.
       const previous = yield* replay(config.settings.crypto, id, input, code);
       // Existing results have no new send effects, including after terminal fingerprint erasure.
       if (previous !== undefined) return previous;
-      const initial = yield* findOperation(request.operationId);
+      const initial = yield* findProjectOperation(request.projectId, request.operationId);
       if (action === "deliver") yield* lockQuotas([admissionLimit(initial.recipient_token)]);
       const locked = yield* findOperation(request.operationId, true);
       yield* requireExternal(locked);

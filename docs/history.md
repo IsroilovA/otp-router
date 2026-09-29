@@ -6,7 +6,7 @@ Operation and challenge snapshots describe the current public state. They coales
 
 Each attempt has stable project and operation attribution, a stable attempt identity, provider/channel, reason, routing revision, creation time, and a dispatch deadline. Authorization and invocation are separate from provider evidence. A durable dispatch commitment means transmission is possible; it does not establish that the provider was called or accepted a message.
 
-Attempt updates preserve successive projections. Evidence events preserve normalized send responses and authenticated callbacks, including observations that do not change the routing decision. Router observation time establishes when evidence became known; provider-reported time is separate and does not determine feed order. Duplicate callback identities add no new facts.
+Attempt updates preserve successive meaningful public projections. Private authorization lease and retry bookkeeping does not advance public revisions or extend history retention. Evidence events preserve normalized send responses and authenticated callbacks, including observations that do not change the routing decision. Router observation time establishes when evidence became known; provider-reported time is separate and does not determine feed order. Duplicate callback identities add no new facts.
 
 Provider acceptance, confirmed delivery, rejection before acceptance, later delivery failure, and uncertainty remain distinguishable. Acceptance followed by failure retains acceptance evidence. An attempt suppressed before invocation is not a provider rejection. Contradictory or late evidence remains observable without granting a new send.
 
@@ -18,7 +18,7 @@ Events commit atomically with domain changes and notification work. Each project
 
 The event feed uses bounded keyset pages and opaque signed cursors bound to the project and filters. A page reports its high-water mark. Continue until `hasMore` is false to finish that bounded catch-up; using the returned cursor again follows later commits. Project streams serialize their final publication step so readers never skip an earlier allocated sequence whose transaction commits later.
 
-Operation and attempt listings use committed creation order and a bounded high-water mark. Their snapshots can reflect newer evidence while pagination runs. To rebuild a projection, first save an event cursor/high-water mark, enumerate retained operations and attempts, and then consume the feed from that cursor. Deduplication and revision checks handle overlap. Reconciliation reads never invoke providers.
+Operation and attempt listings use committed creation order and a bounded high-water mark. Their snapshots can reflect newer evidence while pagination runs. Event-feed cleanup does not invalidate cursors for retained operation or attempt listings. To rebuild a projection, first save an event cursor/high-water mark, enumerate retained operations and attempts, and then consume the feed from that cursor. Deduplication and revision checks handle overlap. Reconciliation reads never invoke providers.
 
 ## Retention window
 

@@ -1,3 +1,4 @@
+import { transitionAttempts } from "./attempts.js";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import type { RuntimeConfiguration } from "../config/config.js";
@@ -27,13 +28,12 @@ const recoverBatch = (config: RuntimeConfiguration) =>
       for (const { id } of operations) {
         const time = yield* databaseTime;
         const operation = yield* expire(yield* findOperation(id), time);
-        const attempts = yield* rows(
-          Schema.Struct({ id: Schema.String }),
+        const attempts = yield* transitionAttempts(
           sql`
         UPDATE otp_router.delivery_attempts SET state = 'uncertain', acceptance = 'unknown',
           diagnostic_code = 'worker_recovery', completed_at = ${time}
         WHERE operation_id = ${id} AND state = 'dispatching' AND recovery_at <= ${time}
-        RETURNING id
+        RETURNING *
       `,
         );
         if (attempts.length > 0 && operation.state === "active") yield* changed(id);

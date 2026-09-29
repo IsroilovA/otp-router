@@ -1,3 +1,4 @@
+import { transitionAttempts } from "./attempts.js";
 import { authorizeAttempt, projectBlock } from "./authorization.js";
 import { changed } from "./changes.js";
 import { deliveryTransaction as transaction } from "./transaction.js";
@@ -52,7 +53,9 @@ const authorizationPermitsDispatch = (operation: Operation, delivery: Attempt, t
         delivery.approval_expires_at <= time ||
         delivery.project_generation !== (block?.generation ?? 0)
       ) {
-        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'approval_unused' WHERE id = ${delivery.id}`;
+        yield* transitionAttempts(
+          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'approval_unused' WHERE id = ${delivery.id} RETURNING *`,
+        );
         yield* changed(operation.id);
         return false;
       }
@@ -80,15 +83,21 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* duration("queue", Math.max(0, time.getTime() - delivery.due_at.getTime()));
       const sql = yield* SqlClient.SqlClient;
       if (delivery.state === "dispatching") {
+        // Authorization wakeups and duplicate jobs can arrive during a live invocation.
+        if (delivery.recovery_at === null || delivery.recovery_at > time) return undefined;
         if (operation.state === "active") yield* changed(operation.id);
         yield* count("recovery", "uncertain");
-        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'uncertain', acceptance = 'unknown', diagnostic_code = 'worker_recovery' WHERE id = ${delivery.id} AND state = 'dispatching'`;
+        yield* transitionAttempts(
+          sql`UPDATE otp_router.delivery_attempts SET state = 'uncertain', acceptance = 'unknown', diagnostic_code = 'worker_recovery' WHERE id = ${delivery.id} AND state = 'dispatching' RETURNING *`,
+        );
         return undefined;
       }
       if (delivery.state !== "pending") return undefined;
       if (stale(operation, delivery, job)) {
         yield* count("suppressed", "ineligible");
-        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked' WHERE id = ${delivery.id} AND state = 'pending'`;
+        yield* transitionAttempts(
+          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
+        );
         return undefined;
       }
       if (!(yield* authorizationPermitsDispatch(operation, delivery, time))) return undefined;
@@ -103,7 +112,9 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       );
       if (!sharedBudget || operation.send_count >= operation.snapshot.maxSends) {
         yield* count("suppressed", "rate_limited");
-        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id}`;
+        yield* transitionAttempts(
+          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id} RETURNING *`,
+        );
         return undefined;
       }
       const target = (yield* availableProviders(config, operation, time)).find(
@@ -159,7 +170,9 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* countQuotas(limits, delivery.id, time);
       yield* extendAdmission(operation.recipient_token, delivery.id, time);
       // Allow outcome persistence time beyond the provider timeout before independent recovery.
-      yield* sql`UPDATE otp_router.delivery_attempts SET state = 'dispatching', invocation = 'committed', reserved_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending'`;
+      yield* transitionAttempts(
+        sql`UPDATE otp_router.delivery_attempts SET state = 'dispatching', invocation = 'committed', reserved_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
+      );
       yield* sql`UPDATE otp_router.delivery_operations SET send_count = send_count + 1, next_user_send_at = GREATEST(next_user_send_at,${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)}) WHERE id = ${operation.id}`;
       return {
         input,

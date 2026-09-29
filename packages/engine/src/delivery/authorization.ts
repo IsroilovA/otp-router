@@ -1,3 +1,4 @@
+import { transitionAttempts } from "./attempts.js";
 import type { Attempt, Operation } from "./records.js";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -41,7 +42,9 @@ const claimAuthorization = (config: RuntimeConfiguration, job: DeliveryJob) =>
         operation.routing_revision !== job.routingRevision ||
         time >= attempt.dispatch_deadline
       ) {
-        yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', authorization_state = 'expired', diagnostic_code = 'authorization_expired' WHERE id = ${attempt.id}`;
+        yield* transitionAttempts(
+          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked', authorization_state = 'expired', diagnostic_code = 'authorization_expired' WHERE id = ${attempt.id} RETURNING *`,
+        );
         yield* changed(operation.id);
         return undefined;
       }
@@ -94,7 +97,9 @@ const waitForAuthorization = (
     const retry = new Date(
       Math.max(time.getTime() + 5000, retryAt === undefined ? 0 : Date.parse(retryAt)),
     );
-    yield* sql`UPDATE otp_router.delivery_attempts SET authorization_lease_until = NULL, authorization_retry_at = ${retry}, diagnostic_code = 'authorization_pending' WHERE id = ${attempt.id}`;
+    yield* transitionAttempts(
+      sql`UPDATE otp_router.delivery_attempts SET authorization_lease_until = NULL, authorization_retry_at = ${retry}, diagnostic_code = 'authorization_pending' WHERE id = ${attempt.id} RETURNING *`,
+    );
     if (attempt.state === "pending" && operation.state === "active")
       yield* enqueueDelivery(
         { version: 1, attemptId: attempt.id, routingRevision: attempt.routing_revision },
@@ -135,7 +140,9 @@ const finishAuthorization = (
           const until = new Date(Math.max(time.getTime() + 1000, Date.parse(value.retryAt)));
           yield* sql`INSERT INTO otp_router.project_send_blocks(project_id,blocked_until) VALUES (${operation.project_id},${until}) ON CONFLICT (project_id) DO UPDATE SET blocked_until = GREATEST(project_send_blocks.blocked_until,EXCLUDED.blocked_until), generation = project_send_blocks.generation + 1`;
         }
-        yield* sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'denied', authorization_lease_until = NULL, state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'authorization_denied' WHERE id = ${attempt.id}`;
+        yield* transitionAttempts(
+          sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'denied', authorization_lease_until = NULL, state = 'suppressed', invocation = 'not_invoked', diagnostic_code = 'authorization_denied' WHERE id = ${attempt.id} RETURNING *`,
+        );
         yield* changed(operation.id);
         return;
       }
@@ -150,7 +157,9 @@ const finishAuthorization = (
         validUntil > time &&
         (block?.generation ?? 0) === claim.projectGeneration;
       // Even a stale approval is durable evidence for reservation release. It cannot send.
-      yield* sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'approved', approved_at = ${time}, approval_expires_at = ${validUntil}, reservation_reference = ${value.reservationId}, authorization_lease_until = NULL, state = ${usable ? "pending" : "suppressed"}, invocation = ${usable ? "not_started" : "not_invoked"}, diagnostic_code = ${usable ? null : "approval_unused"} WHERE id = ${attempt.id}`;
+      yield* transitionAttempts(
+        sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'approved', approved_at = ${time}, approval_expires_at = ${validUntil}, reservation_reference = ${value.reservationId}, authorization_lease_until = NULL, state = ${usable ? "pending" : "suppressed"}, invocation = ${usable ? "not_started" : "not_invoked"}, diagnostic_code = ${usable ? null : "approval_unused"} WHERE id = ${attempt.id} RETURNING *`,
+      );
       yield* changed(operation.id);
     }),
   );

@@ -495,6 +495,10 @@ describe("built process", () => {
         "UPDATE pgboss.job SET started_on = clock_timestamp() - interval '100 seconds' WHERE name = 'otp-delivery-v1' AND state = 'active' RETURNING state",
       ),
     ).toContain("active");
+    // The expired queue claim alone does not establish that an invocation has timed out.
+    await psql(
+      `UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND state = 'dispatching'`,
+    );
     await superviseExpiredDeliveryJobs();
     expect(
       await psql(
@@ -512,7 +516,13 @@ describe("built process", () => {
       async ({ signal }) =>
         (await challengeStatus(apiPort, created.challengeId, signal)).state === "uncertain",
     );
-    await delay(750);
+    await waitFor(
+      "the recovered delivery job acknowledgement",
+      async () =>
+        (await psql(
+          `SELECT state || ':' || retry_count::text FROM pgboss.job WHERE name = 'otp-delivery-v1' AND data->>'attemptId' = '${attemptId}' ORDER BY created_on DESC LIMIT 1`,
+        )) === "completed:1",
+    );
     expect(await readSink(fixture.sinkPath)).toHaveLength(before + 1);
     expect(
       await psql(
@@ -659,6 +669,10 @@ describe("built process", () => {
     await psql(
       "UPDATE pgboss.job SET started_on = clock_timestamp() - interval '100 seconds' WHERE name = 'otp-delivery-v1' AND state = 'active'",
     );
+    // Advancing queue time also advances the independent dispatch recovery lease.
+    await psql(
+      `UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND state = 'dispatching'`,
+    );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
       ["apps/server/dist/main.js", "--config", fixture.configurationPath],
@@ -754,6 +768,10 @@ describe("built process", () => {
     ).toBe("0");
     await psql(
       "UPDATE pgboss.job SET started_on = clock_timestamp() - interval '100 seconds' WHERE name = 'otp-delivery-v1' AND state = 'active'",
+    );
+    // Advancing queue time also advances the independent dispatch recovery lease.
+    await psql(
+      `UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND state = 'dispatching'`,
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(

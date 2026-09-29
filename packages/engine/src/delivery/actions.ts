@@ -1,3 +1,4 @@
+import { suppressPendingAttempts } from "./attempts.js";
 import { admissionLimit, quotaRetryAt, countQuotas } from "./quotas.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
@@ -65,7 +66,7 @@ export const requestSend = (
     );
     if (blocked !== undefined) return yield* Effect.fail(new DomainError(blocked));
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', invocation = 'not_invoked' WHERE operation_id = ${operation.id} AND state = 'pending'`;
+    yield* suppressPendingAttempts(operation.id);
     yield* sql`UPDATE otp_router.delivery_operations SET routing_revision = routing_revision + 1, automatic_stopped = false, next_user_send_at = ${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)} WHERE id = ${operation.id}`;
     const attemptId = yield* schedule(
       yield* findOperation(operation.id),

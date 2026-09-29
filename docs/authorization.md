@@ -22,7 +22,7 @@ Authorization retries use the same attempt identity with durable scheduling unti
 
 A route denial stops that attempt without fallback. A project denial additionally blocks new dispatches for that project until its supplied retry time and invalidates older unconsumed approvals. Already committed dispatches may complete. Expiry of the project block does not revive denied attempts or restore invalidated approvals; new work still requires authorization. Existing pending requests can resume reconciliation after the block. Verification stays available under its original expiry and guess limits.
 
-Before dispatch commitment, an approved attempt may resume after a crash if it is still eligible. After commitment, a crash or lost acknowledgement means transmission is possible, even if the process actually died before calling the provider. Recovery records uncertainty and never repeats that invocation. Provider idempotency support does not relax this rule. An explicit resend creates a new authorized attempt and retains the original code, expiry, and guess limits.
+Before dispatch commitment, an approved attempt may resume after a crash if it is still eligible. After commitment, a crash or lost acknowledgement means transmission is possible, even if the process actually died before calling the provider. Recovery waits for the persisted in-flight deadline before recording uncertainty and never repeats that invocation. Duplicate jobs arriving before that deadline leave the invocation in progress. Provider idempotency support does not relax this rule. An explicit resend creates a new authorized attempt and retains the original code, expiry, and guess limits.
 
 ## Unused reservations and late evidence
 

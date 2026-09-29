@@ -1,3 +1,4 @@
+import { SqlClient } from "effect/unstable/sql";
 import { finalizeEvents } from "../notifications/publication.js";
 import { Effect, Result } from "effect";
 import { transaction as databaseTransaction } from "../database/transaction.js";
@@ -16,7 +17,17 @@ export const deliveryTransaction = <A, E, R>(
       Effect.gen(function* () {
         const result = yield* body;
         yield* flushChanges(config);
-        yield* finalizeEvents(config.settings.webhook !== undefined);
+        const finalized = yield* finalizeEvents(config.settings.webhook !== undefined);
+        const sql = yield* SqlClient.SqlClient;
+        // These are newly inserted subjects already locked by this transaction.
+        // Assign listing order under the stream lock, before committing it.
+        for (const event of finalized) {
+          if (event.revision !== 1) continue;
+          if (event.kind === "delivery.updated")
+            yield* sql`UPDATE otp_router.delivery_operations SET creation_sequence = ${event.sequence}::bigint WHERE id = ${event.subject_id} AND creation_sequence IS NULL`;
+          else if (event.kind === "attempt.updated")
+            yield* sql`UPDATE otp_router.delivery_attempts SET creation_sequence = ${event.sequence}::bigint WHERE id = ${event.subject_id} AND creation_sequence IS NULL`;
+        }
         return result;
       }).pipe(Effect.provideService(Changes, new Set<string>())),
     );

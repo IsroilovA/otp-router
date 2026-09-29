@@ -91,7 +91,7 @@ const readWindow = (
     const after = cursor?.after ?? (options.feed ? floor : "0");
     if (!/^\d+$/u.test(after) || (cursor !== undefined && !/^\d+$/u.test(cursor.ceiling)))
       return yield* Effect.fail(invalid());
-    if (cursor !== undefined && BigInt(after) < BigInt(floor))
+    if (options.feed && cursor !== undefined && BigInt(after) < BigInt(floor))
       return yield* Effect.fail(new DomainError({ code: "history_cursor_expired" }));
     const ceiling =
       cursor === undefined || (options.feed && cursor.after === cursor.ceiling)
@@ -142,12 +142,25 @@ export const DeliveryHistoryLive = Layer.effect(
                 feed: true,
               });
               const limit = input.limit ?? 100;
+              const validId = Schema.is(Schema.String.check(Schema.isUUID()));
+              const operationFilter =
+                input.operationId === undefined
+                  ? sql``
+                  : validId(input.operationId)
+                    ? sql`AND operation_id = ${input.operationId}`
+                    : sql`AND false`;
+              const attemptFilter =
+                input.attemptId === undefined
+                  ? sql``
+                  : validId(input.attemptId)
+                    ? sql`AND subject_id = ${input.attemptId}`
+                    : sql`AND false`;
               const found = yield* rows(
                 Schema.Struct({
                   body: Schema.fromJsonString(HistoryEvent),
                   stream_sequence: Schema.String,
                 }),
-                sql`SELECT body,stream_sequence::text FROM otp_router.events WHERE project_id = ${project} AND stream_sequence > ${after}::bigint AND stream_sequence <= ${ceiling}::bigint AND (${input.operationId ?? null}::text IS NULL OR operation_id::text = ${input.operationId ?? null}) AND (${input.attemptId ?? null}::text IS NULL OR subject_id::text = ${input.attemptId ?? null}) ORDER BY stream_sequence LIMIT ${limit + 1}`,
+                sql`SELECT body,stream_sequence::text FROM otp_router.events WHERE project_id = ${project} AND stream_sequence > ${after}::bigint AND stream_sequence <= ${ceiling}::bigint ${operationFilter} ${attemptFilter} ORDER BY stream_sequence LIMIT ${limit + 1}`,
               );
               const page = found.slice(0, limit),
                 hasMore = found.length > limit;
@@ -172,9 +185,11 @@ export const DeliveryHistoryLive = Layer.effect(
           project,
           {},
           Effect.gen(function* () {
+            if (!Schema.is(Schema.String.check(Schema.isUUID()))(id))
+              return yield* Effect.fail(new DomainError({ code: "operation_not_found" }));
             const found = yield* rows(
               Schema.Struct({ public_snapshot: AttemptSnapshot }),
-              sql`SELECT a.public_snapshot FROM otp_router.delivery_attempts a JOIN otp_router.delivery_operations o ON o.id = a.operation_id WHERE o.project_id = ${project} AND a.id::text = ${id}`,
+              sql`SELECT a.public_snapshot FROM otp_router.delivery_attempts a JOIN otp_router.delivery_operations o ON o.id = a.operation_id WHERE o.project_id = ${project} AND a.id = ${id}`,
             );
             const attempt = found[0];
             if (attempt === undefined)
@@ -201,7 +216,7 @@ export const DeliveryHistoryLive = Layer.effect(
                 sequence: Schema.String,
                 public_snapshot: AttemptSnapshot,
               }),
-              sql`SELECT a.id,a.public_snapshot,c.sequence::text FROM otp_router.delivery_attempts a JOIN LATERAL (SELECT MIN(stream_sequence) AS sequence FROM otp_router.events WHERE subject_id = a.id AND kind = 'attempt.updated') c ON true WHERE a.operation_id = ${operation.id} AND c.sequence > ${after}::bigint AND c.sequence <= ${ceiling}::bigint ORDER BY c.sequence LIMIT ${limit + 1}`,
+              sql`SELECT id,public_snapshot,creation_sequence::text AS sequence FROM otp_router.delivery_attempts WHERE operation_id = ${operation.id} AND creation_sequence > ${after}::bigint AND creation_sequence <= ${ceiling}::bigint ORDER BY creation_sequence LIMIT ${limit + 1}`,
             );
             const page = found.slice(0, limit),
               last = page.at(-1);
@@ -240,7 +255,7 @@ export const DeliveryHistoryLive = Layer.effect(
                 terminal_at: Schema.NullOr(Schema.Date),
                 history_updated_at: Schema.Date,
               }),
-              sql`SELECT o.id,o.state,o.created_at,o.terminal_at,o.history_updated_at,c.sequence::text FROM otp_router.delivery_operations o JOIN LATERAL (SELECT MIN(stream_sequence) AS sequence FROM otp_router.events WHERE operation_id = o.id AND kind = 'delivery.updated') c ON true WHERE o.project_id = ${project} AND c.sequence > ${after}::bigint AND c.sequence <= ${ceiling}::bigint ORDER BY c.sequence LIMIT ${limit + 1}`,
+              sql`SELECT id,state,created_at,terminal_at,history_updated_at,creation_sequence::text AS sequence FROM otp_router.delivery_operations WHERE project_id = ${project} AND creation_sequence > ${after}::bigint AND creation_sequence <= ${ceiling}::bigint ORDER BY creation_sequence LIMIT ${limit + 1}`,
             );
             const page = found.slice(0, limit),
               last = page.at(-1);

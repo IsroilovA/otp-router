@@ -34,7 +34,6 @@ export const verifyChallenge = (
   domainTransaction(
     config,
     Effect.gen(function* () {
-      yield* findProjectChallenge(request.projectId, request.challengeId);
       const op = {
         ...operation(
           config.settings.crypto,
@@ -47,7 +46,7 @@ export const verifyChallenge = (
         code: request.input.code,
       };
       yield* lockOperation(op);
-      const initial = yield* findChallenge(request.challengeId).pipe(
+      const initial = yield* findProjectChallenge(request.projectId, request.challengeId).pipe(
         Effect.catchTag("DomainError", () => Effect.succeed(undefined)),
       );
       if (initial !== undefined) yield* checkBinding(initial, request.input);

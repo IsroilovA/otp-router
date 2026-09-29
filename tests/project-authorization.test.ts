@@ -387,6 +387,31 @@ describe("project isolation and authorization", () => {
     await app().run(dispatch(app().configuration, await job()));
     const original = sent[0];
     if (original === undefined) throw new Error("Expected initial send");
+    // Foreign mutations must not reach binding, verification, or terminal transitions.
+    expect(
+      await Effect.runPromise(
+        app()
+          .router.verify({
+            ...request("beta", {
+              code: original.code,
+              purpose: "login",
+              contextId: "private-binding",
+            }),
+            challengeId: created.body.challengeId,
+          })
+          .pipe(Effect.result),
+      ),
+    ).toMatchObject({ _tag: "Failure", failure: { code: "challenge_not_found" } });
+    expect(
+      await Effect.runPromise(
+        app()
+          .router.cancel({
+            ...request("beta", {}),
+            challengeId: created.body.challengeId,
+          })
+          .pipe(Effect.result),
+      ),
+    ).toMatchObject({ _tag: "Failure", failure: { code: "challenge_not_found" } });
     await ageAdmission(app());
     await app().run(
       app()
@@ -630,4 +655,187 @@ it("does not skip evidence whose transaction commits after an intervening feed r
       .filter((event) => event.type === "attempt.evidence")
       .map((event) => event.attemptId),
   ).toEqual([first.attemptId]);
+});
+
+it("paginates retained operations and attempts after unrelated event cleanup", async () => {
+  const first = await create();
+  await ageAdmission(app());
+  await app().run(
+    app()
+      .pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() WHERE id = ${first.body.operationId}`,
+  );
+  await Effect.runPromise(
+    app().delivery.deliver({
+      ...request("alpha", { action: "resend" as const }),
+      operationId: first.body.operationId,
+    }),
+  );
+  const second = await create("alpha", "+998901234568");
+  const removed = await create("alpha", "+998901234569");
+  await Effect.runPromise(
+    app().delivery.close({ ...request("alpha", {}), operationId: removed.body.operationId }),
+  );
+  await app().run(
+    app()
+      .pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '31 days', history_updated_at = clock_timestamp() - interval '31 days' WHERE id = ${removed.body.operationId}`,
+  );
+  await app().run(
+    app()
+      .pg`UPDATE otp_router.events SET occurred_at = clock_timestamp() - interval '31 days' WHERE operation_id = ${removed.body.operationId}`,
+  );
+  await app().run(cleanup(app().configuration));
+  const page = await Effect.runPromise(app().history.operations("alpha", { limit: 1 }));
+  expect(page.operations[0]?.operationId).toBe(first.body.operationId);
+  if (page.nextCursor === null) throw new Error("Expected continuation");
+  const next = await Effect.runPromise(
+    app().history.operations("alpha", { limit: 1, cursor: page.nextCursor }),
+  );
+  expect(next.operations.map((operation) => operation.operationId)).toEqual([
+    second.body.operationId,
+  ]);
+  expect(next.nextCursor).toBeNull();
+  const attempts = await Effect.runPromise(
+    app().history.attempts("alpha", first.body.operationId, { limit: 1 }),
+  );
+  expect(attempts.attempts[0]).toMatchObject({
+    reason: "initial",
+    state: "suppressed",
+    invocation: "not_invoked",
+  });
+  if (attempts.nextCursor === null) throw new Error("Expected attempt continuation");
+  const later = await Effect.runPromise(
+    app().history.attempts("alpha", first.body.operationId, {
+      limit: 1,
+      cursor: attempts.nextCursor,
+    }),
+  );
+  expect(later.attempts[0]).toMatchObject({ reason: "resend", state: "pending" });
+  expect(later.nextCursor).toBeNull();
+});
+
+it("ignores duplicate authorization wakeups until the dispatch recovery deadline", async () => {
+  await create();
+  const work = await job();
+  await app().run(authorizeAttempt(app().configuration, work));
+  expect(await app().run(dispatchGate(app().configuration, work))).toBeDefined();
+  const before = await Effect.runPromise(app().history.attempt("alpha", work.attemptId));
+  expect(before.state).toBe("dispatching");
+  await app().run(dispatch(app().configuration, work));
+  expect(await Effect.runPromise(app().history.attempt("alpha", work.attemptId))).toEqual(before);
+  expect(sent).toHaveLength(0);
+  await app().run(
+    app()
+      .pg`UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${work.attemptId}`,
+  );
+  await app().run(dispatch(app().configuration, work));
+  expect(await Effect.runPromise(app().history.attempt("alpha", work.attemptId))).toMatchObject({
+    state: "uncertain",
+    invocation: "committed",
+    diagnosticCode: "worker_recovery",
+  });
+  expect(sent).toHaveLength(0);
+});
+
+it("replays project-scoped external receipts after shorter history retention", async () => {
+  const created = await create();
+  const closeRequest = { ...request("alpha", {}), operationId: created.body.operationId };
+  const original = await Effect.runPromise(app().delivery.close(closeRequest));
+  await app().run(
+    app()
+      .pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '2 days', history_updated_at = clock_timestamp() - interval '2 days' WHERE id = ${created.body.operationId}`,
+  );
+  await app().run(
+    cleanup({
+      ...app().configuration,
+      settings: { ...app().configuration.settings, historyRetentionDays: 1 },
+    }),
+  );
+  expect(
+    await Effect.runPromise(
+      app().delivery.status("alpha", created.body.operationId).pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { code: "operation_not_found" } });
+  expect(await Effect.runPromise(app().delivery.close(closeRequest))).toEqual({
+    ...original,
+    replayed: true,
+  });
+  expect(
+    await Effect.runPromise(
+      app()
+        .delivery.close({ ...closeRequest, projectId: "beta" })
+        .pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { code: "operation_not_found" } });
+  expect(
+    await Effect.runPromise(
+      app()
+        .delivery.close({ ...closeRequest, key: randomUUID() })
+        .pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { code: "operation_not_found" } });
+  expect(sent).toHaveLength(0);
+});
+
+it("keeps authorization lease retries out of public revisions and history retention", async () => {
+  const created = await create();
+  const work = await job();
+  mode = "unavailable";
+  await app().run(dispatch(app().configuration, work));
+  const before = await Effect.runPromise(app().history.attempt("alpha", work.attemptId));
+  const feed = await Effect.runPromise(app().history.events("alpha", {}));
+  const updated = () =>
+    app().run(
+      rows(
+        Schema.Struct({ history_updated_at: Schema.Date }),
+        app()
+          .pg`SELECT history_updated_at FROM otp_router.delivery_operations WHERE id = ${created.body.operationId}`,
+      ),
+    );
+  const retainedAt = await updated();
+  await makeRetryDue(work.attemptId);
+  await app().run(dispatch(app().configuration, work));
+  expect(requests).toHaveLength(2);
+  expect(sent).toHaveLength(0);
+  expect(await Effect.runPromise(app().history.attempt("alpha", work.attemptId))).toEqual(before);
+  expect(
+    (await Effect.runPromise(app().history.events("alpha", { cursor: feed.nextCursor }))).events,
+  ).toEqual([]);
+  expect(await updated()).toEqual(retainedAt);
+});
+
+it("orders operation listings by committed creation rather than transaction start", async () => {
+  const held = Promise.withResolvers<void>();
+  const finish = Promise.withResolvers<void>();
+  const delayed = app().run(
+    deliveryTransaction(
+      app().configuration,
+      Effect.gen(function* () {
+        const created = yield* app().delivery.create(request("alpha", input()));
+        held.resolve();
+        yield* Effect.promise(() => finish.promise);
+        return created;
+      }),
+    ),
+  );
+  await held.promise;
+  let committedId: string;
+  try {
+    committedId = (await create("alpha", "+998901234568")).body.operationId;
+    const page = await Effect.runPromise(app().history.operations("alpha", {}));
+    expect(page.operations.map((operation) => operation.operationId)).toEqual([committedId]);
+  } finally {
+    finish.resolve();
+    await delayed;
+  }
+  const later = await delayed;
+  const first = await Effect.runPromise(app().history.operations("alpha", { limit: 1 }));
+  expect(first.operations.map((operation) => operation.operationId)).toEqual([committedId]);
+  if (first.nextCursor === null) throw new Error("Expected continuation");
+  const next = await Effect.runPromise(
+    app().history.operations("alpha", { cursor: first.nextCursor }),
+  );
+  expect(next.operations.map((operation) => operation.operationId)).toEqual([
+    later.body.operationId,
+  ]);
+  expect(next.nextCursor).toBeNull();
 });

@@ -17,12 +17,11 @@ export const requestDelivery = (
   domainTransaction(
     config,
     Effect.gen(function* () {
-      yield* findProjectChallenge(request.projectId, request.challengeId);
       const op = operation(config.settings.crypto, request, "deliver");
       yield* lockOperation(op);
       const previous = yield* replay(config.settings.crypto, op, SendResult);
       if (previous !== undefined) return previous;
-      const initial = yield* findChallenge(request.challengeId);
+      const initial = yield* findProjectChallenge(request.projectId, request.challengeId);
       yield* lockQuotas([admissionLimit(initial.delivery.recipient_token)]);
       const locked = yield* findChallenge(request.challengeId, true);
       const time = yield* databaseTime;

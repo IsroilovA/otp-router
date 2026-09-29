@@ -6,14 +6,15 @@ import { findOperation, terminate as closeOperation } from "../delivery/store.js
 import { Challenge, Secrets } from "./records.js";
 const { delivery: _delivery, ...fields } = Challenge.fields;
 const Record = Schema.Struct(fields);
-export const findChallenge = (id: string, lock = false) =>
+const readChallenge = (id: string, lock: boolean, project?: { readonly id: string }) =>
   Effect.gen(function* () {
     if (!Schema.is(Schema.String.check(Schema.isUUID()))(id))
       return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
     const sql = yield* SqlClient.SqlClient;
+    const owned = project === undefined ? sql`` : sql`AND o.project_id = ${project.id}`;
     const initial = (yield* rows(
       Record,
-      sql`SELECT * FROM otp_router.challenges WHERE id = ${id}`,
+      sql`SELECT c.* FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE c.id = ${id} ${owned}`,
     ))[0];
     if (initial === undefined)
       return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
@@ -23,17 +24,9 @@ export const findChallenge = (id: string, lock = false) =>
       : initial;
     return { ...current, delivery };
   });
+export const findChallenge = (id: string, lock = false) => readChallenge(id, lock);
 export const findProjectChallenge = (projectId: string, id: string, lock = false) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const owned = yield* rows(
-      Schema.Struct({ id: Schema.String }),
-      sql`SELECT c.id::text FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE c.id::text = ${id} AND o.project_id = ${projectId}`,
-    );
-    if (owned.length === 0)
-      return yield* Effect.fail(new DomainError({ code: "challenge_not_found" }));
-    return yield* findChallenge(id, lock);
-  });
+  readChallenge(id, lock, { id: projectId });
 export const findSecrets = (id: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
