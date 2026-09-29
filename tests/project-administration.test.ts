@@ -557,6 +557,18 @@ it("rejects old schema baselines and incompatible live catalogs without changing
         .pipe(Effect.result),
     ),
   ).toMatchObject({ _tag: "Failure", failure: { _tag: "SchemaCompatibilityError" } });
+  expect(
+    await app().run(
+      sql
+        .withTransaction(
+          Effect.gen(function* () {
+            yield* sql`UPDATE otp_router.schema_identity SET baseline = 'project-administration-v1' WHERE singleton`;
+            yield* migrate.pipe(Effect.provide(NodeServices.layer));
+          }),
+        )
+        .pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { _tag: "SchemaCompatibilityError" } });
   await expect(
     startRuntime(db().databaseUrl, {
       ...configuration,

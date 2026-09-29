@@ -12,6 +12,7 @@ const request: AuthorizationRequest = {
   projectId: "alpha",
   attemptId: "00000000-0000-4000-8000-000000000001",
   operationId: "00000000-0000-4000-8000-000000000002",
+  integrationReference: "Flow.Authority:AbC-09",
   providerInstanceId: "sms",
   channel: "sms",
   reason: "initial",

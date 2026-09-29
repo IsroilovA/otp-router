@@ -23,6 +23,8 @@ Server `0.1.0` and client `0.1.0` target each other and replace published `serve
 
 This release requires a separate fresh database; follow the [database procedure](operations.md#database-upgrades). Old databases are rejected by baseline identity even at the same migration number. These source changes prepare versions only; merging, publishing artifacts, and deployment remain separate actions.
 
+Optional `integrationReference` support is included in this breaking pair and initial router baseline. Earlier development databases are incompatible as well. Update server, client, and strict authorization/event consumers together: accept the optional field in authorization requests, operation/challenge and verification responses, operation/attempt history, and supported events. Preserve omission when absent and use attempt IDs for authorization reservations. Review [correlation privacy and retention](api.md#integration-correlation); pg-boss migration history is unchanged.
+
 ## Changelog
 
 [GitHub Releases](https://github.com/IsroilovA/otp-router/releases) is the published changelog, linked from [CHANGELOG.md](../CHANGELOG.md). Each component starts with an initial-release entry. Later entries list merged PRs since that component's previous tag. The interval covers repository changes, so shared or other-component changes may appear in both histories.

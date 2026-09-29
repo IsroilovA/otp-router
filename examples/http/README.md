@@ -31,7 +31,7 @@ Create a challenge and retain the request key and exact body. The response conta
 
 ```sh
 MANAGED_KEY=$(new_key)
-MANAGED_BODY='{"recipient":{"type":"phone","phoneNumber":"+998901234567"},"purpose":"login","contextId":"managed-demo-1","policyId":"login"}'
+MANAGED_BODY='{"recipient":{"type":"phone","phoneNumber":"+998901234567"},"purpose":"login","contextId":"managed-demo-1","integrationReference":"Flow.Managed:AbC-09","policyId":"login"}'
 MANAGED_RESPONSE=$(curl -fsS -X POST "$BASE/v1/projects/demo/challenges" \
   -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
   -H "Idempotency-Key: $MANAGED_KEY" --data-binary "$MANAGED_BODY")
@@ -84,7 +84,7 @@ printf 'External code (6–8 digits): '
 read -rs EXTERNAL_CODE
 printf '\n'
 EXTERNAL_KEY=$(new_key)
-EXTERNAL_RESPONSE=$(printf '{"recipient":{"type":"phone","phoneNumber":"+998901234568"},"purpose":"login","contextId":"external-demo-1","policyId":"login","expiresAt":"%s","code":"%s"}' "$EXTERNAL_DEADLINE" "$EXTERNAL_CODE" | \
+EXTERNAL_RESPONSE=$(printf '{"recipient":{"type":"phone","phoneNumber":"+998901234568"},"purpose":"login","contextId":"external-demo-1","integrationReference":"Flow.External:AbC-09","policyId":"login","expiresAt":"%s","code":"%s"}' "$EXTERNAL_DEADLINE" "$EXTERNAL_CODE" | \
   curl -fsS -X POST "$BASE/v1/projects/demo/delivery-operations/with-code" \
     -H "Authorization: Bearer $API_KEY" -H 'Content-Type: application/json' \
     -H "Idempotency-Key: $EXTERNAL_KEY" --data-binary @-)
@@ -108,3 +108,5 @@ unset EXTERNAL_CODE
 ```
 
 For other action choices and error shapes, generate the [OpenAPI reference](../../docs/api.md). Keep each mutation's key and exact body for retries after an ambiguous response.
+
+The examples supply opaque integration references; follow the [correlation contract](../../docs/api.md#integration-correlation). A reference is optional and immutable, is disclosed to authorization/event consumers, and does not replace operation identity or the managed verification binding.

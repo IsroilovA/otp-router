@@ -70,7 +70,7 @@ const app = () => {
   if (runtime === undefined) throw new Error("Runtime missing");
   return runtime;
 };
-const create = async () =>
+const create = async (integrationReference?: string) =>
   Schema.decodeUnknownSync(Snapshot)(
     (
       await Effect.runPromise(
@@ -83,6 +83,7 @@ const create = async () =>
             recipient: { type: "phone", phoneNumber: "+998901234567" },
             purpose: "login",
             contextId: "binding",
+            ...(integrationReference === undefined ? {} : { integrationReference }),
             policyId: "login",
           },
         }),
@@ -457,7 +458,7 @@ describe("public snapshots and transactional events", () => {
 
 it("retries immutable signed events independently, recovers missing jobs, retains exhausted work, and safely replays", async () => {
   const harness = app();
-  const created = await create();
+  const created = await create("Flow.Webhook:AbC-09");
   const event = (await events(created.challengeId))[0];
   if (event === undefined) throw new Error("Event missing");
   const id = event.eventId;
@@ -471,6 +472,7 @@ it("retries immutable signed events independently, recovers missing jobs, retain
   const first = received[0];
   if (first === undefined) throw new Error("Receipt missing");
   expect(new Webhook(secret).verify(first.body, first.headers)).toEqual(event);
+  expect(event.challenge.integrationReference).toBe("Flow.Webhook:AbC-09");
   expect(first.headers["webhook-signature"]).toMatch(/^v1,/);
   await harness.run(
     harness.pg`UPDATE otp_router.notifications SET next_attempt_at = clock_timestamp() WHERE event_id = ${id}`,
@@ -520,6 +522,23 @@ it("retries immutable signed events independently, recovers missing jobs, retain
   expect(await harness.run(replayNotification(id))).toBe(true);
   await harness.run(notifyEvent(harness.configuration, id));
   expect(received[2]?.body).toBe(first.body);
+  const retained = await Effect.runPromise(
+    harness.history.events("demo", { operationId: created.operationId }, "backend"),
+  );
+  expect(retained.events).toContainEqual(event);
+  const references = retained.events.map((entry) => {
+    switch (entry.type) {
+      case "challenge.updated":
+        return entry.challenge.integrationReference;
+      case "delivery.updated":
+        return entry.delivery.integrationReference;
+      case "attempt.updated":
+        return entry.attempt.integrationReference;
+      case "attempt.evidence":
+        return entry.integrationReference;
+    }
+  });
+  expect(references).toEqual(retained.events.map(() => "Flow.Webhook:AbC-09"));
   expect(
     await harness.run(
       single(

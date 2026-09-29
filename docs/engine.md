@@ -17,6 +17,8 @@ External callers own code generation, verification, authorization, and associati
 
 ## Integration obligations
 
+Use the optional [integration reference](api.md#integration-correlation) to correlate upstream flows across either capability. Operation identity remains the target for delivery and verification actions.
+
 Follow the [deployment requirements](operations.md) for workers, readiness, and shutdown.
 
 Use [public events](webhooks.md) for committed changes, status reads for snapshots, and [attempt history](history.md) for complete retained evidence and feed reconciliation. Replayed results may describe an earlier state; follow [idempotency](api.md#idempotency). Operational recovery follows the [operations guide](operations.md).

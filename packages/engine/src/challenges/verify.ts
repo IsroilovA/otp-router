@@ -101,6 +101,9 @@ export const verifyChallenge = (
           body: {
             projectId: challenge.delivery.project_id,
             verificationId,
+            ...(challenge.delivery.integration_reference === null
+              ? {}
+              : { integrationReference: challenge.delivery.integration_reference }),
             challengeId: challenge.id,
             purpose: challenge.delivery.purpose,
             contextId: challenge.delivery.context_id,

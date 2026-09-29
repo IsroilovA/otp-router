@@ -115,13 +115,14 @@ const request = <A>(input: A) => ({
   requestId: randomUUID(),
   input,
 });
-const prepare = () =>
+const prepare = (integrationReference?: string) =>
   Effect.runPromise(
     app().delivery.prepare(
       request({
         recipient: { type: "phone", phoneNumber: "+998901234567" },
         purpose: "login",
         contextId: "external-flow",
+        ...(integrationReference === undefined ? {} : { integrationReference }),
         policyId: "external",
         expiresAt: new Date(Date.now() + 890000).toISOString(),
       }),
@@ -164,7 +165,7 @@ beforeEach(async () => {
 });
 describe("independent durable external code delivery", () => {
   it("runs without verification keys and admits a fixed fifteen-minute deadline", async () => {
-    const prepared = await prepare();
+    const prepared = await prepare("Flow.Attach:AbC-09");
     expect(prepared.body.state).toBe("prepared");
     expect(prepared.body.actions).not.toHaveProperty("verify");
     expect(prepared.body.actions).toMatchObject({
@@ -181,8 +182,10 @@ describe("independent durable external code delivery", () => {
     expect(logs).toContain('"operation":"delivery.submitCode"');
     expect(logs).toContain(`"requestId":"${submission.requestId}"`);
     expect(logs).not.toContain(submission.input.code);
+    expect(logs).not.toContain("Flow.Attach:AbC-09");
     output.mockRestore();
     expect(attached.body.expiresAt).toBe(prepared.body.expiresAt);
+    expect(attached.body.integrationReference).toBe("Flow.Attach:AbC-09");
     await runQueued();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toMatchObject({
@@ -190,6 +193,7 @@ describe("independent durable external code delivery", () => {
       code: "123456",
       expiresAt: prepared.body.expiresAt,
     });
+    expect(sent[0]).not.toHaveProperty("integrationReference");
     const events = await app().run(
       rows(
         Schema.Struct({ body: Schema.String }),
@@ -200,6 +204,7 @@ describe("independent durable external code delivery", () => {
     for (const event of events) {
       const decoded = Schema.decodeUnknownSync(DeliveryEvent)(JSON.parse(event.body));
       expect(decoded.type).toBe("delivery.updated");
+      expect(decoded.delivery.integrationReference).toBe("Flow.Attach:AbC-09");
       expect(event.body).not.toContain("123456");
       expect(event.body).not.toContain("+998901234567");
     }
@@ -263,8 +268,14 @@ describe("independent durable external code delivery", () => {
   });
   it("compares an attached code independently of retired provider configuration", async () => {
     if (database === undefined) throw new Error("Database missing");
-    const { body } = await prepare();
-    const attached = await Effect.runPromise(app().delivery.submitCode(submit(body.operationId)));
+    const { body } = await prepare("Flow.Restart:AbC-09");
+    await app().close();
+    runtime = await startRuntime(database.databaseUrl, configuration);
+    expect(
+      (await Effect.runPromise(app().delivery.status("demo", body.operationId, "backend"))).body,
+    ).toMatchObject({ state: "prepared", integrationReference: "Flow.Restart:AbC-09" });
+    const submission = submit(body.operationId);
+    const attached = await Effect.runPromise(app().delivery.submitCode(submission));
     await app().close();
     const h = await startRuntime(database.databaseUrl, {
       ...configuration,
@@ -304,11 +315,23 @@ describe("independent durable external code delivery", () => {
     });
     runtime = h;
     try {
+      expect(
+        (await Effect.runPromise(h.delivery.status("demo", body.operationId, "backend"))).body
+          .integrationReference,
+      ).toBe("Flow.Restart:AbC-09");
+      expect(await Effect.runPromise(h.delivery.submitCode(submission))).toEqual({
+        ...attached,
+        replayed: true,
+      });
       const repeated = await Effect.runPromise(h.delivery.submitCode(submit(body.operationId)));
       expect(repeated).toMatchObject({
         outcome: "completed",
         replayed: false,
-        body: { revision: attached.body.revision, expiresAt: body.expiresAt },
+        body: {
+          revision: attached.body.revision,
+          expiresAt: body.expiresAt,
+          integrationReference: "Flow.Restart:AbC-09",
+        },
       });
       expect(
         await Effect.runPromise(
@@ -599,15 +622,40 @@ describe("independent durable external code delivery", () => {
         recipient: { type: "phone", phoneNumber: "+998901234567" },
         purpose: "login",
         contextId: "http-flow",
+        integrationReference: "Flow.Http:AbC-09",
         policyId: "external",
         expiresAt: new Date(Date.now() + 890000).toISOString(),
       };
       expect((await post("/v1/projects/demo/delivery-operations", input, false)).status).toBe(401);
+      for (const path of [
+        "/v1/projects/demo/delivery-operations",
+        "/v1/projects/demo/delivery-operations/with-code",
+      ]) {
+        for (const integrationReference of ["", null]) {
+          const payload = path.endsWith("with-code")
+            ? { ...input, code: "123456", integrationReference }
+            : { ...input, integrationReference };
+          expect((await post(path, payload)).status).toBe(400);
+        }
+      }
       const prepared = await post("/v1/projects/demo/delivery-operations", input);
       expect(prepared.status).toBe(201);
+      const preparedBody: unknown = await prepared.json();
+      expect(preparedBody).toHaveProperty("integrationReference", input.integrationReference);
       const value = Schema.decodeUnknownSync(Schema.Struct({ operationId: Schema.String }))(
-        await prepared.json(),
+        preparedBody,
       );
+      for (const integrationReference of [input.integrationReference, "Changed", null]) {
+        expect(
+          (
+            await post(`/v1/projects/demo/delivery-operations/${value.operationId}/code`, {
+              code: "123456",
+              integrationReference,
+            })
+          ).status,
+        ).toBe(400);
+      }
+      expect(await counts()).toMatchObject({ attempts: 0, sends: 0 });
       expect(
         (
           await post(`/v1/projects/demo/delivery-operations/${value.operationId}/code`, {

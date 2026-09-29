@@ -1,6 +1,7 @@
 import { assertCatalog } from "../projects/catalog.js";
 import { requireAccess } from "../projects/store.js";
 import { AttemptSnapshot } from "../delivery/history-contracts.js";
+import { IntegrationReference } from "../delivery/input.js";
 import { Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { rows } from "../database/query.js";
@@ -262,11 +263,12 @@ export const DeliveryHistoryLive = Layer.effect(
                 id: Schema.String,
                 sequence: Schema.String,
                 state: Schema.String,
+                integration_reference: Schema.NullOr(IntegrationReference),
                 created_at: Schema.Date,
                 terminal_at: Schema.NullOr(Schema.Date),
                 history_updated_at: Schema.Date,
               }),
-              sql`SELECT id,state,created_at,terminal_at,history_updated_at,creation_sequence::text AS sequence FROM otp_router.delivery_operations WHERE project_id = ${project} AND creation_sequence > ${after}::bigint AND creation_sequence <= ${ceiling}::bigint ORDER BY creation_sequence LIMIT ${limit + 1}`,
+              sql`SELECT id,state,integration_reference,created_at,terminal_at,history_updated_at,creation_sequence::text AS sequence FROM otp_router.delivery_operations WHERE project_id = ${project} AND creation_sequence > ${after}::bigint AND creation_sequence <= ${ceiling}::bigint ORDER BY creation_sequence LIMIT ${limit + 1}`,
             );
             const page = found.slice(0, limit),
               last = page.at(-1);
@@ -275,6 +277,9 @@ export const DeliveryHistoryLive = Layer.effect(
                 operationId: operation.id,
                 projectId: project,
                 state: operation.state,
+                ...(operation.integration_reference === null
+                  ? {}
+                  : { integrationReference: operation.integration_reference }),
                 createdAt: operation.created_at.toISOString(),
                 completedAt: operation.terminal_at?.toISOString() ?? null,
                 retainUntil: retainUntil(operation.terminal_at, operation.history_updated_at),

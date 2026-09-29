@@ -74,6 +74,9 @@ const claimAuthorization = (config: RuntimeConfiguration, job: DeliveryJob) =>
         projectId: operation.project_id,
         attemptId: attempt.id,
         operationId: operation.id,
+        ...(operation.integration_reference === null
+          ? {}
+          : { integrationReference: operation.integration_reference }),
         providerInstanceId: attempt.provider_instance_id,
         channel: provider.channel,
         reason: attempt.reason,

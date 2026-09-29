@@ -22,6 +22,7 @@ const input = {
   recipient: { type: "phone" as const, phoneNumber: "+998901234567" },
   purpose: "login",
   contextId: "authorized-session-id",
+  integrationReference: "Flow.AbC_09:attempt-2",
   policyId: "login",
 };
 const idempotencyKey = randomUUID(); // Persist this key with the input before sending.
@@ -33,6 +34,8 @@ const current = await client.getChallenge(result.data.challengeId);
 Run this only on a trusted backend. Keep credentials and codes out of client applications and logs. Creation acknowledges durable work; provider acceptance does not verify a person.
 
 The client supports managed challenges, external-code delivery, history, and project administration through `createAdminClient()`. Version `0.1.0` pairs with server `0.1.0` and requires its fresh database baseline. Exported TypeScript declarations define methods and DTO fields.
+
+The optional `integrationReference` correlates upstream flows within a project. Supply opaque identifiers, never personal data or secrets; authorization services and webhook consumers receive it. Creation/preparation save it immutably, and retries must preserve its original presence and exact value. See the [correlation contract](https://github.com/IsroilovA/otp-router/blob/main/docs/api.md#integration-correlation) and coordinate updates for strict authorization/event validators.
 
 Requests and responses are validated at runtime. Results include response data and HTTP metadata; unavailable header metadata is `null`.
 

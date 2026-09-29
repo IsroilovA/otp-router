@@ -180,7 +180,7 @@ const input = (phoneNumber = "+998901234567") => ({
   expiresAt: new Date(Date.now() + 600000).toISOString(),
   code: "001234",
 });
-const request = <A>(projectId: string, body: A, key = randomUUID()) => ({
+const request = <A>(projectId: string, body: A, key: string = randomUUID()) => ({
   principalId: "backend",
   projectId,
   key,
@@ -222,13 +222,207 @@ beforeEach(async () => {
   release = Promise.withResolvers<void>();
 });
 
+it.each(["managed", "external", "prepare"] as const)(
+  "fingerprints integration reference presence and exact value on %s requests",
+  async (capability) => {
+    const { code, ...prepared } = input();
+    const { expiresAt: _expiresAt, ...managed } = prepared;
+    const invoke = (reference: { readonly integrationReference?: string }, key: string) => {
+      switch (capability) {
+        case "managed":
+          return Effect.runPromise(
+            app().router.create(request("alpha", { ...managed, ...reference }, key)),
+          );
+        case "external":
+          return Effect.runPromise(
+            app().delivery.create(request("alpha", { ...prepared, code, ...reference }, key)),
+          );
+        case "prepare":
+          return Effect.runPromise(
+            app().delivery.prepare(request("alpha", { ...prepared, ...reference }, key)),
+          );
+      }
+    };
+    const key = randomUUID();
+    const reference = { integrationReference: "Flow.Idempotency:AbC-09" };
+    const original = await invoke(reference, key);
+    expect(original.body.integrationReference).toBe(reference.integrationReference);
+    expect(await invoke(reference, key)).toEqual({ ...original, replayed: true });
+    for (const changed of [{ integrationReference: "flow.Idempotency:AbC-09" }, {}]) {
+      await expect(invoke(changed, key)).rejects.toMatchObject({ code: "idempotency_conflict" });
+    }
+    await ageAdmission(app());
+    const absentKey = randomUUID();
+    const absent = await invoke({}, absentKey);
+    expect(absent.body).not.toHaveProperty("integrationReference");
+    expect(await invoke({}, absentKey)).toEqual({ ...absent, replayed: true });
+    await expect(invoke(reference, absentKey)).rejects.toMatchObject({
+      code: "idempotency_conflict",
+    });
+    expect(
+      await app().run(
+        rows(
+          Schema.Struct({ id: Schema.String }),
+          app().pg`SELECT id FROM otp_router.delivery_operations WHERE project_id = 'alpha'`,
+        ),
+      ),
+    ).toHaveLength(2);
+  },
+);
+
+it("preserves correlation through fallback, resend and manual selection without disclosing it to providers", async () => {
+  const integrationReference = "Flow.Routing:AbC-09";
+  const created = await Effect.runPromise(
+    app().delivery.create(request("alpha", { ...input(), integrationReference })),
+  );
+  const operationId = created.body.operationId;
+  rejectPrimary = true;
+  await app().run(dispatch(app().configuration, await job()));
+  await app().run(dispatch(app().configuration, await job()));
+  rejectPrimary = false;
+  for (const action of [
+    { action: "resend" as const },
+    {
+      action: "select" as const,
+      choice: { type: "provider" as const, providerInstanceId: "primary" },
+    },
+  ]) {
+    await ageAdmission(app());
+    await app().run(
+      app()
+        .pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = ${operationId}`,
+    );
+    const result = await Effect.runPromise(
+      app().delivery.deliver({ ...request("alpha", action), operationId }),
+    );
+    expect(result.body.integrationReference).toBe(integrationReference);
+    await app().run(dispatch(app().configuration, await job()));
+  }
+  expect(requests.map((entry) => entry.reason)).toEqual([
+    "initial",
+    "fallback",
+    "resend",
+    "select",
+  ]);
+  expect(new Set(requests.map((entry) => entry.attemptId)).size).toBe(4);
+  expect(reservations.size).toBe(4);
+  expect(sent).toHaveLength(4);
+  for (const entry of requests) {
+    expect(entry).toMatchObject({ projectId: "alpha", operationId, integrationReference });
+  }
+  for (const entry of sent) {
+    expect(entry).not.toHaveProperty("integrationReference");
+    expect(entry).toMatchObject({ code: "001234", expiresAt: created.body.expiresAt });
+  }
+  const history = await Effect.runPromise(
+    app().history.attempts("alpha", operationId, {}, "backend"),
+  );
+  expect(history.attempts.map((attempt) => attempt.reason)).toEqual([
+    "initial",
+    "fallback",
+    "resend",
+    "select",
+  ]);
+  for (const attempt of history.attempts)
+    expect(attempt.integrationReference).toBe(integrationReference);
+  const operations = await Effect.runPromise(app().history.operations("alpha", {}, "backend"));
+  expect(operations.operations).toMatchObject([{ operationId, integrationReference }]);
+  const feed = await Effect.runPromise(app().history.events("alpha", { operationId }, "backend"));
+  expect(new Set(feed.events.map((event) => event.type))).toEqual(
+    new Set(["delivery.updated", "attempt.updated", "attempt.evidence"]),
+  );
+  const references = feed.events.map((event) => {
+    switch (event.type) {
+      case "challenge.updated":
+        return event.challenge.integrationReference;
+      case "delivery.updated":
+        return event.delivery.integrationReference;
+      case "attempt.updated":
+        return event.attempt.integrationReference;
+      case "attempt.evidence":
+        return event.integrationReference;
+    }
+  });
+  expect(references).toEqual(feed.events.map(() => integrationReference));
+  await Effect.runPromise(app().delivery.close({ ...request("alpha", {}), operationId }));
+  const recorded = await Effect.runPromise(
+    app().history.events("alpha", { operationId }, "backend"),
+  );
+  await app().run(
+    app()
+      .pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '2 days', history_updated_at = clock_timestamp() - interval '2 days' WHERE id = ${operationId}`,
+  );
+  await app().run(
+    cleanup({
+      ...app().configuration,
+      settings: { ...app().configuration.settings, historyRetentionDays: 1 },
+    }),
+  );
+  expect(
+    await Effect.runPromise(
+      app().delivery.status("alpha", operationId, "backend").pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure", failure: { code: "operation_not_found" } });
+  expect(
+    (await Effect.runPromise(app().history.events("alpha", { operationId }, "backend"))).events,
+  ).toEqual(recorded.events);
+});
+
+it("keeps prepared references immutable through database writes and code attachment", async () => {
+  for (const reference of [{ integrationReference: "Flow.Prepared:AbC-09" }, {}]) {
+    await ageAdmission(app());
+    const { code, ...prepared } = input();
+    const original = await Effect.runPromise(
+      app().delivery.prepare(request("alpha", { ...prepared, ...reference })),
+    );
+    const operationId = original.body.operationId;
+    for (const integrationReference of original.body.integrationReference === undefined
+      ? ["Changed"]
+      : ["Changed", null]) {
+      expect(
+        await app().run(
+          app()
+            .pg`UPDATE otp_router.delivery_operations SET integration_reference = ${integrationReference} WHERE id = ${operationId}`.pipe(
+            Effect.result,
+          ),
+        ),
+      ).toMatchObject({
+        _tag: "Failure",
+        failure: { _tag: "SqlError", reason: { _tag: "ConstraintError" } },
+      });
+    }
+    expect(
+      await Effect.runPromise(
+        app()
+          .delivery.submitCode({
+            ...request("alpha", { code, integrationReference: "Changed" }),
+            operationId,
+          })
+          .pipe(Effect.result),
+      ),
+    ).toMatchObject({ _tag: "Failure", failure: { code: "invalid_request" } });
+    expect(
+      await Effect.runPromise(app().history.attempts("alpha", operationId, {}, "backend")),
+    ).toMatchObject({ attempts: [] });
+    const attached = await Effect.runPromise(
+      app().delivery.submitCode({ ...request("alpha", { code }), operationId }),
+    );
+    expect(attached.body.integrationReference).toBe(reference.integrationReference);
+    expect(Object.hasOwn(attached.body, "integrationReference")).toBe(
+      Object.hasOwn(reference, "integrationReference"),
+    );
+  }
+});
+
 describe("project isolation and authorization", () => {
   it("isolates ownership, recipient admission, replay and HTTP grants while allowing every applicable policy", async () => {
-    const body = input(),
+    const body = { ...input(), integrationReference: "Flow.Shared:AbC-09" },
       key = randomUUID();
     const alpha = await Effect.runPromise(app().delivery.create(request("alpha", body, key)));
     const beta = await Effect.runPromise(app().delivery.create(request("beta", body, key)));
     expect(alpha.body.operationId).not.toBe(beta.body.operationId);
+    expect(alpha.body.integrationReference).toBe(body.integrationReference);
+    expect(beta.body.integrationReference).toBe(body.integrationReference);
     expect(
       (await Effect.runPromise(app().delivery.create(request("alpha", body, key)))).replayed,
     ).toBe(true);
@@ -247,7 +441,13 @@ describe("project isolation and authorization", () => {
     expect(
       await Effect.runPromise(
         app()
-          .delivery.create(request("alpha", { ...input("+998901234568"), policyId: "restricted" }))
+          .delivery.create(
+            request("alpha", {
+              ...body,
+              recipient: { type: "phone", phoneNumber: "+998901234568" },
+              policyId: "restricted",
+            }),
+          )
           .pipe(Effect.result),
       ),
     ).toMatchObject({ _tag: "Success", success: { outcome: "created" } });
@@ -307,7 +507,11 @@ describe("project isolation and authorization", () => {
   });
 
   it("reconciles a lost authorization response without reserving or sending twice", async () => {
-    await create();
+    await Effect.runPromise(
+      app().delivery.create(
+        request("alpha", { ...input(), integrationReference: "Flow.Recovery:AbC-09" }),
+      ),
+    );
     const work = await job();
     mode = "lost";
     await app().run(dispatch(app().configuration, work));
@@ -320,6 +524,8 @@ describe("project isolation and authorization", () => {
     expect(sent).toHaveLength(1);
     expect(reservations.size).toBe(1);
     expect(requests.map((entry) => entry.attemptId)).toEqual([work.attemptId, work.attemptId]);
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[0]?.integrationReference).toBe("Flow.Recovery:AbC-09");
     expect(
       await Effect.runPromise(app().history.attempt("alpha", work.attemptId, "backend")),
     ).toMatchObject({
@@ -338,6 +544,15 @@ describe("project isolation and authorization", () => {
     await app().run(dispatch(app().configuration, fallback));
     expect(sent).toHaveLength(1);
     expect(requests.map((entry) => entry.reason)).toEqual(["initial", "fallback"]);
+    for (const entry of requests) expect(entry).not.toHaveProperty("integrationReference");
+    const history = await Effect.runPromise(
+      app().history.attempts("alpha", created.body.operationId, {}, "backend"),
+    );
+    for (const entry of history.attempts) expect(entry).not.toHaveProperty("integrationReference");
+    const feed = await Effect.runPromise(
+      app().history.events("alpha", { operationId: created.body.operationId }, "backend"),
+    );
+    expect(JSON.stringify(feed.events)).not.toContain('"integrationReference"');
     expect(
       await Effect.runPromise(app().history.attempt("alpha", fallback.attemptId, "backend")),
     ).toMatchObject({ authorization: { state: "denied" }, invocation: "not_invoked" });
@@ -456,7 +671,11 @@ describe("project isolation and authorization", () => {
 
   it("keeps the original managed code verifiable while authorization is unavailable", async () => {
     const { expiresAt: _expiresAt, code: _code, ...managed } = input();
-    const created = await Effect.runPromise(app().router.create(request("alpha", managed)));
+    const created = await Effect.runPromise(
+      app().router.create(
+        request("alpha", { ...managed, integrationReference: "Flow.Verification:AbC-09" }),
+      ),
+    );
     await app().run(dispatch(app().configuration, await job()));
     const original = sent[0];
     if (original === undefined) throw new Error("Expected initial send");
@@ -509,6 +728,7 @@ describe("project isolation and authorization", () => {
       }),
     );
     expect(verified.outcome).toBe("completed");
+    expect(verified.body).toHaveProperty("integrationReference", "Flow.Verification:AbC-09");
     expect(sent).toHaveLength(1);
     expect(
       (await Effect.runPromise(app().router.status("alpha", created.body.challengeId, "backend")))
@@ -868,7 +1088,8 @@ it("ignores duplicate authorization wakeups until the dispatch recovery deadline
 });
 
 it("replays project-scoped external receipts after shorter history retention", async () => {
-  const created = await create();
+  const creation = request("alpha", { ...input(), integrationReference: "Flow.Retained:AbC-09" });
+  const created = await Effect.runPromise(app().delivery.create(creation));
   const closeRequest = { ...request("alpha", {}), operationId: created.body.operationId };
   const original = await Effect.runPromise(app().delivery.close(closeRequest));
   await app().run(
@@ -888,6 +1109,11 @@ it("replays project-scoped external receipts after shorter history retention", a
   ).toMatchObject({ _tag: "Failure", failure: { code: "operation_not_found" } });
   expect(await Effect.runPromise(app().delivery.close(closeRequest))).toEqual({
     ...original,
+    replayed: true,
+  });
+  expect(original.body.integrationReference).toBe("Flow.Retained:AbC-09");
+  expect(await Effect.runPromise(app().delivery.create(creation))).toEqual({
+    ...created,
     replayed: true,
   });
   expect(

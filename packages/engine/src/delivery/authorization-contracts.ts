@@ -1,5 +1,5 @@
 import { Context, Data, Effect, Layer, Redacted, Schema } from "effect";
-import { Identifier } from "./input.js";
+import { Identifier, IntegrationReference } from "./input.js";
 
 const Timestamp = Schema.String.check(
   Schema.makeFilter((value) => Number.isFinite(Date.parse(value))),
@@ -12,6 +12,7 @@ const Identity = {
 export const AuthorizationRequest = Schema.Struct({
   ...Identity,
   operationId: Schema.String.check(Schema.isUUID()),
+  integrationReference: Schema.optionalKey(IntegrationReference),
   providerInstanceId: Identifier,
   channel: Identifier,
   reason: Schema.Literals(["initial", "fallback", "resend", "next", "select"]),

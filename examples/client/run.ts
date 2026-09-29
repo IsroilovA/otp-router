@@ -13,6 +13,7 @@ const input = {
   purpose: "login",
   policyId: "login",
   contextId: randomUUID(),
+  integrationReference: `Flow.${randomUUID()}`,
 };
 // Persist this pair before sending in an application. Retry only this intended mutation with it.
 const idempotencyKey = randomUUID();

@@ -98,6 +98,7 @@ const program = Effect.gen(function* () {
       recipient: { type: "phone", phoneNumber: "+998901234567" },
       purpose: "login",
       contextId: randomUUID(),
+      integrationReference: `Flow.${randomUUID()}`,
       policyId: "login",
       expiresAt: new Date(Date.now() + 890000).toISOString(),
     },
@@ -115,7 +116,9 @@ const program = Effect.gen(function* () {
   for (let attempt = 0; attempt < 30; attempt++) {
     const status = yield* delivery.status("demo", operationId, "backend");
     if (status.body.state === "accepted") {
-      yield* Effect.sync(() => process.stdout.write(`${JSON.stringify(status.body)}\n`));
+      yield* Effect.sync(() =>
+        process.stdout.write(`Operation ${operationId}: ${status.body.state}\n`),
+      );
       yield* delivery.close({
         principalId: "backend",
         operationId,

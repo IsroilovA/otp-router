@@ -3,6 +3,13 @@ export const Identifier = Schema.String.pipe(
   Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/)),
 );
 export const Opaque = Schema.String.pipe(Schema.check(Schema.isPattern(/^[!-~]{1,128}$/)));
+// The end assertion also rejects a trailing newline, which JavaScript's $ can accept.
+export const IntegrationReference = Schema.String.check(
+  Schema.isPattern(/^[A-Za-z0-9._:-]{1,128}(?![\s\S])/u),
+).annotate({
+  description:
+    "Immutable caller correlation within a project. Use an opaque identifier, never personal data or secrets. Disclosed to send authorization services and webhook consumers.",
+});
 export const Locale = Schema.String.pipe(Schema.check(Schema.isPattern(/^[A-Za-z0-9-]{1,64}$/)));
 export const Code = Schema.String.pipe(Schema.check(Schema.isPattern(/^[0-9]{6,8}$/)));
 export const Primitive = Schema.Union([Schema.String, Schema.Finite, Schema.Boolean, Schema.Null]);

@@ -53,6 +53,7 @@ export const PublishedAttempt = Schema.Struct({
   ...Attempt.fields,
   public_snapshot: Schema.NullOr(AttemptSnapshot),
   project_id: Schema.String,
+  integration_reference: Operation.fields.integration_reference,
   channel: Schema.String,
 });
 export const findAttempt = (id: string) =>
@@ -61,7 +62,7 @@ export const findAttempt = (id: string) =>
     return yield* single(
       PublishedAttempt,
       sql`
-    SELECT a.*,r.provider_instance_id,r.channel,o.project_id,
+    SELECT a.*,r.provider_instance_id,r.channel,o.project_id,o.integration_reference,
       o.expires_at - (r.send_timeout_ms + r.min_delivery_window_ms) * interval '1 millisecond' AS dispatch_deadline
     FROM otp_router.delivery_attempts a
     JOIN otp_router.operation_route_steps r ON (r.operation_id,r.position) = (a.operation_id,a.route_position)
