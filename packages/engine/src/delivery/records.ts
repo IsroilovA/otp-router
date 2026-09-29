@@ -21,24 +21,20 @@ export const SavedProvider = Schema.Struct({
   sendTimeoutMs: Schema.Number,
   minDeliveryWindowMs: Schema.Number,
   compatibilityRevision: Schema.String,
+  manualSelectionAllowed: Schema.Boolean,
 });
 export type SavedProvider = typeof SavedProvider.Type;
 export const PolicySnapshot = Schema.Struct({
-  version: Schema.Literal(1),
-  policyId: Schema.String,
   authorizationRequired: Schema.Boolean,
   maxSends: Schema.Int,
   resendCooldownSeconds: Schema.Int,
   manualSelectionEnabled: Schema.Boolean,
-  manualProviderIds: Schema.Array(Schema.String),
-  requestedLocale: Schema.String,
   providers: Schema.Array(SavedProvider).pipe(Schema.check(Schema.isMinLength(1))),
 });
 export type PolicySnapshot = typeof PolicySnapshot.Type;
 export const Attempt = Schema.Struct({
   revision: Schema.Int,
   dispatch_deadline: Schema.Date,
-  authorization_required: Schema.Boolean,
   authorization_state: Schema.Literals([
     "not_required",
     "pending",
@@ -52,7 +48,6 @@ export const Attempt = Schema.Struct({
   authorization_lease_until: Schema.NullOr(Schema.Date),
   approved_at: Schema.NullOr(Schema.Date),
   approval_expires_at: Schema.NullOr(Schema.Date),
-  reservation_reference: Schema.NullOr(Schema.String),
   invocation: Schema.Literals(["not_started", "committed", "not_invoked"]),
   id: Schema.String,
   operation_id: Schema.String,
@@ -60,15 +55,13 @@ export const Attempt = Schema.Struct({
   route_position: Schema.Int,
   routing_revision: Schema.Int,
   reason: Schema.Literals(["initial", "fallback", "resend", "next", "select"]),
-  due_at: Schema.Date,
+  created_at: Schema.Date,
   state: AttemptState,
-  reserved_at: Schema.NullOr(Schema.Date),
+  committed_at: Schema.NullOr(Schema.Date),
   recovery_at: Schema.NullOr(Schema.Date),
-  completed_at: Schema.NullOr(Schema.Date),
   acceptance: Schema.NullOr(Schema.Literals(["accepted", "not_accepted", "unknown"])),
   failure_category: Schema.NullOr(Schema.String),
   diagnostic_code: Schema.NullOr(Schema.String),
-  retry_at: Schema.NullOr(Schema.Date),
 });
 export type Attempt = typeof Attempt.Type;
 export const Operation = Schema.Struct({

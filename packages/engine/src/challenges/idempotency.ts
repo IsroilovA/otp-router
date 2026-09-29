@@ -1,10 +1,11 @@
+import { readReceipt, saveReceipt } from "../requests/receipts.js";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
-import { rows } from "../database/query.js";
+import { single } from "../database/query.js";
 import { databaseTime } from "../database/transaction.js";
-import { OperationOutcome, ResultBody, type OperationResult } from "./contracts.js";
+import { type OperationResult } from "./contracts.js";
 import { DomainError } from "../errors.js";
-import { Digest, digest, equalDigest, operationIdentity, type CryptoConfig } from "../crypto.js";
+import { digest, equalDigest, operationIdentity, type CryptoConfig } from "../crypto.js";
 import { expire, findChallenge } from "./store.js";
 
 export interface Operation {
@@ -30,14 +31,6 @@ export const operation = (
   }),
   input: request.input,
   ...(request.challengeId === undefined ? {} : { challengeId: request.challengeId }),
-});
-const RecordSchema = Schema.Struct({
-  identity: Schema.String,
-  fingerprint: Digest,
-  code_fingerprint: Schema.NullOr(Digest),
-  challenge_id: Schema.String,
-  response: ResultBody,
-  outcome: OperationOutcome,
 });
 export const lockOperation = (op: Operation) =>
   Effect.gen(function* () {
@@ -67,21 +60,14 @@ const codeInput = (config: CryptoConfig, op: Operation) => [
 ];
 export const replay = <S extends Schema.Top>(config: CryptoConfig, op: Operation, schema: S) =>
   Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient;
-    let record = (yield* rows(
-      RecordSchema,
-      sql`SELECT * FROM otp_router.idempotency_records WHERE identity = ${op.identity}`,
-    ))[0];
+    let record = yield* readReceipt(op.identity, "managed");
     if (record === undefined) return undefined;
     if (op.challengeId !== undefined) {
       const maybe = yield* findChallenge(op.challengeId, true).pipe(
         Effect.catchTag("DomainError", () => Effect.succeed(undefined)),
       );
       if (maybe !== undefined) yield* expire(maybe, yield* databaseTime);
-      record = (yield* rows(
-        RecordSchema,
-        sql`SELECT * FROM otp_router.idempotency_records WHERE identity = ${op.identity}`,
-      ))[0];
+      record = yield* readReceipt(op.identity, "managed");
       if (record === undefined) return undefined;
     }
     const nonCode = digest(
@@ -96,11 +82,7 @@ export const replay = <S extends Schema.Top>(config: CryptoConfig, op: Operation
       if (!equalDigest(code.value, record.code_fingerprint.value))
         return yield* Effect.fail(new DomainError({ code: "idempotency_conflict" }));
     }
-    return yield* Schema.decodeUnknownEffect(schema)({
-      outcome: record.outcome,
-      body: record.response,
-      replayed: true,
-    });
+    return yield* Schema.decodeUnknownEffect(schema)({ ...record.response, replayed: true });
   });
 export const saveResult = <A extends OperationResult>(
   config: CryptoConfig,
@@ -114,10 +96,21 @@ export const saveResult = <A extends OperationResult>(
 ) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
-    const codeFingerprint =
-      op.code !== undefined && result.active
-        ? sql.json(digest(config.fingerprint, codeInput(config, op)))
-        : null;
-    yield* sql`INSERT INTO otp_router.idempotency_records(identity,fingerprint,code_fingerprint,challenge_id,response,outcome,created_at,retain_until) VALUES (${op.identity},${sql.json(digest(config.fingerprint, fingerprintInput(config, op)))},${codeFingerprint},${result.challengeId},${sql.json(result.response.body)},${result.response.outcome},${result.time},${new Date(result.time.getTime() + 86400000)})`;
+    const owner = yield* single(
+      Schema.Struct({ operation_id: Schema.String }),
+      sql`SELECT operation_id FROM otp_router.challenges WHERE id = ${result.challengeId}`,
+    );
+    yield* saveReceipt({
+      identity: op.identity,
+      capability: "managed",
+      operationId: owner.operation_id,
+      fingerprint: digest(config.fingerprint, fingerprintInput(config, op)),
+      codeFingerprint:
+        op.code !== undefined && result.active
+          ? digest(config.fingerprint, codeInput(config, op))
+          : null,
+      response: { outcome: result.response.outcome, body: result.response.body },
+      time: result.time,
+    });
     return result.response;
   });

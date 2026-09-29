@@ -321,13 +321,16 @@ describe("database compatibility and maintenance", () => {
           JOIN otp_router.challenges c ON c.operation_id = o.id
           WHERE c.id::text = ${sourceChallengeId}
         ), operations AS (
-          INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,recipient_token,policy_id,snapshot,state,created_at,expires_at,initial_position,next_user_send_at)
-          SELECT gen_random_uuid(),project_id,'challenge',purpose,${contextPrefix} || value::text,recipient_token,policy_id,snapshot,'prepared',clock_timestamp()-interval '36 days',clock_timestamp()-interval '36 days'+interval '1 minute',0,clock_timestamp()
+          INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,recipient_token,policy_id,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,state,created_at,expires_at,initial_position,next_user_send_at)
+          SELECT gen_random_uuid(),project_id,'challenge',purpose,${contextPrefix} || value::text,recipient_token,policy_id,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,'prepared',clock_timestamp()-interval '36 days',clock_timestamp()-interval '36 days'+interval '1 minute',0,clock_timestamp()
           FROM source CROSS JOIN generate_series(1,205) AS series(value)
           RETURNING id,context_id
+        ), routes AS (
+          INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,compatibility_revision,manual_selection_allowed)
+          SELECT o.id,r.position,r.provider_instance_id,r.label,r.plugin_id,r.contract_version,r.channel,r.resolved_locale,r.template,r.send_timeout_ms,r.min_delivery_window_ms,r.compatibility_revision,r.manual_selection_allowed FROM operations o CROSS JOIN otp_router.operation_route_steps r WHERE r.operation_id = (SELECT id FROM source)
         ), challenges AS (
-          INSERT INTO otp_router.challenges(id,operation_id,purpose,context_id,code_length,max_incorrect_guesses,verification_state,created_at)
-          SELECT o.id,o.id,c.purpose,o.context_id,c.code_length,c.max_incorrect_guesses,'active',c.created_at
+          INSERT INTO otp_router.challenges(id,operation_id,code_length,max_incorrect_guesses,verification_state)
+          SELECT o.id,o.id,c.code_length,c.max_incorrect_guesses,'active'
           FROM operations o CROSS JOIN otp_router.challenges c WHERE c.id::text = ${sourceChallengeId}
           RETURNING id
         )
@@ -337,11 +340,11 @@ describe("database compatibility and maintenance", () => {
     );
     await harness.run(
       harness.pg`
-        INSERT INTO otp_router.quota_events(identity, kind, event_id, occurred_at)
-        SELECT ${quotaIdentity}, 'send', gen_random_uuid(), clock_timestamp() - interval '25 hours'
-        FROM generate_series(1, 1005)
-        UNION ALL
-        SELECT ${quotaIdentity}, 'send', gen_random_uuid(), clock_timestamp()
+        WITH events AS (
+          INSERT INTO otp_router.quota_events(kind,event_id,occurred_at)
+          SELECT 'send',gen_random_uuid(),clock_timestamp() - interval '25 hours' FROM generate_series(1,1005)
+          UNION ALL SELECT 'send',gen_random_uuid(),clock_timestamp() RETURNING event_id,kind
+        ) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'provider',${quotaIdentity},event_id,kind FROM events
       `,
     );
 
@@ -357,7 +360,7 @@ describe("database compatibility and maintenance", () => {
                 WHERE verification_state = 'active' AND (SELECT expires_at FROM otp_router.delivery_operations WHERE id=challenges.operation_id) <= clock_timestamp()
               )::integer AS active_expired,
               count(*) FILTER (
-                WHERE verification_state = 'expired' AND context_id LIKE ${`${contextPrefix}%`}
+                WHERE verification_state = 'expired' AND (SELECT context_id FROM otp_router.delivery_operations WHERE id = challenges.operation_id) LIKE ${`${contextPrefix}%`}
               )::integer AS expired_clones
             FROM otp_router.challenges
           `,
@@ -372,7 +375,8 @@ describe("database compatibility and maintenance", () => {
             SELECT count(*)::integer AS count
             FROM otp_router.challenge_secrets s
             JOIN otp_router.challenges c ON c.id = s.challenge_id
-            WHERE c.context_id LIKE ${`${contextPrefix}%`}
+            JOIN otp_router.delivery_operations o ON o.id = c.operation_id
+            WHERE o.context_id LIKE ${`${contextPrefix}%`}
           `,
         ),
       ),
@@ -389,8 +393,8 @@ describe("database compatibility and maintenance", () => {
               count(*) FILTER (
                 WHERE occurred_at > clock_timestamp() - interval '24 hours'
               )::integer AS live_count
-            FROM otp_router.quota_events
-            WHERE identity = ${quotaIdentity}
+            FROM otp_router.quota_events e JOIN otp_router.quota_allocations a ON (a.event_id,a.kind) = (e.event_id,e.kind)
+            WHERE a.scope_id = ${quotaIdentity}
           `,
         ),
       ),
@@ -403,7 +407,7 @@ describe("database compatibility and maintenance", () => {
     const first = await create(operationKey);
     const firstChallengeId = challengeIdFrom(first);
     await harness.run(
-      harness.pg`UPDATE otp_router.idempotency_records SET created_at = clock_timestamp() - interval '25 hours', retain_until = clock_timestamp() - interval '1 hour' WHERE challenge_id::text = ${firstChallengeId}`,
+      harness.pg`UPDATE otp_router.request_receipts SET created_at = clock_timestamp() - interval '25 hours', retain_until = clock_timestamp() - interval '1 hour' WHERE operation_id = (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId})`,
     );
 
     await harness.run(cleanup(harness.configuration));
@@ -414,13 +418,13 @@ describe("database compatibility and maintenance", () => {
       await harness.run(
         rows(
           Schema.Struct({ count: Schema.Int }),
-          harness.pg`SELECT count(*)::integer AS count FROM otp_router.idempotency_records WHERE challenge_id::text = ${firstChallengeId}`,
+          harness.pg`SELECT count(*)::integer AS count FROM otp_router.request_receipts WHERE operation_id = (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId})`,
         ),
       ),
     ).toEqual([{ count: 1 }]);
 
     await harness.run(
-      harness.pg`UPDATE otp_router.delivery_attempts SET state = 'dispatching', recovery_at = clock_timestamp() + interval '5 minutes', reserved_at = clock_timestamp(), acceptance = 'unknown' WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'pending'`,
+      harness.pg`WITH dispatch AS (UPDATE otp_router.attempt_dispatches SET invocation = 'committed', recovery_at = clock_timestamp() + interval '5 minutes', committed_at = clock_timestamp() WHERE attempt_id IN (SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'pending')) UPDATE otp_router.delivery_attempts SET state = 'dispatching', acceptance = 'unknown' WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'pending'`,
     );
     await Effect.runPromise(
       harness.router.cancel({
@@ -435,7 +439,7 @@ describe("database compatibility and maintenance", () => {
       harness.pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '31 days', history_updated_at = clock_timestamp() - interval '31 days' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId})`,
     );
     await harness.run(
-      harness.pg`UPDATE otp_router.idempotency_records SET created_at = clock_timestamp() - interval '25 hours', retain_until = clock_timestamp() - interval '1 hour' WHERE challenge_id::text = ${firstChallengeId}`,
+      harness.pg`UPDATE otp_router.request_receipts SET created_at = clock_timestamp() - interval '25 hours', retain_until = clock_timestamp() - interval '1 hour' WHERE operation_id = (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId})`,
     );
 
     await harness.run(cleanup(harness.configuration));
@@ -451,13 +455,13 @@ describe("database compatibility and maintenance", () => {
       await harness.run(
         rows(
           Schema.Struct({ count: Schema.Int }),
-          harness.pg`SELECT count(*)::integer AS count FROM otp_router.idempotency_records WHERE challenge_id::text = ${firstChallengeId}`,
+          harness.pg`SELECT count(*)::integer AS count FROM otp_router.request_receipts WHERE operation_id = (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId})`,
         ),
       ),
     ).toEqual([{ count: 2 }]);
 
     await harness.run(
-      harness.pg`UPDATE otp_router.delivery_attempts SET state = 'failed', acceptance = 'not_accepted', completed_at = clock_timestamp() WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'dispatching'`,
+      harness.pg`UPDATE otp_router.delivery_attempts SET state = 'failed', acceptance = 'not_accepted' WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'dispatching'`,
     );
     // Resolving the dispatch is new evidence and starts a fresh history window.
     await harness.run(
@@ -468,7 +472,7 @@ describe("database compatibility and maintenance", () => {
       await harness.run(
         rows(
           Schema.Struct({ challenges: Schema.Int, operations: Schema.Int }),
-          harness.pg`SELECT (SELECT count(*) FROM otp_router.challenges WHERE id::text = ${firstChallengeId})::integer AS challenges, (SELECT count(*) FROM otp_router.idempotency_records WHERE challenge_id::text = ${firstChallengeId})::integer AS operations`,
+          harness.pg`SELECT (SELECT count(*) FROM otp_router.challenges WHERE id::text = ${firstChallengeId})::integer AS challenges, (SELECT count(*) FROM otp_router.request_receipts WHERE operation_id = (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}))::integer AS operations`,
         ),
       ),
     ).toEqual([{ challenges: 0, operations: 0 }]);
@@ -507,7 +511,7 @@ describe("database compatibility and maintenance", () => {
       new Date(now.getTime() - 5 * 60_000),
     ]) {
       await harness.run(
-        harness.pg`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES ('deployment','send',${randomUUID()},${occurredAt})`,
+        harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${randomUUID()},${occurredAt}) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'deployment','',event_id,kind FROM event`,
       );
     }
     const limits = sendLimits(harness.configuration.settings, "unused-recipient", "fake", "demo");

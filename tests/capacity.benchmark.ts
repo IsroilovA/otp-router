@@ -376,7 +376,7 @@ interface DatabaseOperationalMetrics {
 
 const databaseOperationalMetrics = async (): Promise<DatabaseOperationalMetrics> => {
   const result = await psql(
-    "SELECT (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()), (SELECT count(*) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp()), (SELECT COALESCE(max(extract(epoch FROM (clock_timestamp()-expires_at))),0) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp())",
+    "SELECT (SELECT count(*) FROM pg_stat_activity WHERE datname=current_database()), (SELECT count(*) FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp()), (SELECT COALESCE(max(extract(epoch FROM (clock_timestamp()-expires_at))),0) FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp())",
   );
   const [connections, cleanupOverdueCount, cleanupMaxOverdueSeconds] = result
     .split("|")
@@ -596,7 +596,7 @@ const waitForDrain = async (): Promise<void> =>
 
 const queueDelayPercentiles = async (): Promise<ReadonlyArray<number>> => {
   const result = await psql(
-    "SELECT percentile_cont(ARRAY[0.5,0.95,0.99]) WITHIN GROUP (ORDER BY extract(epoch FROM (reserved_at-due_at))*1000) FROM otp_router.delivery_attempts WHERE reserved_at IS NOT NULL",
+    "SELECT percentile_cont(ARRAY[0.5,0.95,0.99]) WITHIN GROUP (ORDER BY extract(epoch FROM (d.committed_at-a.created_at))*1000) FROM otp_router.attempt_dispatches d JOIN otp_router.delivery_attempts a ON a.id = d.attempt_id WHERE d.committed_at IS NOT NULL",
   );
   return result.replace(/[{}]/gu, "").split(",").map(Number);
 };
@@ -620,7 +620,7 @@ const cleanupRecoveryOnly = async (args: ReadonlyArray<string>): Promise<Cleanup
   await waitForDrain();
   const databaseCohortIds = (
     await psql(
-      "SELECT id FROM otp_router.challenges WHERE context_id LIKE 'cleanup-cohort-%' ORDER BY id",
+      "SELECT c.id FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE o.context_id LIKE 'cleanup-cohort-%' ORDER BY c.id",
     )
   )
     .split("\n")
@@ -643,7 +643,7 @@ const cleanupRecoveryOnly = async (args: ReadonlyArray<string>): Promise<Cleanup
     async () =>
       Number(
         await psql(
-          "SELECT count(*) FROM otp_router.challenges WHERE context_id LIKE 'cleanup-cohort-%' AND verification_state<>'expired'",
+          "SELECT count(*) FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE o.context_id LIKE 'cleanup-cohort-%' AND verification_state<>'expired'",
         ),
       ) === 0,
     90_000,
@@ -651,12 +651,12 @@ const cleanupRecoveryOnly = async (args: ReadonlyArray<string>): Promise<Cleanup
   const cleanupRecoveryMs = performance.now() - cleanupRestarted;
   const remainingUnexpired = Number(
     await psql(
-      "SELECT count(*) FROM otp_router.challenges WHERE context_id LIKE 'cleanup-cohort-%' AND verification_state<>'expired'",
+      "SELECT count(*) FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE o.context_id LIKE 'cleanup-cohort-%' AND verification_state<>'expired'",
     ),
   );
   const remainingSecrets = Number(
     await psql(
-      "SELECT count(*) FROM otp_router.challenge_secrets s JOIN otp_router.challenges c ON c.id=s.challenge_id WHERE c.context_id LIKE 'cleanup-cohort-%'",
+      "SELECT count(*) FROM otp_router.challenge_secrets s JOIN otp_router.challenges c ON c.id=s.challenge_id JOIN otp_router.delivery_operations o ON o.id=c.operation_id WHERE o.context_id LIKE 'cleanup-cohort-%'",
     ),
   );
   expect(databaseCohortIds).toHaveLength(CLEANUP_BACKLOG_SIZE);
@@ -743,7 +743,7 @@ describe("local capacity benchmark", () => {
     const baselineBacklog = await queuedCount();
     const forcedExpired = Number(
       await psql(
-        "WITH forced AS (UPDATE otp_router.delivery_operations SET created_at=clock_timestamp()-interval '3 minutes', expires_at=clock_timestamp()-interval '2 minutes' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE verification_state='active' ORDER BY created_at DESC LIMIT 250) RETURNING 1) SELECT count(*) FROM forced",
+        "WITH forced AS (UPDATE otp_router.delivery_operations SET created_at=clock_timestamp()-interval '3 minutes', expires_at=clock_timestamp()-interval '2 minutes' WHERE id IN (SELECT c.operation_id FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE c.verification_state='active' ORDER BY o.created_at DESC LIMIT 250) RETURNING 1) SELECT count(*) FROM forced",
       ),
     );
     expect(forcedExpired).toBe(CLEANUP_BACKLOG_SIZE);
@@ -765,7 +765,7 @@ describe("local capacity benchmark", () => {
       async () =>
         Number(
           await psql(
-            "SELECT count(*) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp()-interval '90 seconds'",
+            "SELECT count(*) FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE verification_state='active' AND expires_at<clock_timestamp()-interval '90 seconds'",
           ),
         ) === 0,
       90_000,
@@ -844,7 +844,7 @@ describe("local capacity benchmark", () => {
     );
     const quotaExceeded = Number(
       await psql(
-        "SELECT count(*) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE send_count > 1",
+        "SELECT count(*) FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE send_count > 1",
       ),
     );
     const postgresVersion = await psql("SHOW server_version");

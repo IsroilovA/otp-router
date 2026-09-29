@@ -51,7 +51,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
         const id = randomUUID(),
           code = generateCode(managed.codeLength);
         const sql = yield* PgClient.PgClient;
-        yield* sql`INSERT INTO otp_router.challenges(id,operation_id,purpose,context_id,code_length,max_incorrect_guesses,verification_state,created_at) VALUES (${id},${delivery.id},${input.purpose},${input.contextId},${managed.codeLength},${managed.maxIncorrectGuesses},'active',${time})`;
+        yield* sql`INSERT INTO otp_router.challenges(id,operation_id,code_length,max_incorrect_guesses,verification_state) VALUES (${id},${delivery.id},${managed.codeLength},${managed.maxIncorrectGuesses},'active')`;
         yield* sql`INSERT INTO otp_router.challenge_secrets(challenge_id,verifier) VALUES (${id},${sql.json(digest(verification, verifierInput(config.settings.crypto, { id, projectId: request.projectId, purpose: input.purpose, contextId: input.contextId }, code)))})`;
         yield* attachCode(config, delivery, code);
         const body = yield* snapshot(config, yield* findChallenge(id), time);

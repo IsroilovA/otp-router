@@ -69,7 +69,7 @@ export const nextProvider = (available: readonly ProviderAvailability[], positio
   chooseAvailable(available.filter((option) => option.position > position));
 
 export const resolveChoice = (
-  snapshot: Pick<Operation["snapshot"], "manualSelectionEnabled" | "manualProviderIds">,
+  snapshot: Pick<Operation["snapshot"], "manualSelectionEnabled">,
   choice: Choice | undefined,
   available: readonly ProviderAvailability[],
 ) => {
@@ -80,7 +80,7 @@ export const resolveChoice = (
       ? available
       : available.filter(
           ({ provider }) =>
-            snapshot.manualProviderIds.includes(provider.providerInstanceId) &&
+            provider.manualSelectionAllowed &&
             (choice.type === "channel"
               ? provider.channel === choice.channel
               : provider.providerInstanceId === choice.providerInstanceId),

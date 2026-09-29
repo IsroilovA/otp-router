@@ -462,7 +462,7 @@ it("retries immutable signed events independently, recovers missing jobs, retain
   expect(received[1]?.headers["webhook-signature"]).not.toBe(first.headers["webhook-signature"]);
   expect(received[1]?.headers["webhook-id"]).toBe(id);
   await harness.run(
-    harness.pg`UPDATE otp_router.notifications SET state = 'delivering', attempts = 12, lease_until = clock_timestamp() WHERE event_id = ${id}`,
+    harness.pg`UPDATE otp_router.notifications SET state = 'delivering', delivered_at = NULL, attempts = 12, lease_until = clock_timestamp() WHERE event_id = ${id}`,
   );
   await harness.run(recoverNotifications);
   expect(

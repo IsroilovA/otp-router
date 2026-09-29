@@ -1,7 +1,7 @@
 import { admissionLimit, quotaRetryAt } from "./quotas.js";
 import { SqlClient } from "effect/unstable/sql";
 import { rows } from "../database/query.js";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import {
   availableProviders,
@@ -12,7 +12,7 @@ import {
   type ProviderAvailability,
 } from "./eligibility.js";
 import type { Snapshot } from "./contracts.js";
-import { Attempt, type Operation } from "./records.js";
+import type { Attempt, Operation } from "./records.js";
 import { findAttempt } from "./store.js";
 
 type Action = Snapshot["actions"]["resend"];
@@ -42,9 +42,7 @@ const deliveryActions = (
 ) => {
   const { options, stopped, time } = availability;
   const common = stopped ? deny("delivery_unavailable") : activeAction(operation);
-  const manual = options.filter((option) =>
-    operation.snapshot.manualProviderIds.includes(option.provider.providerInstanceId),
-  );
+  const manual = options.filter((option) => option.provider.manualSelectionAllowed);
   const choices = manual.map(({ provider }) => ({
     providerInstanceId: provider.providerInstanceId,
     channel: provider.channel,
@@ -88,8 +86,8 @@ export const buildSnapshot = (config: RuntimeConfiguration, operation: Operation
     });
     const sql = yield* SqlClient.SqlClient;
     const evidence = yield* rows(
-      Attempt,
-      sql`SELECT * FROM otp_router.delivery_attempts WHERE operation_id = ${operation.id} AND state IN ('accepted','delivered','uncertain') ORDER BY reserved_at DESC NULLS LAST,id`,
+      Schema.Struct({ state: Schema.String, route_position: Schema.Int }),
+      sql`SELECT a.state,a.route_position FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = ${operation.id} AND a.state IN ('accepted','delivered','uncertain') ORDER BY d.committed_at DESC NULLS LAST,a.id`,
     );
     const accepted = evidence.find(
       (entry) => entry.state === "accepted" || entry.state === "delivered",

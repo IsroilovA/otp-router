@@ -60,7 +60,11 @@ export const admitOperation = (
     );
     const id = randomUUID();
     const sql = yield* PgClient.PgClient;
-    yield* sql`INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,recipient_token,policy_id,snapshot,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.projectId},${prepared.owner},${input.purpose},${input.contextId},${token},${input.policyId},${sql.json(prepared.saved)},'prepared',${time},${deadline},${target.position},${time})`;
+    yield* sql`INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,recipient_token,policy_id,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.projectId},${prepared.owner},${input.purpose},${input.contextId},${token},${input.policyId},${prepared.saved.authorizationRequired},${prepared.saved.maxSends},${prepared.saved.resendCooldownSeconds},${prepared.saved.manualSelectionEnabled},'prepared',${time},${deadline},${target.position},${time})`;
+    for (const [position, provider] of prepared.saved.providers.entries()) {
+      yield* sql`INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,compatibility_revision,manual_selection_allowed)
+        VALUES (${id},${position},${provider.providerInstanceId},${provider.label},${provider.pluginId},${provider.contractVersion},${provider.channel},${provider.resolvedLocale},${JSON.stringify(provider.template)}::jsonb,${provider.sendTimeoutMs},${provider.minDeliveryWindowMs},${provider.compatibilityRevision},${provider.manualSelectionAllowed})`;
+    }
     yield* sql`INSERT INTO otp_router.delivery_secrets(operation_id,phone) VALUES (${id},${sql.json(encrypt(config.settings.crypto, { projectId: prepared.projectId, operationId: id }, "phone", input.recipient.phoneNumber))})`;
     yield* countQuotas(limits, id, time);
     yield* enqueueExpiry(id, deadline);

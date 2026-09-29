@@ -20,8 +20,8 @@ const recoverBatch = (config: RuntimeConfiguration) =>
         Schema.Struct({ id: Schema.String }),
         sql`
       SELECT id FROM otp_router.delivery_operations o
-      WHERE EXISTS (SELECT 1 FROM otp_router.delivery_attempts a
-        WHERE a.operation_id = o.id AND a.state = 'dispatching' AND a.recovery_at <= clock_timestamp())
+      WHERE EXISTS (SELECT 1 FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id
+        WHERE a.operation_id = o.id AND a.state = 'dispatching' AND d.recovery_at <= clock_timestamp())
       LIMIT 100 FOR UPDATE SKIP LOCKED
     `,
       );
@@ -31,8 +31,8 @@ const recoverBatch = (config: RuntimeConfiguration) =>
         const attempts = yield* transitionAttempts(
           sql`
         UPDATE otp_router.delivery_attempts SET state = 'uncertain', acceptance = 'unknown',
-          diagnostic_code = 'worker_recovery', completed_at = ${time}
-        WHERE operation_id = ${id} AND state = 'dispatching' AND recovery_at <= ${time}
+          diagnostic_code = 'worker_recovery'
+        WHERE operation_id = ${id} AND state = 'dispatching' AND id IN (SELECT attempt_id FROM otp_router.attempt_dispatches WHERE recovery_at <= ${time})
         RETURNING *
       `,
         );

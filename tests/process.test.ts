@@ -497,7 +497,7 @@ describe("built process", () => {
     ).toContain("active");
     // The expired queue claim alone does not establish that an invocation has timed out.
     await psql(
-      `UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND state = 'dispatching'`,
+      `UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = '${attemptId}' AND invocation = 'committed'`,
     );
     await superviseExpiredDeliveryJobs();
     expect(
@@ -597,12 +597,12 @@ describe("built process", () => {
     ).toBe("pending");
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("0");
     expect(
       await psql(
-        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+        `SELECT count(*) FROM otp_router.quota_allocations WHERE kind = 'send' AND event_id = '${attemptId}'`,
       ),
     ).toBe("0");
     await psql(
@@ -624,12 +624,12 @@ describe("built process", () => {
     ).toHaveLength(1);
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
       await psql(
-        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+        `SELECT count(*) FROM otp_router.quota_allocations WHERE kind = 'send' AND event_id = '${attemptId}'`,
       ),
     ).toBe("3");
   }, 30_000);
@@ -671,7 +671,7 @@ describe("built process", () => {
     );
     // Advancing queue time also advances the independent dispatch recovery lease.
     await psql(
-      `UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND state = 'dispatching'`,
+      `UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = '${attemptId}' AND invocation = 'committed'`,
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
@@ -689,12 +689,12 @@ describe("built process", () => {
     ).toHaveLength(0);
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
       await psql(
-        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+        `SELECT count(*) FROM otp_router.quota_allocations WHERE kind = 'send' AND event_id = '${attemptId}'`,
       ),
     ).toBe("3");
   }, 30_000);
@@ -771,7 +771,7 @@ describe("built process", () => {
     );
     // Advancing queue time also advances the independent dispatch recovery lease.
     await psql(
-      `UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND state = 'dispatching'`,
+      `UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = '${attemptId}' AND invocation = 'committed'`,
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
@@ -789,12 +789,12 @@ describe("built process", () => {
     ).toHaveLength(1);
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
       await psql(
-        `SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send' AND event_id = '${attemptId}'`,
+        `SELECT count(*) FROM otp_router.quota_allocations WHERE kind = 'send' AND event_id = '${attemptId}'`,
       ),
     ).toBe("3");
   }, 30_000);
@@ -839,7 +839,7 @@ describe("built process", () => {
       });
       expect(
         await psql(
-          "SELECT count(*) FROM otp_router.challenges WHERE context_id = 'multiprocess-flow'",
+          "SELECT count(*) FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id WHERE o.context_id = 'multiprocess-flow'",
         ),
       ).toBe("1");
       const results = await Promise.all(

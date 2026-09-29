@@ -24,7 +24,7 @@ import { findProjectChallenge } from "./store.js";
 import type { Challenge } from "./records.js";
 
 const checkBinding = (challenge: Challenge, input: VerifyInput) =>
-  challenge.purpose === input.purpose && challenge.context_id === input.contextId
+  challenge.delivery.purpose === input.purpose && challenge.delivery.context_id === input.contextId
     ? Effect.void
     : Effect.fail(new DomainError({ code: "challenge_not_found" }));
 export const verifyChallenge = (
@@ -80,8 +80,8 @@ export const verifyChallenge = (
           {
             id: challenge.id,
             projectId: challenge.delivery.project_id,
-            purpose: challenge.purpose,
-            contextId: challenge.context_id,
+            purpose: challenge.delivery.purpose,
+            contextId: challenge.delivery.context_id,
           },
           request.input.code,
         ),
@@ -90,7 +90,7 @@ export const verifyChallenge = (
       const sql = yield* PgClient.PgClient;
       if (equalDigest(candidate.value, secret.verifier.value)) {
         const verificationId = randomUUID();
-        yield* sql`UPDATE otp_router.challenges SET verification_state = 'verified', verification_id = ${verificationId}, verified_at = ${time}, terminal_at = ${time} WHERE id = ${challenge.id} AND verification_state = 'active'`;
+        yield* sql`UPDATE otp_router.challenges SET verification_state = 'verified', verification_id = ${verificationId} WHERE id = ${challenge.id} AND verification_state = 'active'`;
         yield* closeOperation(challenge.delivery, "closed", time);
         yield* eraseSecrets(challenge.id);
         const response: VerifyResult = {
@@ -100,8 +100,8 @@ export const verifyChallenge = (
             projectId: challenge.delivery.project_id,
             verificationId,
             challengeId: challenge.id,
-            purpose: challenge.purpose,
-            contextId: challenge.context_id,
+            purpose: challenge.delivery.purpose,
+            contextId: challenge.delivery.context_id,
             verifiedAt: time.toISOString(),
           },
         };

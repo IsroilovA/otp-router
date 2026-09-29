@@ -162,12 +162,12 @@ describe("PostgreSQL fault boundaries", () => {
             (SELECT count(*) FROM otp_router.challenge_secrets)::integer AS secrets,
             (SELECT count(*) FROM otp_router.delivery_attempts)::integer AS deliveries,
             (SELECT count(*) FROM otp_router.delivery_attempts WHERE state = 'pending')::integer AS pending,
-            (SELECT count(*) FROM otp_router.delivery_attempts WHERE reserved_at IS NOT NULL)::integer AS reserved,
-            (SELECT count(*) FROM otp_router.idempotency_records)::integer AS operations,
+            (SELECT count(*) FROM otp_router.attempt_dispatches WHERE committed_at IS NOT NULL)::integer AS reserved,
+            (SELECT count(*) FROM otp_router.request_receipts)::integer AS operations,
             (SELECT count(*) FROM otp_router.quota_events WHERE kind = 'create')::integer AS "createQuotas",
-            (SELECT count(*) FROM otp_router.quota_events WHERE kind = 'send')::integer AS "sendQuotas",
+            (SELECT count(*) FROM otp_router.quota_allocations WHERE kind = 'send')::integer AS "sendQuotas",
             (SELECT count(*) FROM pgboss.job WHERE name = ${deliveryQueue})::integer AS jobs,
-            COALESCE((SELECT sum(send_count) FROM (SELECT c.*,o.send_count,o.recipient_token,o.snapshot,o.expires_at FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges), 0)::integer AS "sendCount"
+            COALESCE((SELECT sum(send_count) FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges), 0)::integer AS "sendCount"
         `,
       ),
     );

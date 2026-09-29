@@ -39,7 +39,6 @@ export const eraseSecrets = (id: string) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     yield* sql`DELETE FROM otp_router.challenge_secrets WHERE challenge_id = ${id}`;
-    yield* sql`UPDATE otp_router.idempotency_records SET code_fingerprint = NULL WHERE challenge_id = ${id} AND code_fingerprint IS NOT NULL`;
   });
 export const terminate = (
   challenge: Challenge,
@@ -48,7 +47,7 @@ export const terminate = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE otp_router.challenges SET verification_state = ${state}, terminal_at = ${time} WHERE id = ${challenge.id} AND verification_state = 'active'`;
+    yield* sql`UPDATE otp_router.challenges SET verification_state = ${state} WHERE id = ${challenge.id} AND verification_state = 'active'`;
     yield* closeOperation(challenge.delivery, state === "expired" ? "expired" : "closed", time);
     yield* eraseSecrets(challenge.id);
     return yield* findChallenge(challenge.id);

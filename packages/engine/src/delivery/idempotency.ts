@@ -1,9 +1,9 @@
+import { readReceipt, saveReceipt } from "../requests/receipts.js";
 import { findOperation, expire } from "./store.js";
 import { databaseTime } from "../database/transaction.js";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
-import { Digest, digest, equalDigest, operationIdentity, type CryptoConfig } from "../crypto.js";
-import { rows } from "../database/query.js";
+import { digest, equalDigest, operationIdentity, type CryptoConfig } from "../crypto.js";
 import { DomainError } from "../errors.js";
 import { OperationResult } from "./contracts.js";
 export const identity = (
@@ -16,12 +16,6 @@ export const identity = (
     target: request.operationId ?? "",
     key: request.key,
   });
-const Record = Schema.Struct({
-  operation_id: Schema.String,
-  fingerprint: Digest,
-  code_fingerprint: Schema.NullOr(Digest),
-  response: OperationResult,
-});
 export const replay = (config: CryptoConfig, id: string, input: object, code?: string) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
@@ -32,19 +26,13 @@ export const replay = (config: CryptoConfig, id: string, input: object, code?: s
           : error,
       ),
     );
-    let record = (yield* rows(
-      Record,
-      sql`SELECT operation_id,fingerprint,code_fingerprint,response FROM otp_router.delivery_idempotency WHERE identity = ${id}`,
-    ))[0];
+    let record = yield* readReceipt(id, "external");
     if (record === undefined) return undefined;
     const retained = yield* findOperation(record.operation_id, true).pipe(
       Effect.catchTag("DomainError", () => Effect.succeed(undefined)),
     );
     if (retained !== undefined) yield* expire(retained, yield* databaseTime);
-    record = (yield* rows(
-      Record,
-      sql`SELECT operation_id,fingerprint,code_fingerprint,response FROM otp_router.delivery_idempotency WHERE identity = ${id}`,
-    ))[0];
+    record = yield* readReceipt(id, "external");
     if (record === undefined) return undefined;
     const candidate = digest(
       config.fingerprint,
@@ -65,7 +53,10 @@ export const replay = (config: CryptoConfig, id: string, input: object, code?: s
       )
     )
       return yield* Effect.fail(new DomainError({ code: "idempotency_conflict" }));
-    return { ...record.response, replayed: true };
+    return yield* Schema.decodeUnknownEffect(OperationResult)({
+      ...record.response,
+      replayed: true,
+    });
   });
 export const save = (
   config: CryptoConfig,
@@ -79,7 +70,17 @@ export const save = (
   },
 ) =>
   Effect.gen(function* () {
-    const sql = yield* PgClient.PgClient;
-    yield* sql`INSERT INTO otp_router.delivery_idempotency(identity,fingerprint,code_fingerprint,operation_id,response,created_at,retain_until) VALUES (${id},${sql.json(digest(config.fingerprint, [1, "delivery-request", id, input]))},${result.active && result.code !== undefined ? sql.json(digest(config.fingerprint, [1, "delivery-request-code", id, result.code])) : null},${result.response.body.operationId},${sql.json(result.response)},${result.time},${new Date(result.time.getTime() + 7 * 86400000)})`;
+    yield* saveReceipt({
+      identity: id,
+      capability: "external",
+      operationId: result.response.body.operationId,
+      fingerprint: digest(config.fingerprint, [1, "delivery-request", id, input]),
+      codeFingerprint:
+        result.active && result.code !== undefined
+          ? digest(config.fingerprint, [1, "delivery-request-code", id, result.code])
+          : null,
+      response: { outcome: result.response.outcome, body: result.response.body },
+      time: result.time,
+    });
     return result.response;
   });

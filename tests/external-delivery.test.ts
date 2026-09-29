@@ -120,7 +120,7 @@ const counts = () =>
         sends: Schema.Int,
       }),
       app()
-        .pg`SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts) AS attempts,(SELECT count(*)::int FROM otp_router.delivery_secrets) AS secrets,(SELECT count(*)::int FROM otp_router.delivery_idempotency WHERE code_fingerprint IS NOT NULL) AS fingerprints,(SELECT count(*)::int FROM otp_router.quota_events WHERE identity='deployment' AND kind='send') AS sends`,
+        .pg`SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts) AS attempts,(SELECT count(*)::int FROM otp_router.delivery_secrets) AS secrets,(SELECT count(*)::int FROM otp_router.request_receipts WHERE code_fingerprint IS NOT NULL) AS fingerprints,(SELECT count(*)::int FROM otp_router.quota_allocations WHERE scope='deployment' AND kind='send') AS sends`,
     ),
   );
 const runQueued = async () => {
@@ -464,7 +464,7 @@ describe("independent durable external code delivery", () => {
     );
     await app().run(
       app()
-        .pg`UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${payload.attemptId}`,
+        .pg`UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${payload.attemptId}`,
     );
     await Promise.all([
       app().run(cleanup(app().configuration)),
@@ -570,14 +570,14 @@ describe("independent durable external code delivery", () => {
     await h.run(cleanup(h.configuration));
     expect((await Effect.runPromise(h.delivery.prepare(original))).replayed).toBe(true);
     await h.run(
-      h.pg`INSERT INTO otp_router.delivery_idempotency(identity,fingerprint,code_fingerprint,operation_id,response,created_at,retain_until) SELECT 'retention-' || value::text,i.fingerprint,NULL,i.operation_id,i.response,clock_timestamp()-interval '8 days',clock_timestamp()-interval '1 day' FROM generate_series(1,1005) AS series(value) CROSS JOIN LATERAL (SELECT * FROM otp_router.delivery_idempotency LIMIT 1) i`,
+      h.pg`INSERT INTO otp_router.request_receipts(identity,capability,project_id,fingerprint,code_fingerprint,operation_id,response,created_at,retain_until) SELECT 'retention-' || value::text,i.capability,i.project_id,i.fingerprint,NULL,i.operation_id,i.response,clock_timestamp()-interval '8 days',clock_timestamp()-interval '1 day' FROM generate_series(1,1005) AS series(value) CROSS JOIN LATERAL (SELECT * FROM otp_router.request_receipts LIMIT 1) i`,
     );
     await h.run(cleanup(h.configuration));
     expect(
       await h.run(
         single(
           Schema.Struct({ count: Schema.Int }),
-          h.pg`SELECT count(*)::int AS count FROM otp_router.delivery_idempotency WHERE identity LIKE 'retention-%'`,
+          h.pg`SELECT count(*)::int AS count FROM otp_router.request_receipts WHERE identity LIKE 'retention-%'`,
         ),
       ),
     ).toEqual({ count: 0 });

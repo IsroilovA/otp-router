@@ -130,7 +130,6 @@ export const ConfigurationReason = Schema.Literals([
   "unknown_policy",
   "unknown_provider",
   "unknown_selector_policy",
-  "unsupported_snapshot_version",
 ]);
 export class ConfigurationError extends Data.TaggedError("ConfigurationError")<{
   readonly reason: typeof ConfigurationReason.Type;

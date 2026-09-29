@@ -1,3 +1,4 @@
+import type { SqlError } from "effect/unstable/sql/SqlError";
 import { deliveryTransaction } from "../packages/engine/src/delivery/transaction.js";
 import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
 import { randomUUID } from "node:crypto";
@@ -175,7 +176,7 @@ const job = async () => {
 const makeRetryDue = (id: string) =>
   app().run(
     app()
-      .pg`UPDATE otp_router.delivery_attempts SET authorization_retry_at = clock_timestamp() - interval '1 second' WHERE id = ${id}`,
+      .pg`UPDATE otp_router.attempt_authorizations SET retry_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${id}`,
   );
 
 beforeAll(async () => {
@@ -350,7 +351,7 @@ describe("project isolation and authorization", () => {
     await app().run(dispatchGate(app().configuration, work));
     await app().run(
       app()
-        .pg`UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${work.attemptId}`,
+        .pg`UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${work.attemptId}`,
     );
     await app().run(recoverDispatches(app().configuration));
     await app().run(dispatch(app().configuration, work));
@@ -571,7 +572,7 @@ it("atomically enforces a project's final send allowance while another project r
     const usage = await limited.run(
       rows(
         Schema.Struct({ identity: Schema.String, count: Schema.Int }),
-        limited.pg`SELECT identity,count(*)::int AS count FROM otp_router.quota_events WHERE kind = 'send' AND identity IN ('project:alpha','project:beta') GROUP BY identity ORDER BY identity`,
+        limited.pg`SELECT 'project:' || scope_id AS identity,count(*)::int AS count FROM otp_router.quota_allocations WHERE kind = 'send' AND scope = 'project' AND scope_id IN ('alpha','beta') GROUP BY scope_id ORDER BY scope_id`,
       ),
     );
     expect(usage).toEqual([
@@ -725,7 +726,7 @@ it("ignores duplicate authorization wakeups until the dispatch recovery deadline
   expect(sent).toHaveLength(0);
   await app().run(
     app()
-      .pg`UPDATE otp_router.delivery_attempts SET recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${work.attemptId}`,
+      .pg`UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${work.attemptId}`,
   );
   await app().run(dispatch(app().configuration, work));
   expect(await Effect.runPromise(app().history.attempt("alpha", work.attemptId))).toMatchObject({
@@ -838,4 +839,122 @@ it("orders operation listings by committed creation rather than transaction star
     later.body.operationId,
   ]);
   expect(next.nextCursor).toBeNull();
+});
+
+it("rejects attempts, current pointers, and correlations outside their saved route", async () => {
+  const first = await create("alpha");
+  const firstJob = await job();
+  const second = await create("beta");
+  const secondJob = await job();
+  const h = app();
+  const reject = async (mutation: Effect.Effect<ReadonlyArray<unknown>, SqlError>) => {
+    expect(
+      await h.run(
+        h.pg
+          .withTransaction(mutation.pipe(Effect.andThen(h.pg`SET CONSTRAINTS ALL IMMEDIATE`)))
+          .pipe(Effect.result),
+      ),
+    ).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "SqlError", reason: { _tag: "ConstraintError" } },
+    });
+  };
+  await reject(
+    h.pg`UPDATE otp_router.delivery_operations SET current_attempt_id = ${secondJob.attemptId} WHERE id = ${first.body.operationId}`,
+  );
+  await reject(
+    h.pg`UPDATE otp_router.delivery_operations SET initial_position = 99 WHERE id = ${first.body.operationId}`,
+  );
+  await reject(
+    h.pg`UPDATE otp_router.delivery_attempts SET route_position = 1 WHERE id = ${firstJob.attemptId}`,
+  );
+  await reject(
+    h.pg`UPDATE otp_router.operation_route_steps SET provider_instance_id = 'replacement' WHERE operation_id = ${first.body.operationId} AND position = 0`,
+  );
+  await reject(
+    h.pg`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,attempt_id) VALUES ('secondary','wrong-provider',${firstJob.attemptId})`,
+  );
+  await reject(
+    h.pg`DELETE FROM otp_router.attempt_authorizations WHERE attempt_id = ${firstJob.attemptId}`,
+  );
+  await reject(
+    h.pg`DELETE FROM otp_router.attempt_dispatches WHERE attempt_id = ${firstJob.attemptId}`,
+  );
+  await reject(
+    h.pg`UPDATE otp_router.attempt_authorizations SET state = 'approved' WHERE attempt_id = ${firstJob.attemptId}`,
+  );
+  await reject(
+    h.pg`UPDATE otp_router.delivery_attempts SET state = 'dispatching' WHERE id = ${firstJob.attemptId}`,
+  );
+  await h.run(dispatch(h.configuration, firstJob));
+  await h.run(dispatch(h.configuration, secondJob));
+  expect(sent.map((entry) => entry.operationId)).toEqual([
+    first.body.operationId,
+    second.body.operationId,
+  ]);
+  expect(
+    (await Effect.runPromise(h.history.attempt("alpha", firstJob.attemptId))).providerInstanceId,
+  ).toBe("primary");
+});
+
+it("retains scoped send usage after history deletion and releases it only after its rolling window", async () => {
+  if (database === undefined) throw new Error("Database missing");
+  const h = await startRuntime(database.databaseUrl, {
+    ...configuration,
+    settings: {
+      ...configuration.settings,
+      projects: { alpha: { ...project, sendLimit15m: 1, sendLimit24h: 1 }, beta: project },
+    },
+  });
+  try {
+    const created = await Effect.runPromise(h.delivery.create(request("alpha", input())));
+    const work = await job();
+    await h.run(dispatch(h.configuration, work));
+    await Effect.runPromise(
+      h.delivery.close({ ...request("alpha", {}), operationId: created.body.operationId }),
+    );
+    await h.run(
+      h.pg`UPDATE otp_router.delivery_operations SET terminal_at = clock_timestamp() - interval '31 days', history_updated_at = clock_timestamp() - interval '31 days' WHERE id = ${created.body.operationId}`,
+    );
+    await h.run(cleanup(h.configuration));
+    expect(
+      await Effect.runPromise(h.history.attempt("alpha", work.attemptId).pipe(Effect.result)),
+    ).toMatchObject({ _tag: "Failure", failure: { code: "operation_not_found" } });
+    expect(
+      await h.run(
+        rows(
+          Schema.Struct({ facts: Schema.Int, allocations: Schema.Int }),
+          h.pg`
+      SELECT (SELECT count(*)::int FROM otp_router.quota_events WHERE event_id = ${work.attemptId} AND kind = 'send') AS facts,
+        (SELECT count(*)::int FROM otp_router.quota_allocations WHERE event_id = ${work.attemptId} AND kind = 'send') AS allocations`,
+        ),
+      ),
+    ).toEqual([{ facts: 1, allocations: 3 }]);
+    await Effect.runPromise(h.delivery.create(request("alpha", input("+998901234568"))));
+    const blocked = await job();
+    await h.run(dispatch(h.configuration, blocked));
+    expect(sent).toHaveLength(1);
+    expect(await Effect.runPromise(h.history.attempt("alpha", blocked.attemptId))).toMatchObject({
+      state: "suppressed",
+      invocation: "not_invoked",
+      diagnosticCode: "rate_limited",
+    });
+    await h.run(
+      h.pg`UPDATE otp_router.quota_events SET occurred_at = clock_timestamp() - interval '24 hours 1 second' WHERE event_id = ${work.attemptId} AND kind = 'send'`,
+    );
+    await h.run(cleanup(h.configuration));
+    expect(
+      await h.run(
+        rows(
+          Schema.Struct({ count: Schema.Int }),
+          h.pg`SELECT count(*)::int AS count FROM otp_router.quota_allocations WHERE event_id = ${work.attemptId} AND kind = 'send'`,
+        ),
+      ),
+    ).toEqual([{ count: 0 }]);
+    await Effect.runPromise(h.delivery.create(request("alpha", input("+998901234569"))));
+    await h.run(dispatch(h.configuration, await job()));
+    expect(sent).toHaveLength(2);
+  } finally {
+    await h.close();
+  }
 });

@@ -1,0 +1,67 @@
+import { SqlClient } from "effect/unstable/sql";
+import { Effect, Schema } from "effect";
+import { rows, single } from "../database/query.js";
+import { DomainError } from "../errors.js";
+import { Operation, Attempt } from "./records.js";
+import { AttemptSnapshot } from "./history-contracts.js";
+
+const readOperation = (id: string, lock: boolean, project?: { readonly id: string }) =>
+  Effect.gen(function* () {
+    if (!Schema.is(Schema.String.check(Schema.isUUID()))(id))
+      return yield* Effect.fail(new DomainError({ code: "operation_not_found" }));
+    const sql = yield* SqlClient.SqlClient;
+    const owned = project === undefined ? sql`` : sql`AND o.project_id = ${project.id}`;
+    // Acquire the parent lock before reading dependent facts; a waiter must observe
+    // the dispatches committed by the previous lock holder.
+    if (lock)
+      yield* sql`SELECT id FROM otp_router.delivery_operations o WHERE id = ${id} ${owned} FOR UPDATE`;
+    const values = yield* rows(
+      Operation,
+      sql`
+      SELECT o.*,
+        (SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id
+          WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count,
+        jsonb_build_object('authorizationRequired',o.authorization_required,
+          'maxSends',o.max_sends,'resendCooldownSeconds',o.resend_cooldown_seconds,
+          'manualSelectionEnabled',o.manual_selection_enabled,
+          'providers',(SELECT jsonb_agg(jsonb_build_object(
+            'providerInstanceId',r.provider_instance_id,'label',r.label,'pluginId',r.plugin_id,
+            'contractVersion',r.contract_version,'channel',r.channel,'resolvedLocale',r.resolved_locale,
+            'template',r.template,'sendTimeoutMs',r.send_timeout_ms,'minDeliveryWindowMs',r.min_delivery_window_ms,
+            'compatibilityRevision',r.compatibility_revision,'manualSelectionAllowed',r.manual_selection_allowed
+          ) ORDER BY r.position) FROM otp_router.operation_route_steps r WHERE r.operation_id = o.id)) AS snapshot
+      FROM otp_router.delivery_operations o WHERE o.id = ${id} ${owned}`,
+    );
+    const operation = values[0];
+    if (operation === undefined)
+      return yield* Effect.fail(new DomainError({ code: "operation_not_found" }));
+    return operation;
+  });
+export const findOperation = (id: string, lock = false) => readOperation(id, lock);
+export const findProjectOperation = (projectId: string, id: string, lock = false) =>
+  readOperation(id, lock, { id: projectId });
+
+export const PublishedAttempt = Schema.Struct({
+  ...Attempt.fields,
+  public_snapshot: Schema.NullOr(AttemptSnapshot),
+});
+export const findAttempt = (id: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    return yield* single(
+      PublishedAttempt,
+      sql`
+    SELECT a.*,r.provider_instance_id,
+      o.expires_at - (r.send_timeout_ms + r.min_delivery_window_ms) * interval '1 millisecond' AS dispatch_deadline,
+      u.state AS authorization_state,u.generation AS authorization_generation,u.project_generation,
+      u.retry_at AS authorization_retry_at,u.lease_until AS authorization_lease_until,
+      u.approved_at,u.expires_at AS approval_expires_at,
+      d.invocation,d.committed_at,d.recovery_at
+    FROM otp_router.delivery_attempts a
+    JOIN otp_router.operation_route_steps r ON (r.operation_id,r.position) = (a.operation_id,a.route_position)
+    JOIN otp_router.delivery_operations o ON o.id = a.operation_id
+    JOIN otp_router.attempt_authorizations u ON u.attempt_id = a.id
+    JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id
+    WHERE a.id = ${id}`,
+    );
+  });

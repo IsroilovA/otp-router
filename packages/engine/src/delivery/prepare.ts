@@ -63,18 +63,17 @@ export const prepareRoute = (
           sendTimeoutMs: provider.sendTimeoutMs,
           minDeliveryWindowMs: provider.constraints.minDeliveryWindowMs,
           compatibilityRevision: provider.compatibilityRevision,
+          manualSelectionAllowed: (policy.manualProviderIds ?? policy.providerInstanceIds).includes(
+            id,
+          ),
         };
       }),
     );
     const saved: PolicySnapshot = {
-      version: 1,
-      policyId: input.policyId,
       authorizationRequired: config.settings.projects[projectId].authorization === "required",
       maxSends: policy.maxSends,
       resendCooldownSeconds: policy.resendCooldownSeconds,
       manualSelectionEnabled: policy.manualSelectionEnabled,
-      manualProviderIds: policy.manualProviderIds ?? policy.providerInstanceIds,
-      requestedLocale: locale,
       providers,
     };
     return { saved };

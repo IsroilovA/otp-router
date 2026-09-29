@@ -22,13 +22,13 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
         yield* terminate(yield* findOperation(row.id), "expired", yield* databaseTime);
       const time = yield* databaseTime;
 
-      const operations = yield* rows(
+      const receipts = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
-        sql`DELETE FROM otp_router.idempotency_records WHERE identity IN (SELECT i.identity FROM otp_router.idempotency_records i WHERE i.retain_until <= ${time} AND NOT EXISTS (SELECT 1 FROM otp_router.delivery_operations c WHERE c.id = (SELECT operation_id FROM otp_router.challenges WHERE id = i.challenge_id) AND c.state IN ('prepared','active')) AND NOT EXISTS (SELECT 1 FROM otp_router.delivery_attempts d WHERE d.operation_id = (SELECT operation_id FROM otp_router.challenges WHERE id = i.challenge_id) AND d.state IN ('pending','dispatching')) LIMIT 1000) RETURNING 1 AS deleted`,
-      );
-      const externalResults = yield* rows(
-        Schema.Struct({ deleted: Schema.Int }),
-        sql`DELETE FROM otp_router.delivery_idempotency WHERE identity IN (SELECT i.identity FROM otp_router.delivery_idempotency i WHERE i.retain_until <= ${time} AND NOT EXISTS (SELECT 1 FROM otp_router.delivery_operations o WHERE o.id = i.operation_id AND o.state IN ('prepared','active')) LIMIT 1000) RETURNING 1 AS deleted`,
+        sql`DELETE FROM otp_router.request_receipts WHERE identity IN (
+          SELECT i.identity FROM otp_router.request_receipts i WHERE i.retain_until <= ${time}
+          AND NOT EXISTS (SELECT 1 FROM otp_router.delivery_operations o WHERE o.id = i.operation_id AND o.state IN ('prepared','active'))
+          AND (i.capability = 'external' OR NOT EXISTS (SELECT 1 FROM otp_router.delivery_attempts a WHERE a.operation_id = i.operation_id AND a.state IN ('pending','dispatching')))
+          LIMIT 1000) RETURNING 1 AS deleted`,
       );
       const history = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
@@ -36,7 +36,7 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
       );
       const quotas = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
-        sql`DELETE FROM otp_router.quota_events WHERE (identity,kind,event_id) IN (SELECT identity,kind,event_id FROM otp_router.quota_events WHERE occurred_at <= ${new Date(time.getTime() - 86400000)} LIMIT 1000) RETURNING 1 AS deleted`,
+        sql`DELETE FROM otp_router.quota_events WHERE (event_id,kind) IN (SELECT event_id,kind FROM otp_router.quota_events WHERE occurred_at <= ${new Date(time.getTime() - 86400000)} LIMIT 1000) RETURNING 1 AS deleted`,
       );
       const callbacks = yield* rows(
         Schema.Struct({ deleted: Schema.Int }),
@@ -44,8 +44,7 @@ const cleanupBatch = (config: RuntimeConfiguration) =>
       );
       return (
         expired.length === 100 ||
-        operations.length === 1000 ||
-        externalResults.length === 1000 ||
+        receipts.length === 1000 ||
         history.length === 100 ||
         quotas.length === 1000 ||
         callbacks.length === 1000

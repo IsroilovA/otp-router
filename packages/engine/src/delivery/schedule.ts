@@ -19,12 +19,10 @@ export const schedule = (
     if (provider === undefined)
       return yield* Effect.die(new Error("Invalid persisted route position"));
     const id = randomUUID();
-    const deadline = new Date(
-      operation.expires_at.getTime() - provider.sendTimeoutMs - provider.minDeliveryWindowMs,
-    );
-    yield* transitionAttempts(
-      sql`INSERT INTO otp_router.delivery_attempts(id,operation_id,provider_instance_id,route_position,routing_revision,reason,due_at,state,dispatch_deadline,authorization_required,authorization_state) VALUES (${id},${operation.id},${provider.providerInstanceId},${position},${operation.routing_revision},${reason},${time},'pending',${deadline},${operation.snapshot.authorizationRequired},${operation.snapshot.authorizationRequired ? "pending" : "not_required"}) RETURNING *`,
-    );
+    yield* sql`INSERT INTO otp_router.delivery_attempts(id,operation_id,route_position,routing_revision,reason,created_at,state) VALUES (${id},${operation.id},${position},${operation.routing_revision},${reason},${time},'pending')`;
+    yield* sql`INSERT INTO otp_router.attempt_authorizations(attempt_id,state) VALUES (${id},${operation.snapshot.authorizationRequired ? "pending" : "not_required"})`;
+    yield* sql`INSERT INTO otp_router.attempt_dispatches(attempt_id) VALUES (${id})`;
+    yield* transitionAttempts(sql`SELECT id FROM otp_router.delivery_attempts WHERE id = ${id}`);
     yield* sql`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,attempt_id) VALUES (${provider.providerInstanceId},${attemptReference(id)},${id})`;
     yield* sql`UPDATE otp_router.delivery_operations SET current_attempt_id = ${id} WHERE id = ${operation.id}`;
     yield* enqueueDelivery({

@@ -240,7 +240,7 @@ export const startRuntime = async (
       await queue.deleteAllJobs();
       await run(
         sql.unsafe(
-          "TRUNCATE TABLE otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.idempotency_records, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_idempotency, otp_router.delivery_operations CASCADE",
+          "TRUNCATE TABLE otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.request_receipts, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_operations CASCADE",
         ),
       );
     };

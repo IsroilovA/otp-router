@@ -16,20 +16,12 @@ export const validateStoredKeys = (settings: Settings) =>
     UNION SELECT DISTINCT 'encryption', code->>'keyId' FROM otp_router.delivery_secrets WHERE code IS NOT NULL
     UNION SELECT DISTINCT 'verification', verifier->>'keyId' FROM otp_router.challenge_secrets
     UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.delivery_secrets WHERE code_fingerprint IS NOT NULL
-    UNION SELECT DISTINCT 'fingerprint', fingerprint->>'keyId' FROM otp_router.delivery_idempotency
-    UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.delivery_idempotency WHERE code_fingerprint IS NOT NULL
-    UNION SELECT DISTINCT 'fingerprint', fingerprint->>'keyId' FROM otp_router.idempotency_records
-    UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.idempotency_records WHERE code_fingerprint IS NOT NULL`,
+    UNION SELECT DISTINCT 'fingerprint', fingerprint->>'keyId' FROM otp_router.request_receipts
+    UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.request_receipts WHERE code_fingerprint IS NOT NULL`,
     );
     for (const reference of references)
       if (settings.crypto[reference.purpose]?.keys[reference.key_id] === undefined)
         return yield* Effect.fail(new ConfigurationError({ reason: "retained_key_missing" }));
-    const snapshots = yield* rows(
-      Schema.Struct({ version: Schema.String }),
-      sql`SELECT DISTINCT snapshot->>'version' AS version FROM otp_router.delivery_operations WHERE state IN ('prepared','active')`,
-    );
-    if (snapshots.some((snapshot) => snapshot.version !== "1"))
-      return yield* Effect.fail(new ConfigurationError({ reason: "unsupported_snapshot_version" }));
   });
 
 export const validateDeploymentIdentity = (settings: Settings, adoptRecipientKey = false) =>

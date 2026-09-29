@@ -4,13 +4,15 @@ import { rows } from "../database/query.js";
 import { DomainError } from "../errors.js";
 import type { Settings } from "../config/config.js";
 export interface Limit {
-  readonly identity: string;
+  readonly scope: "recipient" | "project" | "provider" | "deployment";
+  readonly scopeId: string;
   readonly kind: "create" | "send" | "guess" | "admission";
   readonly maximum: number;
   readonly windowMs: number;
 }
 export const recipientLimit = (token: string, kind: Limit["kind"], maximum: number): Limit => ({
-  identity: `recipient:${token}`,
+  scope: "recipient",
+  scopeId: token,
   kind,
   maximum,
   windowMs: 900000,
@@ -21,26 +23,30 @@ export const commonSendLimits = (
   projectId: string,
 ): readonly Limit[] => [
   {
-    identity: `project:${projectId}`,
+    scope: "project",
+    scopeId: projectId,
     kind: "send",
     maximum: settings.projects[projectId]?.sendLimit15m ?? 0,
     windowMs: 900000,
   },
   {
-    identity: `project:${projectId}`,
+    scope: "project",
+    scopeId: projectId,
     kind: "send",
     maximum: settings.projects[projectId]?.sendLimit24h ?? 0,
     windowMs: 86400000,
   },
   recipientLimit(token, "send", settings.recipientSendLimit15m),
   {
-    identity: "deployment",
+    scope: "deployment",
+    scopeId: "",
     kind: "send",
     maximum: settings.deploymentSendLimit15m,
     windowMs: 900000,
   },
   {
-    identity: "deployment",
+    scope: "deployment",
+    scopeId: "",
     kind: "send",
     maximum: settings.deploymentSendLimit24h,
     windowMs: 86400000,
@@ -50,7 +56,7 @@ export const providerSendLimits = (settings: Settings, providerId: string): read
   const maximum = settings.providerSendLimits15m[providerId];
   return maximum === undefined
     ? []
-    : [{ identity: `provider:${providerId}`, kind: "send", maximum, windowMs: 900000 }];
+    : [{ scope: "provider", scopeId: providerId, kind: "send", maximum, windowMs: 900000 }];
 };
 export const sendLimits = (
   settings: Settings,
@@ -66,7 +72,9 @@ export const sendLimits = (
 export const lockQuotas = (limits: readonly Limit[]) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    for (const identity of [...new Set(limits.map((limit) => limit.identity))].sort()) {
+    for (const identity of [
+      ...new Set(limits.map((limit) => JSON.stringify([limit.scope, limit.scopeId]))),
+    ].sort()) {
       yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`quota:${identity}`},0))`;
     }
   });
@@ -77,7 +85,7 @@ export const quotaRetryAt = (limits: readonly Limit[], time: Date) =>
     for (const limit of limits) {
       const events = yield* rows(
         Schema.Struct({ occurred_at: Schema.Date }),
-        sql`SELECT occurred_at FROM otp_router.quota_events WHERE identity = ${limit.identity} AND kind = ${limit.kind} AND occurred_at > ${new Date(time.getTime() - limit.windowMs)} ORDER BY occurred_at DESC OFFSET ${limit.maximum - 1} LIMIT 1`,
+        sql`SELECT e.occurred_at FROM otp_router.quota_allocations a JOIN otp_router.quota_events e ON (e.event_id,e.kind) = (a.event_id,a.kind) WHERE a.scope = ${limit.scope} AND a.scope_id = ${limit.scopeId} AND a.kind = ${limit.kind} AND e.occurred_at > ${new Date(time.getTime() - limit.windowMs)} ORDER BY e.occurred_at DESC OFFSET ${limit.maximum - 1} LIMIT 1`,
       );
       const blocking = events[0];
       if (blocking !== undefined)
@@ -94,14 +102,19 @@ export const checkQuotas = (limits: readonly Limit[], time: Date) =>
 export const countQuotas = (limits: readonly Limit[], eventId: string, time: Date) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    for (const limit of limits) {
-      const identity = limit.identity;
-      yield* sql`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES (${identity},${limit.kind},${eventId},${time}) ON CONFLICT DO NOTHING`;
+    for (const kind of new Set(limits.map((limit) => limit.kind)))
+      yield* sql`INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES (${kind},${eventId},${time}) ON CONFLICT DO NOTHING`;
+    const allocations = new Map(
+      limits.map((limit) => [JSON.stringify([limit.scope, limit.scopeId, limit.kind]), limit]),
+    );
+    for (const limit of allocations.values()) {
+      yield* sql`INSERT INTO otp_router.quota_allocations(scope,scope_id,kind,event_id) VALUES (${limit.scope},${limit.scopeId},${limit.kind},${eventId}) ON CONFLICT DO NOTHING`;
     }
   });
 
 export const admissionLimit = (token: string): Limit => ({
-  identity: `recipient:${token}`,
+  scope: "recipient",
+  scopeId: token,
   kind: "admission",
   maximum: 1,
   windowMs: 30000,
@@ -110,6 +123,6 @@ export const admissionLimit = (token: string): Limit => ({
 export const extendAdmission = (token: string, eventId: string, time: Date) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    const identity = admissionLimit(token).identity;
-    yield* sql`INSERT INTO otp_router.quota_events(identity,kind,event_id,occurred_at) VALUES (${identity},'admission',${eventId},${time}) ON CONFLICT (identity,kind,event_id) DO UPDATE SET occurred_at = GREATEST(quota_events.occurred_at,EXCLUDED.occurred_at)`;
+    yield* sql`INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('admission',${eventId},${time}) ON CONFLICT (event_id,kind) DO UPDATE SET occurred_at = GREATEST(quota_events.occurred_at,EXCLUDED.occurred_at)`;
+    yield* sql`INSERT INTO otp_router.quota_allocations(scope,scope_id,kind,event_id) VALUES ('recipient',${token},'admission',${eventId}) ON CONFLICT DO NOTHING`;
   });

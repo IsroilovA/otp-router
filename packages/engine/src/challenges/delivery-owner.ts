@@ -10,7 +10,7 @@ export const DeliveryOwnerLive = Layer.effect(
   Effect.gen(function* () {
     const config = yield* RouterConfig;
     return {
-      synchronize: (operationId, time) =>
+      synchronize: (operationId) =>
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           const row = (yield* rows(
@@ -24,7 +24,7 @@ export const DeliveryOwnerLive = Layer.effect(
             challenge.verification_state === "active" &&
             (challenge.delivery.state === "closed" || challenge.delivery.state === "expired")
           ) {
-            yield* sql`UPDATE otp_router.challenges SET verification_state = ${challenge.delivery.state === "expired" ? "expired" : "cancelled"}, terminal_at = ${time} WHERE id = ${row.id} AND verification_state = 'active'`;
+            yield* sql`UPDATE otp_router.challenges SET verification_state = ${challenge.delivery.state === "expired" ? "expired" : "cancelled"} WHERE id = ${row.id} AND verification_state = 'active'`;
             yield* eraseSecrets(row.id);
           }
           return row.id;
