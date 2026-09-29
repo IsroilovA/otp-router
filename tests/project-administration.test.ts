@@ -572,21 +572,98 @@ it("rejects old schema baselines and incompatible live catalogs without changing
   expect(await Effect.runPromise(app().projects.get("admin", "alpha"))).toEqual(before);
 });
 
-it("checks current administrator permissions before replay and preserves grants on restart", async () => {
-  const created = await createProject();
-  const request = {
-    actorId: "admin",
-    key: randomUUID(),
-    command: {
-      action: "update" as const,
-      projectId: created.body.id,
+it.each(["action", "setting"] as const)(
+  "checks current administrator %s permissions before replay and preserves grants on restart",
+  async (permission) => {
+    const created = await createProject();
+    const request = {
+      actorId: "admin",
+      key: randomUUID(),
+      command: {
+        action: "update" as const,
+        projectId: created.body.id,
+        expectedRevision: 1,
+        settings: { ...settings, sendLimit15m: 12 },
+      },
+    };
+    await Effect.runPromise(app().projects.mutate(request));
+    const permissions = configuration.settings.administration.administrators["admin"];
+    if (permissions === undefined) throw new Error("Missing administrator");
+    await app().close();
+    runtime = await startRuntime(db().databaseUrl, {
+      ...configuration,
+      settings: {
+        ...configuration.settings,
+        administration: {
+          ...configuration.settings.administration,
+          administrators: {
+            ...configuration.settings.administration.administrators,
+            admin: {
+              ...permissions,
+              ...(permission === "action"
+                ? { actions: ["create", "read"] as const }
+                : { editableSettings: ["authorizationRequired", "sendLimit24h"] as const }),
+            },
+          },
+        },
+      },
+    });
+    try {
+      await expect(Effect.runPromise(app().projects.mutate(request))).rejects.toMatchObject({
+        code: "admin_forbidden",
+      });
+      expect(
+        (await Effect.runPromise(app().projects.get("admin", created.body.id))).grants,
+      ).toEqual(created.body.grants);
+    } finally {
+      await app().close();
+      runtime = await startRuntime(db().databaseUrl, configuration);
+    }
+  },
+);
+
+it.each(["update", "grant"] as const)(
+  "replays a no-op %s without checking an unrelated settings change",
+  async (action) => {
+    await createProject();
+    const changed = await administer({
+      action: "update",
+      projectId: "alpha_new",
       expectedRevision: 1,
-      settings: { ...settings, sendLimit15m: 12 },
-    },
-  };
-  await Effect.runPromise(app().projects.mutate(request));
-  const permissions = configuration.settings.administration.administrators["admin"];
-  if (permissions === undefined) throw new Error("Missing administrator");
+      settings: { ...settings, sendLimit24h: 90 },
+    });
+    const request: typeof AdminCommand.Type =
+      action === "update"
+        ? { action, projectId: "alpha_new", expectedRevision: 2, settings: changed.body.settings }
+        : { action, projectId: "alpha_new", expectedRevision: 2, principalId: "backend" };
+    const key = randomUUID();
+    const original = await administer(request, key, "limited");
+    expect(original.body).toEqual(changed.body);
+    expect(await administer(request, key, "limited")).toEqual({ ...original, replayed: true });
+    await administer({
+      action: "update",
+      projectId: "alpha_new",
+      expectedRevision: 2,
+      settings: { ...changed.body.settings, sendLimit15m: 12 },
+    });
+    expect(await administer(request, key, "limited")).toEqual({ ...original, replayed: true });
+    expect(
+      (await Effect.runPromise(app().projects.audit("admin", "alpha_new", {}))).events.map(
+        (event) => [event.action, event.revision],
+      ),
+    ).toEqual([
+      ["create", 1],
+      ["update", 2],
+      ["update", 3],
+    ]);
+  },
+);
+
+it("allows limit changes on disabled authorization while denying creation and transitions that disable it", async () => {
+  const permissions = configuration.settings.administration.administrators["limited"];
+  const adminPermissions = configuration.settings.administration.administrators["admin"];
+  if (permissions === undefined || adminPermissions === undefined)
+    throw new Error("Missing administrator");
   await app().close();
   runtime = await startRuntime(db().databaseUrl, {
     ...configuration,
@@ -594,21 +671,80 @@ it("checks current administrator permissions before replay and preserves grants 
       ...configuration.settings,
       administration: {
         ...configuration.settings.administration,
+        authorizationFloor: false,
         administrators: {
           ...configuration.settings.administration.administrators,
-          admin: { ...permissions, actions: ["create", "read"] },
+          limited: {
+            ...permissions,
+            editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+          },
         },
       },
     },
   });
   try {
-    await expect(Effect.runPromise(app().projects.mutate(request))).rejects.toMatchObject({
+    await createProject();
+    await expect(
+      administer(
+        {
+          action: "create",
+          input: {
+            id: "alpha_disabled",
+            settings: { ...settings, authorizationRequired: false },
+            principalIds: ["backend"],
+          },
+        },
+        randomUUID(),
+        "limited",
+      ),
+    ).rejects.toMatchObject({ code: "admin_forbidden" });
+    const disable: typeof AdminCommand.Type = {
+      action: "update",
+      projectId: "alpha_new",
+      expectedRevision: 1,
+      settings: { ...settings, authorizationRequired: false },
+    };
+    await expect(administer(disable, randomUUID(), "limited")).rejects.toMatchObject({
       code: "admin_forbidden",
     });
-    expect((await Effect.runPromise(app().projects.get("admin", created.body.id))).grants).toEqual(
-      created.body.grants,
-    );
+    const disableKey = randomUUID();
+    await administer(disable, disableKey);
+    const request: typeof AdminCommand.Type = {
+      action: "update",
+      projectId: "alpha_new",
+      expectedRevision: 2,
+      settings: { ...settings, authorizationRequired: false, sendLimit15m: 11 },
+    };
+    const key = randomUUID();
+    const original = await administer(request, key, "limited");
+    expect(original.body.revision).toBe(3);
+    expect(await administer(request, key, "limited")).toEqual({ ...original, replayed: true });
+    await app().close();
+    runtime = await startRuntime(db().databaseUrl, {
+      ...configuration,
+      settings: {
+        ...configuration.settings,
+        administration: {
+          ...configuration.settings.administration,
+          authorizationFloor: false,
+          administrators: {
+            ...configuration.settings.administration.administrators,
+            admin: { ...adminPermissions, mayDisableAuthorization: false },
+          },
+        },
+      },
+    });
+    await expect(administer(disable, disableKey)).rejects.toMatchObject({
+      code: "admin_forbidden",
+    });
   } finally {
+    const current = await Effect.runPromise(app().projects.get("admin", "alpha_new"));
+    await administer({
+      action: "update",
+      projectId: "alpha_new",
+      expectedRevision: current.revision,
+      settings: { ...current.settings, authorizationRequired: true },
+    });
     await app().close();
     runtime = await startRuntime(db().databaseUrl, configuration);
   }

@@ -29,9 +29,15 @@ Keep health/metrics private. Stop traffic and new job claims before draining wor
 
 ## Configuration changes
 
-For incompatible changes, stop creation and let active operations finish or expire under the old configuration. Keep verification, callbacks, and workers available during the drain. Stop all old API and worker roles before starting a replacement catalog. Project settings and grant changes use the administration API and require no restart. Use rolling deployments only when schemas, jobs, plugins, and settings remain compatible.
+Changes to the deployment catalog require stopping every API, worker, and combined process using the database before starting replacements with matching configuration. The [catalog fingerprint](../packages/engine/src/config/catalog.ts) defines which settings must match. A different catalog cannot join running replicas, even when the only change is adding a policy that uses existing providers.
 
-Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials throughout the configured history reconciliation window, unless compromise requires revocation. Emergency disables require stopping workers and restarting with the affected instance disabled.
+For a planned catalog replacement, stop creation and let active operations finish or expire under the old configuration. Keep verification, callbacks, and workers available during the drain. Then stop every old process, install the replacement configuration, and start all roles with that configuration. Confirm readiness before restoring traffic.
+
+Project settings, grants, and lifecycle changes use the [administration API](projects.md) and require no restart. Rolling deployments require an unchanged catalog and compatible schemas, jobs, and plugins; follow the release's upgrade requirements. Backend and administrator credentials can rotate under their existing identities using the [API-key rotation procedure](#api-key-rotation).
+
+Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials throughout the configured history reconciliation window, unless compromise requires revocation.
+
+For an emergency provider disable, skip the planned drain: stop every API, worker, and combined process, then restart all roles with matching configuration and the affected instance disabled. Already committed sends may still complete.
 
 ## Database upgrades
 
@@ -80,6 +86,7 @@ Replay restores the notification attempt budget and requeues the original event,
 Run `docker compose ps` and `docker compose logs --tail=100 router` with the same Compose file, environment, and project used for deployment. Use `--check-config` to validate settings; use `--check-schema` only when database changes are intended.
 
 - Identity mismatch: restore the correct deployment configuration or use a separate database; never bypass the check by deleting needed data.
+- Catalog mismatch: compare configuration across roles and follow the [catalog replacement procedure](#configuration-changes).
 - Missing retained keys: restore their original IDs and bytes.
 - Database/queue startup failure: check reachability, credentials, migration privileges, and artifact/schema compatibility.
 - Persistent pending deliveries: check worker availability and configuration across roles.
