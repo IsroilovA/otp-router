@@ -19,8 +19,8 @@ const readOperation = (id: string, lock: boolean, project?: { readonly id: strin
       Operation,
       sql`
       SELECT o.*,
-        (SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id
-          WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count,
+        (SELECT count(*)::int FROM otp_router.delivery_attempts a
+          WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count,
         jsonb_build_object('authorizationRequired',o.authorization_required,
           'maxSends',o.max_sends,'resendCooldownSeconds',o.resend_cooldown_seconds,
           'manualSelectionEnabled',o.manual_selection_enabled,
@@ -44,6 +44,8 @@ export const findProjectOperation = (projectId: string, id: string, lock = false
 export const PublishedAttempt = Schema.Struct({
   ...Attempt.fields,
   public_snapshot: Schema.NullOr(AttemptSnapshot),
+  project_id: Schema.String,
+  channel: Schema.String,
 });
 export const findAttempt = (id: string) =>
   Effect.gen(function* () {
@@ -51,17 +53,11 @@ export const findAttempt = (id: string) =>
     return yield* single(
       PublishedAttempt,
       sql`
-    SELECT a.*,r.provider_instance_id,
-      o.expires_at - (r.send_timeout_ms + r.min_delivery_window_ms) * interval '1 millisecond' AS dispatch_deadline,
-      u.state AS authorization_state,u.generation AS authorization_generation,u.project_generation,
-      u.retry_at AS authorization_retry_at,u.lease_until AS authorization_lease_until,
-      u.approved_at,u.expires_at AS approval_expires_at,
-      d.invocation,d.committed_at,d.recovery_at
+    SELECT a.*,r.provider_instance_id,r.channel,o.project_id,
+      o.expires_at - (r.send_timeout_ms + r.min_delivery_window_ms) * interval '1 millisecond' AS dispatch_deadline
     FROM otp_router.delivery_attempts a
     JOIN otp_router.operation_route_steps r ON (r.operation_id,r.position) = (a.operation_id,a.route_position)
     JOIN otp_router.delivery_operations o ON o.id = a.operation_id
-    JOIN otp_router.attempt_authorizations u ON u.attempt_id = a.id
-    JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id
     WHERE a.id = ${id}`,
     );
   });

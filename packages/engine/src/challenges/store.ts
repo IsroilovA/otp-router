@@ -1,3 +1,4 @@
+import type { Operation } from "../delivery/records.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
 import { rows, single } from "../database/query.js";
@@ -24,6 +25,15 @@ const readChallenge = (id: string, lock: boolean, project?: { readonly id: strin
       : initial;
     return { ...current, delivery };
   });
+export const findOwnedChallenge = (delivery: Operation, lock = false) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const record = yield* single(
+      Record,
+      sql`SELECT * FROM otp_router.challenges WHERE operation_id = ${delivery.id} ${lock ? sql`FOR UPDATE` : sql``}`,
+    );
+    return { ...record, delivery };
+  });
 export const findChallenge = (id: string, lock = false) => readChallenge(id, lock);
 export const findProjectChallenge = (projectId: string, id: string, lock = false) =>
   readChallenge(id, lock, { id: projectId });
@@ -49,7 +59,6 @@ export const terminate = (
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE otp_router.challenges SET verification_state = ${state} WHERE id = ${challenge.id} AND verification_state = 'active'`;
     yield* closeOperation(challenge.delivery, state === "expired" ? "expired" : "closed", time);
-    yield* eraseSecrets(challenge.id);
     return yield* findChallenge(challenge.id);
   });
 export const expire = (challenge: Challenge, time: Date) =>

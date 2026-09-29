@@ -8,7 +8,7 @@ import { rows } from "../database/query.js";
 import { databaseTime } from "../database/transaction.js";
 import { persistEvent } from "../notifications/publication.js";
 import { AttemptSnapshot } from "./history-contracts.js";
-import { findAttempt, findOperation, type PublishedAttempt } from "./read.js";
+import { findAttempt, type PublishedAttempt } from "./read.js";
 
 const comparable = ({
   revision: _revision,
@@ -19,18 +19,15 @@ const comparable = ({
 const publishAttempt = (attempt: typeof PublishedAttempt.Type) =>
   Effect.gen(function* () {
     const sql = yield* PgClient.PgClient;
-    const operation = yield* findOperation(attempt.operation_id);
-    const provider = operation.snapshot.providers[attempt.route_position];
-    if (provider === undefined) return yield* Effect.die(new Error("Attempt provider missing"));
     const time = yield* databaseTime;
     const next = yield* Schema.decodeUnknownEffect(AttemptSnapshot)({
       attemptId: attempt.id,
-      operationId: operation.id,
-      projectId: operation.project_id,
+      operationId: attempt.operation_id,
+      projectId: attempt.project_id,
       revision: attempt.revision + 1,
       routingRevision: attempt.routing_revision,
       providerInstanceId: attempt.provider_instance_id,
-      channel: provider.channel,
+      channel: attempt.channel,
       reason: attempt.reason,
       createdAt: attempt.created_at.toISOString(),
       dispatchDeadline: attempt.dispatch_deadline.toISOString(),
@@ -53,11 +50,11 @@ const publishAttempt = (attempt: typeof PublishedAttempt.Type) =>
     )
       return;
     yield* sql`UPDATE otp_router.delivery_attempts SET revision = ${next.revision}, public_snapshot = ${sql.json(next)} WHERE id = ${attempt.id}`;
-    yield* sql`UPDATE otp_router.delivery_operations SET history_updated_at = ${time} WHERE id = ${operation.id}`;
+    yield* sql`UPDATE otp_router.delivery_operations SET history_updated_at = ${time} WHERE id = ${attempt.operation_id}`;
     yield* persistEvent({
       eventId: randomUUID(),
       type: "attempt.updated",
-      projectId: operation.project_id,
+      projectId: attempt.project_id,
       occurredAt: time.toISOString(),
       attempt: next,
     });
@@ -77,8 +74,7 @@ export const transitionAttempts = (mutation: Effect.Effect<ReadonlyArray<unknown
 export const suppressPendingAttempts = (operationId: string, reason?: "fallback") =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'not_invoked' WHERE attempt_id IN (SELECT id FROM otp_router.delivery_attempts WHERE operation_id = ${operationId} AND state = 'pending' ${reason === undefined ? sql`` : sql`AND reason = ${reason}`})`;
     yield* transitionAttempts(
-      sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed' WHERE operation_id = ${operationId} AND state = 'pending' ${reason === undefined ? sql`` : sql`AND reason = ${reason}`} RETURNING *`,
+      sql`UPDATE otp_router.delivery_attempts SET invocation = 'not_invoked', state = 'suppressed' WHERE operation_id = ${operationId} AND state = 'pending' ${reason === undefined ? sql`` : sql`AND reason = ${reason}`} RETURNING *`,
     );
   });

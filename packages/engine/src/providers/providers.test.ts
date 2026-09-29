@@ -422,34 +422,27 @@ it.effect("maps one Meta authentication template send and verifies both callback
       headers: {},
     });
     expect(handshake).toMatchObject({ _tag: "Handshake", status: 200 });
-    const callbackBody = encoder.encode(
-      JSON.stringify({
-        object: "whatsapp_business_account",
-        entry: [
-          {
-            changes: [
-              {
-                field: "messages",
-                value: {
-                  statuses: [{ id: "wamid.1", status: "delivered", timestamp: "1710000000" }],
-                },
-              },
-            ],
-          },
-        ],
-      }),
-    );
-    const callbackSignature = createHmac("sha256", "meta-app-secret")
-      .update(callbackBody)
-      .digest("hex");
-    const events = yield* callback({
-      body: callbackBody,
-      method: "POST",
-      path: "/callbacks/meta",
-      query: {},
-      headers: { "x-hub-signature-256": `sha256=${callbackSignature}` },
-    });
-    expect(events).toMatchObject({
+    const inbound = { messages: [{ id: "wamid.inbound", type: "text", text: { body: "hello" } }] };
+    const delivered = {
+      statuses: [{ id: "wamid.1", status: "delivered", timestamp: "1710000000" }],
+    };
+    const notification = (values: readonly unknown[], authenticated = true) => {
+      const body = encoder.encode(
+        JSON.stringify({
+          object: "whatsapp_business_account",
+          entry: [{ changes: values.map((value) => ({ field: "messages", value })) }],
+        }),
+      );
+      const signature = createHmac("sha256", "meta-app-secret").update(body).digest("hex");
+      return callback({
+        body,
+        method: "POST",
+        path: "/callbacks/meta",
+        query: {},
+        headers: { "x-hub-signature-256": authenticated ? `sha256=${signature}` : "invalid" },
+      });
+    };
+    expect(yield* notification([delivered, inbound])).toMatchObject({
       _tag: "Events",
       events: [
         {
@@ -457,6 +450,17 @@ it.effect("maps one Meta authentication template send and verifies both callback
           status: "delivered",
         },
       ],
+    });
+    expect(yield* notification([inbound])).toEqual({ _tag: "Events", events: [] });
+    expect(yield* notification([inbound], false).pipe(Effect.result)).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "CallbackAuthenticationError" },
+    });
+    expect(
+      yield* notification([inbound, { statuses: [{ id: "wamid.bad" }] }]).pipe(Effect.result),
+    ).toMatchObject({
+      _tag: "Failure",
+      failure: { _tag: "CallbackFormatError" },
     });
   }),
 );

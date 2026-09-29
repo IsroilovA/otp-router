@@ -87,7 +87,7 @@ export const buildSnapshot = (config: RuntimeConfiguration, operation: Operation
     const sql = yield* SqlClient.SqlClient;
     const evidence = yield* rows(
       Schema.Struct({ state: Schema.String, route_position: Schema.Int }),
-      sql`SELECT a.state,a.route_position FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = ${operation.id} AND a.state IN ('accepted','delivered','uncertain') ORDER BY d.committed_at DESC NULLS LAST,a.id`,
+      sql`SELECT a.state,a.route_position FROM otp_router.delivery_attempts a WHERE a.operation_id = ${operation.id} AND a.state IN ('accepted','delivered','uncertain') ORDER BY a.committed_at DESC NULLS LAST,a.id`,
     );
     const accepted = evidence.find(
       (entry) => entry.state === "accepted" || entry.state === "delivered",

@@ -84,7 +84,21 @@ const MetaCallbackSchema = Schema.Struct({
     Schema.Struct({
       changes: Schema.Array(
         Schema.Struct({
-          value: Schema.Struct({ statuses: Schema.Array(MetaStatusSchema) }),
+          value: Schema.Struct({
+            statuses: Schema.optionalKey(Schema.Array(MetaStatusSchema)),
+            messages: Schema.optionalKey(
+              Schema.Array(
+                Schema.Struct({
+                  id: Schema.NonEmptyString,
+                  type: Schema.NonEmptyString,
+                }),
+              ),
+            ),
+          }).check(
+            Schema.makeFilter(
+              (value) => value.statuses !== undefined || value.messages !== undefined,
+            ),
+          ),
           field: Schema.Literal("messages"),
         }),
       ),
@@ -160,11 +174,8 @@ const decodeMetaEvents = (
       Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
     );
     const statuses = callback.entry.flatMap((entry) =>
-      entry.changes.flatMap((change) => change.value.statuses),
+      entry.changes.flatMap((change) => change.value.statuses ?? []),
     );
-    if (statuses.length === 0) {
-      return yield* new CallbackFormatError({ diagnosticCode: "unsupported_event" });
-    }
     if (statuses.length > 1_000) {
       return yield* new CallbackFormatError({ diagnosticCode: "batch_too_large" });
     }

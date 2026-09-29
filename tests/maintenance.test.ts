@@ -424,7 +424,7 @@ describe("database compatibility and maintenance", () => {
     ).toEqual([{ count: 1 }]);
 
     await harness.run(
-      harness.pg`WITH dispatch AS (UPDATE otp_router.attempt_dispatches SET invocation = 'committed', recovery_at = clock_timestamp() + interval '5 minutes', committed_at = clock_timestamp() WHERE attempt_id IN (SELECT id FROM otp_router.delivery_attempts WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'pending')) UPDATE otp_router.delivery_attempts SET state = 'dispatching', acceptance = 'unknown' WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'pending'`,
+      harness.pg`UPDATE otp_router.delivery_attempts SET invocation = 'committed', recovery_at = clock_timestamp() + interval '5 minutes', committed_at = clock_timestamp(), state = 'dispatching', acceptance = 'unknown' WHERE operation_id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${firstChallengeId}) AND state = 'pending'`,
     );
     await Effect.runPromise(
       harness.router.cancel({

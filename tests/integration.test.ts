@@ -776,7 +776,7 @@ describe("PostgreSQL integration", () => {
       const tokenRows = await harness.run(
         rows(
           Schema.Struct({ recipient_token: Schema.String }),
-          harness.pg`SELECT recipient_token FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id::text = ${challengeId}`,
+          harness.pg`SELECT recipient_token FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id::text = ${challengeId}`,
         ),
       );
       const recipientToken = tokenRows[0]?.recipient_token;
@@ -837,7 +837,7 @@ describe("PostgreSQL integration", () => {
             incorrect_guesses: Schema.Int,
             send_count: Schema.Int,
           }),
-          `SELECT verification_state, incorrect_guesses, send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
+          `SELECT verification_state, incorrect_guesses, send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
         ),
       ).toEqual([{ verification_state: "active", incorrect_guesses: 0, send_count: 0 }]);
       expect(
@@ -1243,7 +1243,7 @@ describe("PostgreSQL integration", () => {
     expect(delivery).toEqual([{ state: "accepted", acceptance: "accepted" }]);
     const challenge = await query(
       Schema.Struct({ send_count: Schema.Int }),
-      `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
+      `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
     );
     expect(challenge[0]?.send_count).toBe(1);
   });
@@ -1272,7 +1272,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
   });
@@ -1330,7 +1330,7 @@ describe("PostgreSQL integration", () => {
       expect(
         await query(
           Schema.Struct({ send_count: Schema.Int }),
-          "SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges",
+          "SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges",
         ),
       ).toEqual([{ send_count: 1 }]);
     },
@@ -1393,7 +1393,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
     expect(
@@ -1449,7 +1449,7 @@ describe("PostgreSQL integration", () => {
       expect(
         await query(
           Schema.Struct({ send_count: Schema.Int }),
-          `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
+          `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
         ),
       ).toEqual([{ send_count: 1 }]);
     } finally {
@@ -1465,7 +1465,7 @@ describe("PostgreSQL integration", () => {
     await create();
     const job = await fetchJob();
     await execute(
-      `WITH dispatch AS (UPDATE otp_router.attempt_dispatches SET invocation = 'committed', recovery_at = clock_timestamp() - interval '1 second', committed_at = clock_timestamp() - interval '2 seconds' WHERE attempt_id = '${job.data.attemptId}') UPDATE otp_router.delivery_attempts SET state = 'dispatching', acceptance = 'unknown' WHERE id = '${job.data.attemptId}'`,
+      `UPDATE otp_router.delivery_attempts SET invocation = 'committed', recovery_at = clock_timestamp() - interval '1 second', committed_at = clock_timestamp() - interval '2 seconds', state = 'dispatching', acceptance = 'unknown' WHERE id = '${job.data.attemptId}'`,
     );
     await currentRuntime().run(dispatch(currentRuntime().configuration, job.data));
     expect(primary.sends).toHaveLength(0);
@@ -1534,7 +1534,7 @@ describe("PostgreSQL integration", () => {
       expect(
         await query(
           Schema.Struct({ send_count: Schema.Int, recipient_invalid: Schema.Boolean }),
-          "SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count, recipient_invalid FROM otp_router.delivery_operations o",
+          "SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count, recipient_invalid FROM otp_router.delivery_operations o",
         ),
       ).toEqual([{ send_count: 2, recipient_invalid: false }]);
       expect(await count("delivery_attempts")).toBe(2);
@@ -1626,7 +1626,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        "SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.delivery_operations o",
+        "SELECT (SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.delivery_operations o",
       ),
     ).toEqual([{ send_count: 1 }]);
     expect(primary.sends).toHaveLength(1);
@@ -1761,7 +1761,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 0 }]);
     expect(
@@ -1797,7 +1797,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeIdFrom(created)}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
   });
@@ -2028,7 +2028,7 @@ describe("PostgreSQL integration", () => {
     expect(wrong.body).toMatchObject({ error: { code: "incorrect_code" } });
     const beforeResend = await query(
       Schema.Struct({ expires_at: Schema.Date, incorrect_guesses: Schema.Int }),
-      `SELECT expires_at, incorrect_guesses FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
+      `SELECT expires_at, incorrect_guesses FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
     );
     expect(beforeResend[0]?.incorrect_guesses).toBe(1);
     await execute(
@@ -2066,7 +2066,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ expires_at: Schema.Date, incorrect_guesses: Schema.Int }),
-        `SELECT expires_at, incorrect_guesses FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
+        `SELECT expires_at, incorrect_guesses FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual(beforeResend);
     await Effect.runPromise(
@@ -2117,7 +2117,7 @@ describe("PostgreSQL integration", () => {
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual([{ send_count: 1 }]);
 
@@ -2849,7 +2849,7 @@ it.each([
     expect(
       await query(
         Schema.Struct({ send_count: Schema.Int }),
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${challengeId}'`,
       ),
     ).toEqual([{ send_count: sends }]);
   },

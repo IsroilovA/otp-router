@@ -1,7 +1,7 @@
 import { Redacted } from "effect";
 import { httpSendAuthorizer } from "@otp-router/engine/delivery";
 import { defineConfig } from "@otp-router/server/config";
-import base from "./router.config.js";
+import base from "./router.config.ts";
 
 const required = (name: string) => {
   const value = process.env[name];

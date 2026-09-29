@@ -380,6 +380,27 @@ describe("built process", () => {
         JSON.parse(logLines[0] ?? ""),
       ).message,
     ).toBe("configuration_valid");
+    const authorizedExample = startProcess(
+      [
+        "apps/server/dist/main.js",
+        "--check-config",
+        "--config",
+        "examples/config/authorized.config.ts",
+      ],
+      {
+        DATABASE_URL: fixture.postgres.databaseUrl,
+        OTP_ROUTER_API_KEY: API_KEY,
+        OTP_ROUTER_FAKE_CALLBACK_SECRET: "fake-example-callback",
+        OTP_ROUTER_ENCRYPTION_KEY: Buffer.alloc(32, 1).toString("base64url"),
+        OTP_ROUTER_VERIFICATION_KEY: Buffer.alloc(32, 2).toString("base64url"),
+        OTP_ROUTER_FINGERPRINT_KEY: Buffer.alloc(32, 3).toString("base64url"),
+        OTP_ROUTER_RECIPIENT_KEY: Buffer.alloc(32, 4).toString("base64url"),
+        OTP_ROUTER_AUTHORIZATION_URL: "http://127.0.0.1:9000/reservations",
+        OTP_ROUTER_AUTHORIZATION_TOKEN: "example-authorization-token",
+      },
+    );
+    expect((await authorizedExample.exit).code).toBe(0);
+    expect(authorizedExample.output()).toContain("configuration_valid");
     const missing = startProcess(
       [
         "apps/server/dist/main.js",
@@ -497,7 +518,7 @@ describe("built process", () => {
     ).toContain("active");
     // The expired queue claim alone does not establish that an invocation has timed out.
     await psql(
-      `UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = '${attemptId}' AND invocation = 'committed'`,
+      `UPDATE otp_router.delivery_attempts SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND invocation = 'committed'`,
     );
     await superviseExpiredDeliveryJobs();
     expect(
@@ -597,7 +618,7 @@ describe("built process", () => {
     ).toBe("pending");
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("0");
     expect(
@@ -624,7 +645,7 @@ describe("built process", () => {
     ).toHaveLength(1);
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
@@ -671,7 +692,7 @@ describe("built process", () => {
     );
     // Advancing queue time also advances the independent dispatch recovery lease.
     await psql(
-      `UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = '${attemptId}' AND invocation = 'committed'`,
+      `UPDATE otp_router.delivery_attempts SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND invocation = 'committed'`,
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
@@ -689,7 +710,7 @@ describe("built process", () => {
     ).toHaveLength(0);
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(
@@ -771,7 +792,7 @@ describe("built process", () => {
     );
     // Advancing queue time also advances the independent dispatch recovery lease.
     await psql(
-      `UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = '${attemptId}' AND invocation = 'committed'`,
+      `UPDATE otp_router.delivery_attempts SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE id = '${attemptId}' AND invocation = 'committed'`,
     );
     await superviseExpiredDeliveryJobs();
     workerProcess = startProcess(
@@ -789,7 +810,7 @@ describe("built process", () => {
     ).toHaveLength(1);
     expect(
       await psql(
-        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id WHERE a.operation_id = o.id AND d.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
+        `SELECT send_count FROM (SELECT c.*,o.recipient_token,o.expires_at,(SELECT count(*)::int FROM otp_router.delivery_attempts a WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count FROM otp_router.challenges c JOIN otp_router.delivery_operations o ON o.id = c.operation_id) AS challenges WHERE id = '${created.challengeId}'`,
       ),
     ).toBe("1");
     expect(

@@ -78,21 +78,34 @@ export const lockQuotas = (limits: readonly Limit[]) =>
       yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`quota:${identity}`},0))`;
     }
   });
-export const quotaRetryAt = (limits: readonly Limit[], time: Date) =>
+export const quotaBlocks = (limits: readonly Limit[], time: Date) =>
   Effect.gen(function* () {
+    if (limits.length === 0) return [];
     const sql = yield* SqlClient.SqlClient;
-    let retry: number | undefined;
-    for (const limit of limits) {
-      const events = yield* rows(
-        Schema.Struct({ occurred_at: Schema.Date }),
-        sql`SELECT e.occurred_at FROM otp_router.quota_allocations a JOIN otp_router.quota_events e ON (e.event_id,e.kind) = (a.event_id,a.kind) WHERE a.scope = ${limit.scope} AND a.scope_id = ${limit.scopeId} AND a.kind = ${limit.kind} AND e.occurred_at > ${new Date(time.getTime() - limit.windowMs)} ORDER BY e.occurred_at DESC OFFSET ${limit.maximum - 1} LIMIT 1`,
-      );
-      const blocking = events[0];
-      if (blocking !== undefined)
-        retry = Math.max(retry ?? 0, blocking.occurred_at.getTime() + limit.windowMs);
-    }
-    return retry === undefined ? undefined : new Date(retry).toISOString();
+    return yield* rows(
+      Schema.Struct({ scope: Schema.String, scope_id: Schema.String, retry_at: Schema.Date }),
+      sql`SELECT l.scope, l."scopeId" AS scope_id,
+        max(blocking.occurred_at + l."windowMs" * interval '1 millisecond') AS retry_at
+      FROM jsonb_to_recordset(${JSON.stringify(limits)}::jsonb)
+        AS l(scope text, "scopeId" text, kind text, maximum integer, "windowMs" integer)
+      CROSS JOIN LATERAL (
+        SELECT e.occurred_at FROM otp_router.quota_allocations a
+        JOIN otp_router.quota_events e ON (e.event_id,e.kind) = (a.event_id,a.kind)
+        WHERE a.scope = l.scope AND a.scope_id = l."scopeId" AND a.kind = l.kind
+          AND e.occurred_at > ${time}::timestamptz - l."windowMs" * interval '1 millisecond'
+        ORDER BY e.occurred_at DESC OFFSET l.maximum - 1 LIMIT 1
+      ) blocking GROUP BY l.scope,l."scopeId"`,
+    );
   });
+export const quotaRetryAt = (limits: readonly Limit[], time: Date) =>
+  quotaBlocks(limits, time).pipe(
+    Effect.map((blocks) =>
+      blocks
+        .map((block) => block.retry_at.toISOString())
+        .sort()
+        .at(-1),
+    ),
+  );
 export const checkQuotas = (limits: readonly Limit[], time: Date) =>
   Effect.gen(function* () {
     const retryAt = yield* quotaRetryAt(limits, time);

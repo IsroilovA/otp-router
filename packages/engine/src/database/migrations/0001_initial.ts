@@ -67,6 +67,21 @@ export default Effect.gen(function* () {
     state text NOT NULL CHECK (state IN ('pending','dispatching','accepted','delivered','failed','uncertain','suppressed')),
     acceptance text CHECK (acceptance IN ('accepted','not_accepted','unknown')),
     failure_category text, diagnostic_code text,
+    authorization_state text NOT NULL CHECK (authorization_state IN ('not_required','pending','approved','denied','expired')),
+    authorization_generation integer NOT NULL DEFAULT 0 CHECK (authorization_generation >= 0),
+    project_generation integer NOT NULL DEFAULT 0 CHECK (project_generation >= 0),
+    authorization_retry_at timestamptz, authorization_lease_until timestamptz,
+    approved_at timestamptz, approval_expires_at timestamptz,
+    invocation text NOT NULL DEFAULT 'not_started' CHECK (invocation IN ('not_started','committed','not_invoked')),
+    committed_at timestamptz, recovery_at timestamptz,
+    CHECK ((authorization_state = 'approved') = (approved_at IS NOT NULL)),
+    CHECK ((authorization_state = 'approved') = (approval_expires_at IS NOT NULL)),
+    CHECK (authorization_lease_until IS NULL OR authorization_state = 'pending'),
+    CHECK ((committed_at IS NULL) = (recovery_at IS NULL)),
+    CHECK (invocation <> 'committed' OR committed_at IS NOT NULL),
+    CHECK (invocation <> 'not_started' OR committed_at IS NULL),
+    CHECK (recovery_at > committed_at),
+    CHECK (state <> 'dispatching' OR (invocation = 'committed' AND committed_at IS NOT NULL)),
     UNIQUE (operation_id,id),
     FOREIGN KEY (operation_id,route_position) REFERENCES otp_router.operation_route_steps(operation_id,position),
     CHECK (state NOT IN ('accepted','delivered') OR acceptance IS NOT DISTINCT FROM 'accepted')
@@ -74,46 +89,6 @@ export default Effect.gen(function* () {
   yield* sql`ALTER TABLE otp_router.delivery_operations ADD CONSTRAINT current_operation_attempt
     FOREIGN KEY (id,current_attempt_id) REFERENCES otp_router.delivery_attempts(operation_id,id)
     DEFERRABLE INITIALLY DEFERRED`;
-  yield* sql`CREATE TABLE otp_router.attempt_authorizations (
-    attempt_id uuid PRIMARY KEY REFERENCES otp_router.delivery_attempts(id) ON DELETE CASCADE,
-    state text NOT NULL CHECK (state IN ('not_required','pending','approved','denied','expired')),
-    generation integer NOT NULL DEFAULT 0 CHECK (generation >= 0),
-    project_generation integer NOT NULL DEFAULT 0 CHECK (project_generation >= 0),
-    retry_at timestamptz, lease_until timestamptz, approved_at timestamptz, expires_at timestamptz,
-    CHECK ((state = 'approved') = (approved_at IS NOT NULL)),
-    CHECK ((state = 'approved') = (expires_at IS NOT NULL)),
-    CHECK (lease_until IS NULL OR state = 'pending')
-  )`;
-  yield* sql`CREATE TABLE otp_router.attempt_dispatches (
-    attempt_id uuid PRIMARY KEY REFERENCES otp_router.delivery_attempts(id) ON DELETE CASCADE,
-    invocation text NOT NULL DEFAULT 'not_started' CHECK (invocation IN ('not_started','committed','not_invoked')),
-    committed_at timestamptz, recovery_at timestamptz,
-    CHECK ((committed_at IS NULL) = (recovery_at IS NULL)),
-    CHECK (invocation <> 'committed' OR committed_at IS NOT NULL),
-    CHECK (invocation <> 'not_started' OR committed_at IS NULL),
-    CHECK (recovery_at > committed_at)
-  )`;
-  yield* sql`ALTER TABLE otp_router.delivery_attempts
-    ADD CONSTRAINT attempt_authorization_record FOREIGN KEY (id) REFERENCES otp_router.attempt_authorizations(attempt_id) DEFERRABLE INITIALLY DEFERRED,
-    ADD CONSTRAINT attempt_dispatch_record FOREIGN KEY (id) REFERENCES otp_router.attempt_dispatches(attempt_id) DEFERRABLE INITIALLY DEFERRED`;
-  // Check the final transaction state because commitment and evidence are stored
-  // separately. A dispatching attempt must always have a committed invocation.
-  yield* sql`CREATE FUNCTION otp_router.check_dispatch_commitment() RETURNS trigger LANGUAGE plpgsql AS $$
-    DECLARE target uuid;
-    BEGIN
-      IF TG_TABLE_NAME = 'delivery_attempts' THEN target := NEW.id; ELSE target := NEW.attempt_id; END IF;
-      IF EXISTS (
-        SELECT 1 FROM otp_router.delivery_attempts a JOIN otp_router.attempt_dispatches d ON d.attempt_id = a.id
-        WHERE a.id = target AND a.state = 'dispatching'
-          AND (d.committed_at IS NULL OR d.recovery_at IS NULL OR d.invocation <> 'committed')
-      ) THEN RAISE EXCEPTION 'Dispatching attempt requires a committed invocation' USING ERRCODE = '23514'; END IF;
-      RETURN NULL;
-    END
-  $$`;
-  yield* sql`CREATE CONSTRAINT TRIGGER dispatching_attempt_commitment AFTER INSERT OR UPDATE OF state ON otp_router.delivery_attempts
-    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION otp_router.check_dispatch_commitment()`;
-  yield* sql`CREATE CONSTRAINT TRIGGER committed_attempt_dispatch AFTER INSERT OR UPDATE ON otp_router.attempt_dispatches
-    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION otp_router.check_dispatch_commitment()`;
   // Saved route identity is immutable; evidence may only update an existing attempt.
   yield* sql`CREATE FUNCTION otp_router.reject_identity_change() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'Saved routing identity is immutable' USING ERRCODE = '23514'; END
@@ -126,7 +101,7 @@ export default Effect.gen(function* () {
     EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE UNIQUE INDEX attempts_advancement ON otp_router.delivery_attempts(operation_id,routing_revision,route_position) WHERE reason = 'fallback'`;
   yield* sql`CREATE UNIQUE INDEX attempts_creation ON otp_router.delivery_attempts(operation_id,creation_sequence)`;
-  yield* sql`CREATE INDEX dispatches_recovery ON otp_router.attempt_dispatches(recovery_at) WHERE invocation = 'committed'`;
+  yield* sql`CREATE INDEX attempts_recovery ON otp_router.delivery_attempts(recovery_at) WHERE state = 'dispatching'`;
   yield* sql`CREATE INDEX attempts_pending ON otp_router.delivery_attempts(created_at) WHERE state = 'pending'`;
   // Events and receipts retain historical attribution after domain history is removed.
   yield* sql`CREATE TABLE otp_router.events (

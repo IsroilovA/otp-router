@@ -53,9 +53,8 @@ const authorizationPermitsDispatch = (operation: Operation, delivery: Attempt, t
         delivery.approval_expires_at <= time ||
         delivery.project_generation !== (block?.generation ?? 0)
       ) {
-        yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'not_invoked' WHERE attempt_id = ${delivery.id}`;
         yield* transitionAttempts(
-          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', diagnostic_code = 'approval_unused' WHERE id = ${delivery.id} RETURNING *`,
+          sql`UPDATE otp_router.delivery_attempts SET invocation = 'not_invoked', state = 'suppressed', diagnostic_code = 'approval_unused' WHERE id = ${delivery.id} RETURNING *`,
         );
         yield* changed(operation.id);
         return false;
@@ -96,9 +95,8 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       if (delivery.state !== "pending") return undefined;
       if (stale(operation, delivery, job)) {
         yield* count("suppressed", "ineligible");
-        yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'not_invoked' WHERE attempt_id = ${delivery.id}`;
         yield* transitionAttempts(
-          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
+          sql`UPDATE otp_router.delivery_attempts SET invocation = 'not_invoked', state = 'suppressed' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
         );
         return undefined;
       }
@@ -114,9 +112,8 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       );
       if (!sharedBudget || operation.send_count >= operation.snapshot.maxSends) {
         yield* count("suppressed", "rate_limited");
-        yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'not_invoked' WHERE attempt_id = ${delivery.id}`;
         yield* transitionAttempts(
-          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id} RETURNING *`,
+          sql`UPDATE otp_router.delivery_attempts SET invocation = 'not_invoked', state = 'suppressed', diagnostic_code = 'rate_limited' WHERE id = ${delivery.id} RETURNING *`,
         );
         return undefined;
       }
@@ -173,9 +170,8 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* countQuotas(limits, delivery.id, time);
       yield* extendAdmission(operation.recipient_token, delivery.id, time);
       // Allow outcome persistence time beyond the provider timeout before independent recovery.
-      yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'committed', committed_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)} WHERE attempt_id = ${delivery.id}`;
       yield* transitionAttempts(
-        sql`UPDATE otp_router.delivery_attempts SET state = 'dispatching', acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
+        sql`UPDATE otp_router.delivery_attempts SET invocation = 'committed', committed_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, state = 'dispatching', acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
       );
       yield* sql`UPDATE otp_router.delivery_operations SET next_user_send_at = GREATEST(next_user_send_at,${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)}) WHERE id = ${operation.id}`;
       return {

@@ -42,10 +42,8 @@ const claimAuthorization = (config: RuntimeConfiguration, job: DeliveryJob) =>
         operation.routing_revision !== job.routingRevision ||
         time >= attempt.dispatch_deadline
       ) {
-        yield* sql`UPDATE otp_router.attempt_authorizations SET state = 'expired', lease_until = NULL WHERE attempt_id = ${attempt.id}`;
-        yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'not_invoked' WHERE attempt_id = ${attempt.id}`;
         yield* transitionAttempts(
-          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', diagnostic_code = 'authorization_expired' WHERE id = ${attempt.id} RETURNING *`,
+          sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'expired', authorization_lease_until = NULL, invocation = 'not_invoked', state = 'suppressed', diagnostic_code = 'authorization_expired' WHERE id = ${attempt.id} RETURNING *`,
         );
         yield* changed(operation.id);
         return undefined;
@@ -76,7 +74,7 @@ const claimAuthorization = (config: RuntimeConfiguration, job: DeliveryJob) =>
         dispatchDeadline: attempt.dispatch_deadline.toISOString(),
       });
       const generation = attempt.authorization_generation + 1;
-      yield* sql`UPDATE otp_router.attempt_authorizations SET generation = ${generation}, lease_until = ${new Date(time.getTime() + 15000)}, project_generation = ${block?.generation ?? 0} WHERE attempt_id = ${attempt.id}`;
+      yield* sql`UPDATE otp_router.delivery_attempts SET authorization_generation = ${generation}, authorization_lease_until = ${new Date(time.getTime() + 15000)}, project_generation = ${block?.generation ?? 0} WHERE id = ${attempt.id}`;
       yield* enqueueDelivery(job, new Date(time.getTime() + 15000));
       return { request, generation, projectGeneration: block?.generation ?? 0 };
     }),
@@ -99,9 +97,8 @@ const waitForAuthorization = (
     const retry = new Date(
       Math.max(time.getTime() + 5000, retryAt === undefined ? 0 : Date.parse(retryAt)),
     );
-    yield* sql`UPDATE otp_router.attempt_authorizations SET lease_until = NULL, retry_at = ${retry} WHERE attempt_id = ${attempt.id}`;
     yield* transitionAttempts(
-      sql`UPDATE otp_router.delivery_attempts SET diagnostic_code = 'authorization_pending' WHERE id = ${attempt.id} RETURNING *`,
+      sql`UPDATE otp_router.delivery_attempts SET authorization_lease_until = NULL, authorization_retry_at = ${retry}, diagnostic_code = 'authorization_pending' WHERE id = ${attempt.id} RETURNING *`,
     );
     if (attempt.state === "pending" && operation.state === "active")
       yield* enqueueDelivery(
@@ -143,10 +140,8 @@ const finishAuthorization = (
           const until = new Date(Math.max(time.getTime() + 1000, Date.parse(value.retryAt)));
           yield* sql`INSERT INTO otp_router.project_send_blocks(project_id,blocked_until) VALUES (${operation.project_id},${until}) ON CONFLICT (project_id) DO UPDATE SET blocked_until = GREATEST(project_send_blocks.blocked_until,EXCLUDED.blocked_until), generation = project_send_blocks.generation + 1`;
         }
-        yield* sql`UPDATE otp_router.attempt_authorizations SET state = 'denied', lease_until = NULL WHERE attempt_id = ${attempt.id}`;
-        yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'not_invoked' WHERE attempt_id = ${attempt.id}`;
         yield* transitionAttempts(
-          sql`UPDATE otp_router.delivery_attempts SET state = 'suppressed', diagnostic_code = 'authorization_denied' WHERE id = ${attempt.id} RETURNING *`,
+          sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'denied', authorization_lease_until = NULL, invocation = 'not_invoked', state = 'suppressed', diagnostic_code = 'authorization_denied' WHERE id = ${attempt.id} RETURNING *`,
         );
         yield* changed(operation.id);
         return;
@@ -162,10 +157,8 @@ const finishAuthorization = (
         validUntil > time &&
         (block?.generation ?? 0) === claim.projectGeneration;
       // Even a stale approval is durable evidence for reservation release. It cannot send.
-      yield* sql`UPDATE otp_router.attempt_authorizations SET state = 'approved', approved_at = ${time}, expires_at = ${validUntil}, lease_until = NULL WHERE attempt_id = ${attempt.id}`;
-      yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = ${usable ? "not_started" : "not_invoked"} WHERE attempt_id = ${attempt.id}`;
       yield* transitionAttempts(
-        sql`UPDATE otp_router.delivery_attempts SET state = ${usable ? "pending" : "suppressed"}, diagnostic_code = ${usable ? null : "approval_unused"} WHERE id = ${attempt.id} RETURNING *`,
+        sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'approved', approved_at = ${time}, approval_expires_at = ${validUntil}, authorization_lease_until = NULL, invocation = ${usable ? "not_started" : "not_invoked"}, state = ${usable ? "pending" : "suppressed"}, diagnostic_code = ${usable ? null : "approval_unused"} WHERE id = ${attempt.id} RETURNING *`,
       );
       yield* changed(operation.id);
     }),
@@ -197,7 +190,7 @@ export const recoverAuthorizations = (config: RuntimeConfiguration) =>
       const sql = yield* SqlClient.SqlClient;
       const due = yield* rows(
         Schema.Struct({ id: Schema.String, routing_revision: Schema.Int }),
-        sql`SELECT a.id,a.routing_revision FROM otp_router.delivery_attempts a JOIN otp_router.delivery_operations o ON o.id = a.operation_id JOIN otp_router.attempt_authorizations u ON u.attempt_id = a.id WHERE a.state = 'pending' AND o.authorization_required AND o.state = 'active' AND (u.retry_at IS NULL OR u.retry_at <= clock_timestamp()) AND (u.lease_until IS NULL OR u.lease_until <= clock_timestamp()) ORDER BY a.created_at LIMIT 1000`,
+        sql`SELECT a.id,a.routing_revision FROM otp_router.delivery_attempts a JOIN otp_router.delivery_operations o ON o.id = a.operation_id WHERE a.state = 'pending' AND o.authorization_required AND o.state = 'active' AND (a.authorization_retry_at IS NULL OR a.authorization_retry_at <= clock_timestamp()) AND (a.authorization_lease_until IS NULL OR a.authorization_lease_until <= clock_timestamp()) ORDER BY a.created_at LIMIT 1000`,
       );
       for (const attempt of due)
         yield* enqueueDelivery({

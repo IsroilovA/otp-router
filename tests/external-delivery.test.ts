@@ -464,7 +464,7 @@ describe("independent durable external code delivery", () => {
     );
     await app().run(
       app()
-        .pg`UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${payload.attemptId}`,
+        .pg`UPDATE otp_router.delivery_attempts SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${payload.attemptId}`,
     );
     await Promise.all([
       app().run(cleanup(app().configuration)),

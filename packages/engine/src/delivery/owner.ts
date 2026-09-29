@@ -1,3 +1,4 @@
+import type { Operation } from "./records.js";
 import type { Snapshot } from "./contracts.js";
 import { Context, type Effect, type Schema, type Cause } from "effect";
 import type { PgClient } from "@effect/sql-pg";
@@ -19,7 +20,7 @@ type OwnerEffect<A> = Effect.Effect<
 export class DeliveryOwner extends Context.Service<
   DeliveryOwner,
   {
-    readonly synchronize: (operationId: string, time: Date) => OwnerEffect<string>;
-    readonly publish: (ownerId: string, time: Date, delivery: Snapshot) => OwnerEffect<void>;
+    readonly synchronize: (operation: Operation) => OwnerEffect<void>;
+    readonly publish: (operation: Operation, time: Date, delivery: Snapshot) => OwnerEffect<void>;
   }
 >()("otp-router/DeliveryOwner") {}

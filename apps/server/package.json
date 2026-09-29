@@ -11,9 +11,10 @@
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.116",
     "@effect/platform-node": "4.0.0-rc.116",
-    "@otp-router/engine": "workspace:*"
+    "@otp-router/engine": "workspace:*",
+    "effect": "4.0.0-rc.116",
+    "jsonc-parser": "3.3.1"
   },
   "exports": {
     ".": {

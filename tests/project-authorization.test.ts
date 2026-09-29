@@ -176,7 +176,7 @@ const job = async () => {
 const makeRetryDue = (id: string) =>
   app().run(
     app()
-      .pg`UPDATE otp_router.attempt_authorizations SET retry_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${id}`,
+      .pg`UPDATE otp_router.delivery_attempts SET authorization_retry_at = clock_timestamp() - interval '1 second' WHERE id = ${id}`,
   );
 
 beforeAll(async () => {
@@ -318,30 +318,56 @@ describe("project isolation and authorization", () => {
     expect(sent).toHaveLength(1);
   });
 
-  it("records unused approval when closure races authorization without holding a transaction over HTTP", async () => {
+  it("freezes closure while late failure and resend authorization still update attempt history", async () => {
     const created = await create();
+    const initial = await job();
+    await app().run(dispatch(app().configuration, initial));
+    await ageAdmission(app());
+    await app().run(
+      app()
+        .pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id = ${created.body.operationId}`,
+    );
+    await Effect.runPromise(
+      app().delivery.deliver({
+        ...request("alpha", { action: "resend" as const }),
+        operationId: created.body.operationId,
+      }),
+    );
     const work = await job();
     mode = "blocked";
     const sending = app().run(dispatch(app().configuration, work));
     await entered.promise;
     try {
-      await Effect.runPromise(
+      const closed = await Effect.runPromise(
         app().delivery.close({ ...request("alpha", {}), operationId: created.body.operationId }),
       );
+      expect(closed.body).toMatchObject({ state: "closed", provider: { id: "primary" } });
+      await app().run(
+        recordOutcome(app().configuration, initial.attemptId, {
+          state: "failed",
+          acceptance: "accepted",
+          diagnosticCode: "unclassified",
+        }),
+      );
+      release.resolve();
+      await sending;
+      const current = await Effect.runPromise(
+        app().delivery.status("alpha", created.body.operationId),
+      );
+      expect({ ...current.body, serverTime: closed.body.serverTime }).toEqual(closed.body);
     } finally {
       release.resolve();
+      await sending;
     }
-    await sending;
-    expect(sent).toHaveLength(0);
+    expect(sent).toHaveLength(1);
     expect(await Effect.runPromise(app().history.attempt("alpha", work.attemptId))).toMatchObject({
       state: "suppressed",
       authorization: { state: "approved" },
       invocation: "not_invoked",
     });
     expect(
-      (await Effect.runPromise(app().delivery.status("alpha", created.body.operationId))).body
-        .state,
-    ).toBe("closed");
+      await Effect.runPromise(app().history.attempt("alpha", initial.attemptId)),
+    ).toMatchObject({ state: "failed", acceptance: "accepted" });
   });
 
   it("never repeats a committed dispatch after a crash, even with durable approval", async () => {
@@ -351,7 +377,7 @@ describe("project isolation and authorization", () => {
     await app().run(dispatchGate(app().configuration, work));
     await app().run(
       app()
-        .pg`UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${work.attemptId}`,
+        .pg`UPDATE otp_router.delivery_attempts SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${work.attemptId}`,
     );
     await app().run(recoverDispatches(app().configuration));
     await app().run(dispatch(app().configuration, work));
@@ -726,7 +752,7 @@ it("ignores duplicate authorization wakeups until the dispatch recovery deadline
   expect(sent).toHaveLength(0);
   await app().run(
     app()
-      .pg`UPDATE otp_router.attempt_dispatches SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE attempt_id = ${work.attemptId}`,
+      .pg`UPDATE otp_router.delivery_attempts SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${work.attemptId}`,
   );
   await app().run(dispatch(app().configuration, work));
   expect(await Effect.runPromise(app().history.attempt("alpha", work.attemptId))).toMatchObject({
@@ -875,13 +901,7 @@ it("rejects attempts, current pointers, and correlations outside their saved rou
     h.pg`INSERT INTO otp_router.provider_correlations(provider_instance_id,reference,attempt_id) VALUES ('secondary','wrong-provider',${firstJob.attemptId})`,
   );
   await reject(
-    h.pg`DELETE FROM otp_router.attempt_authorizations WHERE attempt_id = ${firstJob.attemptId}`,
-  );
-  await reject(
-    h.pg`DELETE FROM otp_router.attempt_dispatches WHERE attempt_id = ${firstJob.attemptId}`,
-  );
-  await reject(
-    h.pg`UPDATE otp_router.attempt_authorizations SET state = 'approved' WHERE attempt_id = ${firstJob.attemptId}`,
+    h.pg`UPDATE otp_router.delivery_attempts SET authorization_state = 'approved' WHERE id = ${firstJob.attemptId}`,
   );
   await reject(
     h.pg`UPDATE otp_router.delivery_attempts SET state = 'dispatching' WHERE id = ${firstJob.attemptId}`,

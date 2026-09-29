@@ -1,11 +1,12 @@
 import { DeliveryOwner } from "./owner.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
+import { single } from "../database/query.js";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { persistEvent } from "../notifications/publication.js";
 import { databaseTime } from "../database/transaction.js";
-import type { DeliveryEvent, Snapshot } from "./contracts.js";
+import { type DeliveryEvent, Snapshot } from "./contracts.js";
 import { canonical } from "../crypto.js";
 import { Changes } from "./changes.js";
 import { findOperation } from "./store.js";
@@ -14,11 +15,11 @@ import type { Operation } from "./records.js";
 
 const comparable = ({ revision: _revision, serverTime: _time, ...value }: Snapshot) =>
   canonical(value);
-export const publish = (config: RuntimeConfiguration, id: string, time: Date) =>
+export const publish = (config: RuntimeConfiguration, operation: Operation, time: Date) =>
   Effect.gen(function* () {
-    const operation = yield* findOperation(id);
-    const next = yield* buildSnapshot(config, operation, time);
     const previous = operation.public_snapshot;
+    if (previous?.state === "closed" || previous?.state === "expired") return previous;
+    const next = yield* buildSnapshot(config, operation, time);
     if (previous !== null && comparable(previous) === comparable(next)) return previous;
     const sql = yield* PgClient.PgClient;
     const event: Omit<DeliveryEvent, "sequence"> = {
@@ -28,7 +29,7 @@ export const publish = (config: RuntimeConfiguration, id: string, time: Date) =>
       occurredAt: time.toISOString(),
       delivery: next,
     };
-    yield* sql`UPDATE otp_router.delivery_operations SET public_revision = ${next.revision}, public_snapshot = ${sql.json(next)} WHERE id = ${id}`;
+    yield* sql`UPDATE otp_router.delivery_operations SET public_revision = ${next.revision}, public_snapshot = ${sql.json(next)} WHERE id = ${operation.id}`;
     yield* persistEvent(event);
     return next;
   });
@@ -40,10 +41,8 @@ export const flushChanges = (config: RuntimeConfiguration, time?: Date) =>
       const publishedAt = time ?? (yield* databaseTime);
       const operation = yield* findOperation(id);
       const owner = operation.owner === "challenge" ? yield* DeliveryOwner : undefined;
-      const ownerId = owner === undefined ? undefined : yield* owner.synchronize(id, publishedAt);
-      const delivery = yield* publish(config, id, publishedAt);
-      if (owner !== undefined && ownerId !== undefined)
-        yield* owner.publish(ownerId, publishedAt, delivery);
+      const delivery = yield* publish(config, operation, publishedAt);
+      if (owner !== undefined) yield* owner.publish(operation, publishedAt, delivery);
     }
     changes.clear();
   });
@@ -51,7 +50,11 @@ export const flushChanges = (config: RuntimeConfiguration, time?: Date) =>
 export const snapshot = (config: RuntimeConfiguration, operation: Operation, time: Date) =>
   Effect.gen(function* () {
     yield* flushChanges(config, time);
-    const current = yield* findOperation(operation.id);
+    const sql = yield* PgClient.PgClient;
+    const current = yield* single(
+      Schema.Struct({ public_snapshot: Schema.NullOr(Snapshot) }),
+      sql`SELECT public_snapshot FROM otp_router.delivery_operations WHERE id = ${operation.id}`,
+    );
     if (current.public_snapshot === null)
       return yield* Effect.die(new Error("Delivery snapshot missing after publication"));
     return { ...current.public_snapshot, serverTime: time.toISOString() };

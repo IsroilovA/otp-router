@@ -27,18 +27,16 @@ export const mergeLockedOutcome = (
     const decision = decideOutcome(operation, delivery, outcome);
     if (outcome.retryAt !== undefined)
       yield* sql`INSERT INTO otp_router.provider_restrictions(provider_instance_id,retry_at) VALUES (${delivery.provider_instance_id},${outcome.retryAt}) ON CONFLICT (provider_instance_id) DO UPDATE SET retry_at = GREATEST(provider_restrictions.retry_at,EXCLUDED.retry_at)`;
-    if (outcome.notInvoked === true)
-      yield* sql`UPDATE otp_router.attempt_dispatches SET invocation = 'not_invoked' WHERE attempt_id = ${delivery.id}`;
     if (!decision.applies) {
       if (outcome.notInvoked === true)
         yield* transitionAttempts(
-          sql`SELECT id FROM otp_router.delivery_attempts WHERE id = ${delivery.id}`,
+          sql`UPDATE otp_router.delivery_attempts SET invocation = 'not_invoked' WHERE id = ${delivery.id} RETURNING id`,
         );
       return;
     }
     const evidence = decision.evidence;
     yield* transitionAttempts(
-      sql`UPDATE otp_router.delivery_attempts SET state = ${evidence.state}, acceptance = ${evidence.acceptance}, failure_category = ${evidence.failure_category}, diagnostic_code = ${evidence.diagnostic_code} WHERE id = ${delivery.id} RETURNING *`,
+      sql`UPDATE otp_router.delivery_attempts SET invocation = ${outcome.notInvoked === true ? "not_invoked" : delivery.invocation}, state = ${evidence.state}, acceptance = ${evidence.acceptance}, failure_category = ${evidence.failure_category}, diagnostic_code = ${evidence.diagnostic_code} WHERE id = ${delivery.id} RETURNING *`,
     );
     if (operation.state === "active" && decision.changed) yield* changed(operation.id);
     if (decision.stopAutomatic)

@@ -1,4 +1,4 @@
-import { commonSendLimits, providerSendLimits, quotaRetryAt } from "../delivery/quotas.js";
+import { commonSendLimits, providerSendLimits, quotaBlocks } from "../delivery/quotas.js";
 import { deliveryWindowFits } from "../providers/timing.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
@@ -33,32 +33,41 @@ export const availableProviders = (
       Schema.Struct({ provider_instance_id: Schema.String, retry_at: Schema.Date }),
       sql`SELECT provider_instance_id,retry_at FROM otp_router.provider_restrictions WHERE retry_at > ${time}`,
     );
-    const commonRetry = yield* quotaRetryAt(
-      commonSendLimits(config.settings, operation.recipient_token, operation.project_id),
-      time,
-    );
     const candidates = operation.snapshot.providers.flatMap((provider, position) =>
       providerCompatible(config, provider) &&
       deliveryWindowFits(provider, operation.expires_at.getTime() - time.getTime())
         ? [{ provider, position }]
         : [],
     );
-    return yield* Effect.forEach(candidates, ({ provider, position }) =>
-      Effect.gen(function* () {
-        const providerRetry = yield* quotaRetryAt(
+    const blocks = yield* quotaBlocks(
+      [
+        ...commonSendLimits(config.settings, operation.recipient_token, operation.project_id),
+        ...candidates.flatMap(({ provider }) =>
           providerSendLimits(config.settings, provider.providerInstanceId),
-          time,
-        );
-        const restriction = restrictions.find(
-          (row) => row.provider_instance_id === provider.providerInstanceId,
-        );
-        const retryAt = [commonRetry, providerRetry, restriction?.retry_at.toISOString()]
-          .filter((value) => value !== undefined)
-          .sort()
-          .at(-1);
-        return { provider, position, retryAt };
-      }),
+        ),
+      ],
+      time,
     );
+    const commonRetry = blocks
+      .filter((block) => block.scope !== "provider")
+      .map((block) => block.retry_at.toISOString())
+      .sort()
+      .at(-1);
+    return candidates.map(({ provider, position }) => {
+      const providerRetry = blocks
+        .find(
+          (block) => block.scope === "provider" && block.scope_id === provider.providerInstanceId,
+        )
+        ?.retry_at.toISOString();
+      const restriction = restrictions.find(
+        (row) => row.provider_instance_id === provider.providerInstanceId,
+      );
+      const retryAt = [commonRetry, providerRetry, restriction?.retry_at.toISOString()]
+        .filter((value) => value !== undefined)
+        .sort()
+        .at(-1);
+      return { provider, position, retryAt };
+    });
   });
 
 export const chooseAvailable = (available: readonly ProviderAvailability[]) =>

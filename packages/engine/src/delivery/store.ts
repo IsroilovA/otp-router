@@ -1,3 +1,4 @@
+import { DeliveryOwner } from "./owner.js";
 import { suppressPendingAttempts } from "./attempts.js";
 import { changed } from "./changes.js";
 import { SqlClient } from "effect/unstable/sql";
@@ -29,8 +30,10 @@ export const terminate = (operation: Operation, state: "closed" | "expired", tim
     const sql = yield* SqlClient.SqlClient;
     yield* sql`UPDATE otp_router.delivery_operations SET state = ${state}, terminal_at = ${time}, routing_revision = routing_revision + 1, automatic_stopped = true WHERE id = ${operation.id} AND state IN ('prepared','active')`;
     yield* eraseSecrets(operation.id);
+    const terminal = yield* findOperation(operation.id);
+    if (terminal.owner === "challenge") yield* (yield* DeliveryOwner).synchronize(terminal);
     yield* changed(operation.id);
-    return yield* findOperation(operation.id);
+    return terminal;
   });
 export const expire = (operation: Operation, time: Date) =>
   (operation.state === "prepared" || operation.state === "active") && time >= operation.expires_at
