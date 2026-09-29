@@ -10,19 +10,97 @@ import {
   DeliveryResult,
   type OperationResult,
 } from "@otp-router/engine/challenges";
-export const ErrorCode = Schema.Union([
-  DomainErrorCode,
-  Schema.Literals(["unauthorized", "request_too_large", "internal_error"]),
+export const ErrorCode = Schema.Literals([
+  ...DomainErrorCode.literals,
+  "unauthorized",
+  "request_too_large",
+  "internal_error",
 ]);
 export type ErrorCode = typeof ErrorCode.Type;
+const ErrorFields = {
+  message: Schema.String,
+  requestId: Schema.String,
+  retryAt: Schema.optionalKey(Schema.String),
+};
+const PlainErrorDetail = Schema.Struct({
+  ...ErrorFields,
+  code: Schema.Literals(ErrorCode.literals.filter((code) => code !== "incorrect_code")),
+});
+const IncorrectCodeDetail = Schema.Struct({
+  ...ErrorFields,
+  code: Schema.Literal("incorrect_code"),
+  reason: Schema.optionalKey(Schema.Literal("locked")),
+});
+const errorEnvelope = <
+  Codes extends Schema.Top & { readonly Type: Exclude<ErrorCode, "incorrect_code"> },
+>(
+  identifier: string,
+  codes: Codes,
+) =>
+  Schema.Struct({
+    error: Schema.Struct({
+      ...PlainErrorDetail.fields,
+      code: codes,
+    }),
+  }).annotate({ identifier });
+
+export const InvalidRequestError = errorEnvelope(
+  "InvalidRequestError",
+  Schema.Literal("invalid_request"),
+);
+export const UnauthorizedError = errorEnvelope("UnauthorizedError", Schema.Literal("unauthorized"));
+export const NotFoundError = errorEnvelope(
+  "NotFoundError",
+  Schema.Literals(["challenge_not_found", "operation_not_found"]),
+);
+export const ConflictError = errorEnvelope(
+  "ConflictError",
+  Schema.Literals([
+    "idempotency_conflict",
+    "request_in_progress",
+    "challenge_state_conflict",
+    "operation_state_conflict",
+    "managed_operation",
+  ]),
+);
+export const UnavailableChallengeError = errorEnvelope(
+  "UnavailableChallengeError",
+  Schema.Literals(["challenge_unavailable", "operation_unavailable"]),
+);
+export const RequestTooLargeError = errorEnvelope(
+  "RequestTooLargeError",
+  Schema.Literal("request_too_large"),
+);
+export const UnprocessableError = Schema.Struct({
+  error: Schema.Union([
+    IncorrectCodeDetail,
+    Schema.Struct({
+      ...PlainErrorDetail.fields,
+      code: Schema.Literals([
+        "invalid_recipient",
+        "delivery_option_not_allowed",
+        "policy_not_allowed",
+        "delivery_unavailable",
+      ]),
+    }),
+  ]),
+}).annotate({ identifier: "UnprocessableError" });
+export const RateLimitError = errorEnvelope(
+  "RateLimitError",
+  Schema.Literals(["rate_limited", "cooldown_active"]),
+);
+export const InternalError = errorEnvelope("InternalError", Schema.Literal("internal_error"));
+export const TemporarilyUnavailableError = errorEnvelope(
+  "TemporarilyUnavailableError",
+  Schema.Literal("temporarily_unavailable"),
+);
+
+export const HistoryCursorExpiredError = errorEnvelope(
+  "HistoryCursorExpired",
+  Schema.Literal("history_cursor_expired"),
+);
 export const ErrorBody = Schema.Struct({
-  error: Schema.Struct({
-    code: ErrorCode,
-    message: Schema.String,
-    requestId: Schema.String,
-    retryAt: Schema.optionalKey(Schema.String),
-    reason: Schema.optionalKey(Schema.Literal("locked")),
-  }),
+  error: Schema.Union([PlainErrorDetail, IncorrectCodeDetail]),
 });
 export const ResponseBody = Schema.Union([
   DeliverySnapshot,

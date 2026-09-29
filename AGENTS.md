@@ -4,7 +4,7 @@ Build a self-hosted OTP router that gives applications one integration for manag
 
 ## Scope and architecture
 
-- Private, unreleased pnpm workspace with no customers. Make direct breaking changes; remove superseded code and update callers together. No compatibility shims or parallel implementations.
+- Unreleased pnpm workspace with no customers. Make direct breaking changes; remove superseded code and update callers together. No compatibility shims or parallel implementations.
 - Implement the requested scope. Add dependencies, abstractions, and shared modules only for concrete needs.
 - Organize behavior by feature; colocate its operations, schemas, SQL, and tests. Avoid global service/repository/type buckets, unnecessary barrels, and cycles.
 - `packages/engine` owns reusable behavior; `apps/server` owns HTTP and process lifecycle. Consumers use supported package exports, never engine source paths or private records.
@@ -20,7 +20,7 @@ Build a self-hosted OTP router that gives applications one integration for manag
 
 ## Verification
 
-- Use pnpm and exact dependency versions. `pnpm check` covers TypeScript, Effect diagnostics, typed linting, and formatting; `pnpm build` emits engine before server.
+- Use pnpm and exact dependency versions. `pnpm check` covers TypeScript, Effect diagnostics, typed linting, and formatting; `pnpm build` emits engine, server, then the client.
 - Fix failures without weakening checks. Justified lint exceptions use `oxlint-disable-next-line <rule> -- <reason>`; keep them narrow and remove stale directives.
 - Run checks at the end of a meaningful phase; repeat only after relevant changes or failures. Report what ran and material gaps.
 

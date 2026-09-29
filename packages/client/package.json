@@ -1,0 +1,43 @@
+{
+  "name": "@otp-router/client",
+  "version": "0.1.0-alpha.1",
+  "description": "Typed backend HTTP client for self-hosted OTP Router",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=24"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "node scripts/build.ts",
+    "pack:check": "node scripts/check-pack.ts"
+  },
+  "dependencies": {
+    "effect": "4.0.0-rc.116"
+  },
+  "devDependencies": {
+    "@otp-router/server": "workspace:*",
+    "esbuild": "0.28.2",
+    "rollup": "4.63.4",
+    "rollup-plugin-dts": "6.5.1",
+    "typescript": "npm:@typescript/typescript6@6.0.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IsroilovA/otp-router.git",
+    "directory": "packages/client"
+  }
+}

@@ -2,6 +2,8 @@
 
 Call the router from an authorized backend over a private network or TLS. A configured backend service principal authenticates with a Bearer credential and explicit project grants; never expose that credential to browsers or mobile clients. See [project authentication and isolation](projects.md). Your backend must bind each operation to its authorized user/session and business action. An operation ID alone is not authorization.
 
+TypeScript backends can use the [typed client](client.md), which follows this same HTTP contract.
+
 Endpoint schemas own paths, request/response shapes, validation limits, and status codes. Generate their reference after building:
 
 ```sh

@@ -9,7 +9,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "pnpm --filter @otp-router/engine build && pnpm --filter @otp-router/server build",
+    "build": "pnpm --filter @otp-router/engine build && pnpm --filter @otp-router/server build && pnpm --filter @otp-router/client build",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check",
     "format": "biome format --write .",
     "format:check": "biome format .",
@@ -27,16 +27,19 @@
     "@effect/sql-pg": "4.0.0-rc.116",
     "@effect/tsgo": "0.45.0",
     "@effect/vitest": "4.0.0-rc.116",
+    "@otp-router/client": "workspace:*",
     "@otp-router/engine": "workspace:*",
     "@otp-router/server": "workspace:*",
     "@types/node": "24.13.6",
     "@types/pg": "8.23.1",
+    "@types/semver": "7.8.0",
     "effect": "4.0.0-rc.116",
     "eslint-plugin-sonarjs": "4.2.1",
     "libphonenumber-js": "1.13.13",
     "oxlint": "1.83.0",
     "oxlint-tsgolint": "7.0.2002",
     "pg-boss": "12.33.2",
+    "semver": "7.8.5",
     "standardwebhooks": "1.1.1",
     "typescript": "7.0.2",
     "vitest": "5.0.1"

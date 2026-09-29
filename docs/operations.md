@@ -2,6 +2,17 @@
 
 Use a dedicated PostgreSQL database and compatible configuration across all roles. Run at least one worker or combined process; an API-only deployment can accept work without delivering it. Pin the image and configuration together, and keep secrets outside image layers.
 
+The [published-image Compose example](../examples/deployment/compose.yaml) runs a combined router with PostgreSQL. Set `OTP_ROUTER_ENV_FILE` to an absolute path to a router-only environment file containing `DATABASE_URL` (using the `postgres` hostname) and the secrets read by your configuration entry. Set `OTP_ROUTER_POSTGRES_ENV_FILE` to a separate absolute path containing `POSTGRES_PASSWORD`; its value must match the password in `DATABASE_URL`. Set `OTP_ROUTER_CONFIG_DIR` to an absolute path containing the entry named by `OTP_ROUTER_CONFIG_FILE` (default `router.config.ts`). Keep these files outside the repository, restrict their permissions, and make the configuration directory readable by the image's `node` user. Configure a new deployment identity and real providers before directing production traffic; the [fake local entry](../examples/config/router.config.ts) is only for tests and sends no messages.
+
+```sh
+export OTP_ROUTER_ENV_FILE=/absolute/path/router.env
+export OTP_ROUTER_POSTGRES_ENV_FILE=/absolute/path/postgres.env
+export OTP_ROUTER_CONFIG_DIR=/absolute/path/config
+docker compose -f examples/deployment/compose.yaml up -d --wait
+```
+
+The example defaults to `ghcr.io/isroilova/otp-router:0.1.0-alpha.1`, binds the application port to host loopback, and keeps the internal readiness endpoint inside the container. Pin the router and PostgreSQL image digests for a real deployment and place a TLS or private-network frontend in front of the application as needed. `down` retains the database volume; `down --volumes` removes it. The example's 40-second container stop grace exceeds the default 30-second application grace; increase it if your configuration increases `shutdownGraceMs`.
+
 ## Startup and shutdown
 
 Allow startup to apply router and queue migrations; the database account needs schema/migration privileges. Never downgrade a newer schema. Readiness requires initialized local resources and PostgreSQL, not messaging-provider availability. Monitor each role independently.

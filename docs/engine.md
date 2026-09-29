@@ -1,6 +1,6 @@
 # Managed and external capabilities
 
-The self-hosted HTTP server exposes managed verification and external-code delivery. Integrate through the [HTTP contract](api.md). The private engine package shares behavior between HTTP handlers, workers, and callbacks; it is not a separately released SDK. [Package exports](../packages/engine/package.json) also support trusted deployment extensions, as shown in the [custom adapter](../examples/custom-adapter/README.md).
+The self-hosted HTTP server exposes managed verification and external-code delivery. Integrate through the [HTTP contract](api.md), directly or with the [TypeScript client](client.md). The private engine package shares behavior between HTTP handlers, workers, and callbacks; it is not a separately released SDK. [Package exports](../packages/engine/package.json) also support trusted deployment extensions, as shown in the [custom adapter](../examples/custom-adapter/README.md).
 
 ## Managed verification
 

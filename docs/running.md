@@ -55,6 +55,15 @@ Stop the host process before `pnpm db:down`; the latter preserves its developmen
 
 The service image uses [apps/server/Dockerfile](../apps/server/Dockerfile). Install custom adapters into a deployment image as shown by the [adapter example](../examples/custom-adapter/README.md).
 
+To verify a local image with disposable PostgreSQL and fake-provider HTTP requests, run:
+
+```sh
+docker build -f apps/server/Dockerfile -t otp-router:smoke .
+scripts/docker-smoke.sh otp-router:smoke
+```
+
+The smoke script creates a unique Compose project, waits for readiness, creates and reads a challenge, then removes only its own containers and database volume. The [published-image deployment example](operations.md#deployment-and-recovery) uses separately supplied configuration and secrets.
+
 ## Unreleased schema changes
 
 Development schema changes are folded into the initial migration. An existing development database from an earlier schema must be recreated before running the new code; restarting the service does not upgrade it. Use a fresh disposable database, or remove the local Compose volume only when its contents are no longer needed.

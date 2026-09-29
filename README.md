@@ -1,6 +1,6 @@
 # OTP Router
 
-A private, unreleased self-hosted OTP router. Applications use its HTTP server to route managed verification or externally generated codes through Telegram, WhatsApp, SMS, and custom providers, with project isolation, optional send authorization, shared provider limits and explicit handling of uncertain delivery.
+A self-hosted OTP router in preview development. Applications use its HTTP server to route managed verification or externally generated codes through Telegram, WhatsApp, SMS, and custom providers, with project isolation, optional send authorization, shared provider limits and explicit handling of uncertain delivery.
 
 Confirmed failures can advance the configured route. Uncertainty alone never triggers an automatic resend; an explicit user action can request another attempt. Resends preserve the original code and expiry. External-code callers retain responsibility for generation and verification.
 
@@ -11,6 +11,7 @@ Start with [local setup](docs/running.md). The examples use fake providers and s
 - [Managed and external capabilities](docs/engine.md)
 - [Routing](docs/routing.md), [verification and security](docs/security.md), and [consistency guarantees](docs/data-model.md)
 - [HTTP integration](docs/api.md), [projects](docs/projects.md), and [outbound webhooks](docs/webhooks.md)
+- [TypeScript client](docs/client.md) and [releases](docs/releases.md)
 - [Attempt history](docs/history.md) and [send authorization](docs/authorization.md)
 - [Configuration choices](docs/configuration.md) and [provider extensions](docs/plugins.md)
 - [Deployment and recovery](docs/operations.md)
@@ -29,4 +30,6 @@ pnpm test
 
 `pnpm check` builds before checking; `pnpm build` also runs independently. Consumers resolve built engine exports. See [AGENTS.md](AGENTS.md) for conventions.
 
-Distribution remains private. Licensed under [MIT](LICENSE). Copyright 2026 Alisher Isorilov.
+The server is distributed as a container image and the backend TypeScript client as `@otp-router/client`. Preview setup and publication are described in the [release guide](docs/releases.md); configuring the workflows does not itself publish a release. Engine and server workspace packages remain private npm packages.
+
+Licensed under [MIT](LICENSE). Copyright 2026 Alisher Isorilov.

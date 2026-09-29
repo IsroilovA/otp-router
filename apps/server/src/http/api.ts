@@ -1,4 +1,17 @@
 import {
+  InvalidRequestError,
+  UnauthorizedError,
+  NotFoundError,
+  ConflictError,
+  UnavailableChallengeError,
+  RequestTooLargeError,
+  UnprocessableError,
+  RateLimitError,
+  InternalError,
+  TemporarilyUnavailableError,
+  HistoryCursorExpiredError,
+} from "./responses.js";
+import {
   AttemptEvent,
   EvidenceEvent,
   EventPage,
@@ -40,18 +53,6 @@ const MutationHeaders = Schema.Struct({
   }),
 });
 
-const errorEnvelope = <Codes extends Schema.Top>(identifier: string, codes: Codes) =>
-  Schema.Struct({
-    error: Schema.Struct({
-      code: codes,
-      message: Schema.String,
-      requestId: Schema.String,
-      retryAt: Schema.optionalKey(Schema.String),
-    }),
-  }).annotate({ identifier });
-
-const InvalidRequestError = errorEnvelope("InvalidRequestError", Schema.Literal("invalid_request"));
-export const UnauthorizedError = errorEnvelope("UnauthorizedError", Schema.Literal("unauthorized"));
 export class RequestContext extends Context.Service<
   RequestContext,
   { readonly requestId: string; readonly projectId: string; readonly principalId: string }
@@ -64,53 +65,6 @@ export class ApplicationAuth extends HttpApiMiddleware.Service<
   error: UnauthorizedError.pipe(HttpApiSchema.status(401)),
   security: { bearer: HttpApiSecurity.bearer },
 }) {}
-
-const NotFoundError = errorEnvelope(
-  "NotFoundError",
-  Schema.Literals(["challenge_not_found", "operation_not_found"]),
-);
-const ConflictError = errorEnvelope(
-  "ConflictError",
-  Schema.Literals([
-    "idempotency_conflict",
-    "request_in_progress",
-    "challenge_state_conflict",
-    "operation_state_conflict",
-    "managed_operation",
-  ]),
-);
-const UnavailableChallengeError = errorEnvelope(
-  "UnavailableChallengeError",
-  Schema.Literals(["challenge_unavailable", "operation_unavailable"]),
-);
-const RequestTooLargeError = errorEnvelope(
-  "RequestTooLargeError",
-  Schema.Literal("request_too_large"),
-);
-const UnprocessableError = Schema.Struct({
-  error: Schema.Struct({
-    code: Schema.Literals([
-      "incorrect_code",
-      "invalid_recipient",
-      "delivery_option_not_allowed",
-      "policy_not_allowed",
-      "delivery_unavailable",
-    ]),
-    message: Schema.String,
-    requestId: Schema.String,
-    retryAt: Schema.optionalKey(Schema.String),
-    reason: Schema.optionalKey(Schema.Literal("locked")),
-  }),
-}).annotate({ identifier: "UnprocessableError" });
-const RateLimitError = errorEnvelope(
-  "RateLimitError",
-  Schema.Literals(["rate_limited", "cooldown_active"]),
-);
-const InternalError = errorEnvelope("InternalError", Schema.Literal("internal_error"));
-const TemporarilyUnavailableError = errorEnvelope(
-  "TemporarilyUnavailableError",
-  Schema.Literal("temporarily_unavailable"),
-);
 
 export class RequestValidation extends HttpApiMiddleware.Service<RequestValidation>()(
   "otp-router/http/RequestValidation",
@@ -142,10 +96,7 @@ const HistoryQuery = {
     Schema.NumberFromString.check(Schema.isInt(), Schema.isBetween({ minimum: 1, maximum: 100 })),
   ),
 };
-const HistoryCursorExpired = errorEnvelope(
-  "HistoryCursorExpired",
-  Schema.Literal("history_cursor_expired"),
-).pipe(HttpApiSchema.status(410));
+const HistoryCursorExpired = HistoryCursorExpiredError.pipe(HttpApiSchema.status(410));
 const HistoryGroup = HttpApiGroup.make("history").add(
   HttpApiEndpoint.get("events", "/v1/projects/:projectId/events", {
     params: { projectId: Schema.String },
@@ -352,7 +303,7 @@ export const OtpRouterApi = HttpApi.make("otpRouter")
       description: "Backend challenge operations and provider callback ingress.",
     }),
   );
-export const openApiDocument = {
+const makeOpenApiDocument = () => ({
   ...OpenApi.fromApi(OtpRouterApi),
   webhooks: Object.fromEntries(
     Object.entries({
@@ -390,4 +341,10 @@ export const openApiDocument = {
       },
     ]),
   ),
-};
+});
+
+export const openApiDocument = /* @__PURE__ */ makeOpenApiDocument();
+
+export { ErrorBody, UnauthorizedError } from "./responses.js";
+
+export { DeliveryInput } from "@otp-router/engine/challenges";
