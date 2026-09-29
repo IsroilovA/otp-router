@@ -70,13 +70,32 @@ const configuration: Configuration = {
       },
     },
     purposes: { login: ["external"] },
-    projects: {
-      demo: {
-        policyIds: ["external"],
-        sendLimit15m: 10000,
-        sendLimit24h: 100000,
-        authorization: "disabled",
+    administration: {
+      principalIds: ["backend"],
+      administrators: {
+        admin: {
+          actions: [
+            "create",
+            "read",
+            "list",
+            "update",
+            "suspend",
+            "reactivate",
+            "retire",
+            "grant",
+            "revoke",
+            "audit",
+          ],
+          projectIds: [],
+          creationPrefixes: ["demo", "alpha", "beta"],
+          grantablePrincipalIds: ["backend"],
+          editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+          sendLimit15mCeiling: 1000000,
+          sendLimit24hCeiling: 1000000,
+          mayDisableAuthorization: true,
+        },
       },
+      authorizationFloor: false,
     },
     deploymentSendLimit15m: 10,
     deploymentSendLimit24h: 20,
@@ -90,6 +109,7 @@ const app = () => {
   return runtime;
 };
 const request = <A>(input: A) => ({
+  principalId: "backend",
   projectId: "demo",
   key: randomUUID(),
   requestId: randomUUID(),
@@ -199,7 +219,9 @@ describe("independent durable external code delivery", () => {
         app().delivery.submitCode(submit(operationId)).pipe(Effect.result),
       );
       expect(result).toMatchObject({ _tag: "Failure", failure: { code: "operation_unavailable" } });
-      const snapshot = (await Effect.runPromise(app().delivery.status("demo", operationId))).body;
+      const snapshot = (
+        await Effect.runPromise(app().delivery.status("demo", operationId, "backend"))
+      ).body;
       expect(snapshot).toMatchObject({
         state: terminal === "close" ? "closed" : "expired",
         actions: {
@@ -243,23 +265,44 @@ describe("independent durable external code delivery", () => {
     if (database === undefined) throw new Error("Database missing");
     const { body } = await prepare();
     const attached = await Effect.runPromise(app().delivery.submitCode(submit(body.operationId)));
+    await app().close();
     const h = await startRuntime(database.databaseUrl, {
       ...configuration,
       settings: {
         ...configuration.settings,
         policies: {},
         purposes: {},
-        projects: {
-          demo: {
-            policyIds: [],
-            sendLimit15m: 10000,
-            sendLimit24h: 100000,
-            authorization: "disabled",
+        administration: {
+          principalIds: ["backend"],
+          administrators: {
+            admin: {
+              actions: [
+                "create",
+                "read",
+                "list",
+                "update",
+                "suspend",
+                "reactivate",
+                "retire",
+                "grant",
+                "revoke",
+                "audit",
+              ],
+              projectIds: [],
+              creationPrefixes: ["demo", "alpha", "beta"],
+              grantablePrincipalIds: ["backend"],
+              editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+              sendLimit15mCeiling: 1000000,
+              sendLimit24hCeiling: 1000000,
+              mayDisableAuthorization: true,
+            },
           },
+          authorizationFloor: false,
         },
       },
       providers: [],
     });
+    runtime = h;
     try {
       const repeated = await Effect.runPromise(h.delivery.submitCode(submit(body.operationId)));
       expect(repeated).toMatchObject({
@@ -277,6 +320,7 @@ describe("independent durable external code delivery", () => {
       expect(sent).toHaveLength(0);
     } finally {
       await h.close();
+      runtime = await startRuntime(database.databaseUrl, configuration);
     }
   });
   it("serializes code submission against closure and suppresses pending work", async () => {
@@ -288,9 +332,9 @@ describe("independent durable external code delivery", () => {
     ]);
     await runQueued();
     expect(sent).toHaveLength(0);
-    expect((await Effect.runPromise(app().delivery.status("demo", operationId))).body.state).toBe(
-      "closed",
-    );
+    expect(
+      (await Effect.runPromise(app().delivery.status("demo", operationId, "backend"))).body.state,
+    ).toBe("closed");
     expect(await counts()).toMatchObject({ secrets: 0, fingerprints: 0, sends: 0 });
   });
   it("checks expiry again at dispatch and preserves the original code on explicit resend", async () => {
@@ -361,6 +405,7 @@ describe("independent durable external code delivery", () => {
   });
   it("shares recipient admission and send reservations across external and managed APIs", async () => {
     if (database === undefined) throw new Error("Database missing");
+    await app().close();
     const h = await startRuntime(database.databaseUrl, {
       ...configuration,
       settings: {
@@ -372,16 +417,36 @@ describe("independent durable external code delivery", () => {
           managed: { providerInstanceIds: ["fake"], managed: {} },
         },
         purposes: { login: ["external", "managed"] },
-        projects: {
-          demo: {
-            policyIds: ["external", "managed"],
-            sendLimit15m: 10000,
-            sendLimit24h: 100000,
-            authorization: "disabled",
+        administration: {
+          principalIds: ["backend"],
+          administrators: {
+            admin: {
+              actions: [
+                "create",
+                "read",
+                "list",
+                "update",
+                "suspend",
+                "reactivate",
+                "retire",
+                "grant",
+                "revoke",
+                "audit",
+              ],
+              projectIds: [],
+              creationPrefixes: ["demo", "alpha", "beta"],
+              grantablePrincipalIds: ["backend"],
+              editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+              sendLimit15mCeiling: 1000000,
+              sendLimit24hCeiling: 1000000,
+              mayDisableAuthorization: true,
+            },
           },
+          authorizationFloor: false,
         },
       },
     });
+    runtime = h;
     try {
       const external = await Effect.runPromise(
         h.delivery.create(
@@ -432,6 +497,7 @@ describe("independent durable external code delivery", () => {
       ).toBe(true);
     } finally {
       await h.close();
+      runtime = await startRuntime(database.databaseUrl, configuration);
     }
   });
   it("does not repeat a committed dispatch after closure or worker recovery", async () => {
@@ -459,9 +525,9 @@ describe("independent durable external code delivery", () => {
     await app().run(dispatchGate(app().configuration, payload));
     await app().queue.deleteJob(deliveryQueue, job.id);
     await app().run(recoverDispatches(app().configuration));
-    expect((await Effect.runPromise(app().delivery.status("demo", operationId))).body.state).toBe(
-      "sending",
-    );
+    expect(
+      (await Effect.runPromise(app().delivery.status("demo", operationId, "backend"))).body.state,
+    ).toBe("sending");
     await app().run(
       app()
         .pg`UPDATE otp_router.delivery_attempts SET committed_at = LEAST(committed_at,clock_timestamp() - interval '2 seconds'), recovery_at = clock_timestamp() - interval '1 second' WHERE id = ${payload.attemptId}`,
@@ -470,14 +536,17 @@ describe("independent durable external code delivery", () => {
       app().run(cleanup(app().configuration)),
       app().run(recoverDispatches(app().configuration)),
     ]);
-    const recovered = (await Effect.runPromise(app().delivery.status("demo", operationId))).body;
+    const recovered = (
+      await Effect.runPromise(app().delivery.status("demo", operationId, "backend"))
+    ).body;
     expect(recovered.state).toBe("uncertain");
     expect(await app().queue.fetch(deliveryQueue)).toHaveLength(0);
     await app().run(dispatch(app().configuration, payload));
     expect(sent).toHaveLength(0);
     expect(await counts()).toMatchObject({ attempts: 1, sends: 1 });
     expect(
-      (await Effect.runPromise(app().delivery.status("demo", operationId))).body.revision,
+      (await Effect.runPromise(app().delivery.status("demo", operationId, "backend"))).body
+        .revision,
     ).toBe(recovered.revision);
     await close(operationId);
     await app().run(
@@ -486,7 +555,9 @@ describe("independent durable external code delivery", () => {
     );
     await app().run(cleanup(app().configuration));
     expect(
-      await Effect.runPromise(app().delivery.status("demo", operationId).pipe(Effect.result)),
+      await Effect.runPromise(
+        app().delivery.status("demo", operationId, "backend").pipe(Effect.result),
+      ),
     ).toMatchObject({
       _tag: "Failure",
       failure: { code: "operation_not_found" },
@@ -496,8 +567,12 @@ describe("independent durable external code delivery", () => {
     const h = app(),
       apiKey = "external-test-key-with-at-least-thirty-two-bytes";
     const web = makeWebHandler(
-      { principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }] },
       {
+        administrators: [{ id: "admin", keys: ["admin-test-credential-with-at-least-32-bytes"] }],
+        principals: [{ id: "backend", keys: [apiKey] }],
+      },
+      {
+        projects: h.projects,
         router: h.router,
         delivery: h.delivery,
         history: h.history,

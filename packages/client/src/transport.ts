@@ -8,7 +8,7 @@ import {
 } from "effect/unstable/http";
 import { HttpApiClient } from "effect/unstable/httpapi";
 import type {
-  ClientOptions,
+  AdminClientOptions,
   ClientResponse,
   RequestOptions,
   ResponseMetadata,
@@ -18,11 +18,11 @@ import { OtpRouterApiError, OtpRouterClientError } from "./errors.js";
 type GeneratedClient = HttpApiClient.ForApi<typeof OtpRouterApi, never, HttpClient.HttpClient>;
 const Timeout = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 2_147_483_647 }));
 const Configuration = Schema.Struct({
-  projectId: Schema.String.check(Schema.isMinLength(1)),
   bearerToken: Schema.String.check(Schema.isPattern(/^[\x21-\x7e]+$/u)),
 });
 const metadata = (response: HttpClientResponse.HttpClientResponse): ResponseMetadata => ({
   status: response.status,
+  etag: response.headers["etag"] ?? null,
   requestId: response.headers["x-request-id"] ?? null,
   replayed: response.headers["idempotency-replayed"] === "true",
   retryAfter: response.headers["retry-after"] ?? null,
@@ -46,7 +46,7 @@ const baseUrl = (input: string | URL): string => {
   }
 };
 
-export const makeTransport = (options: ClientOptions) => {
+export const makeTransport = (options: AdminClientOptions) => {
   const url = baseUrl(options.baseUrl);
   if (!Schema.is(Configuration)(options) || !Schema.is(Timeout)(options.timeoutMs ?? 30_000)) {
     throw new OtpRouterClientError("configuration");

@@ -17,6 +17,12 @@ Server Releases include OpenAPI, an image digest reference, and SHA-256 checksum
 
 Versions below `1.0.0` may break compatibility. Release notes must identify supported client/server pairings and upgrade steps for breaking changes. Schema changes follow the [database upgrade procedure](operations.md#database-upgrades). Deployment requirements belong in the [operations guide](operations.md).
 
+## Pending breaking replacement
+
+Server `0.1.0` and client `0.1.0` target each other and replace published `server-v0.0.1` / `client-v0.0.1`. Projects, settings, and backend grants move from deployment configuration to the administration API. Remove the old project catalog and principal `projectIds`; configure administrator credentials, principal identities, and administration ceilings, then provision projects through the new API. Engine calls now carry authenticated principal IDs. There are no aliases or compatibility paths.
+
+This release requires a separate fresh database; follow the [database procedure](operations.md#database-upgrades). Old databases are rejected by baseline identity even at the same migration number. These source changes prepare versions only; merging, publishing artifacts, and deployment remain separate actions.
+
 ## Changelog
 
 [GitHub Releases](https://github.com/IsroilovA/otp-router/releases) is the published changelog, linked from [CHANGELOG.md](../CHANGELOG.md). Each component starts with an initial-release entry. Later entries list merged PRs since that component's previous tag. The interval covers repository changes, so shared or other-component changes may appear in both histories.
@@ -32,20 +38,6 @@ No custom GitHub Actions secrets or variables are required. GitHub supplies `GIT
 Enable Actions and allow the pinned actions in [check.yml](../.github/workflows/check.yml). Job permissions are declared there; the repository default can remain read-only. Repository/tag rules must permit the workflow to create component tags.
 
 If an existing GHCR package is not linked to this repository, grant the repository Actions write access. After first publication, make the package public so users can pull anonymously; [new GHCR packages default to private](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry).
-
-The npm package must exist before a trusted publisher can be attached. An `otp-router` organization owner with 2FA must publish a bootstrap version. From a checkout that passed [release verification](#release-verification), stage a copy without changing the `0.0.1` manifests:
-
-```sh
-npm whoami
-npm org ls otp-router
-bootstrap_dir=$(mktemp -d)
-cp -R packages/client/dist packages/client/README.md packages/client/LICENSE packages/client/package.json "$bootstrap_dir/"
-npm pkg set version=0.0.1-alpha.0 --prefix "$bootstrap_dir"
-npm pack "$bootstrap_dir" --pack-destination "$bootstrap_dir"
-npm publish "$bootstrap_dir/otp-router-client-0.0.1-alpha.0.tgz" --access public --tag next
-```
-
-The last command publishes publicly and may prompt for authentication or 2FA. Keep `0.0.1` for automated publication.
 
 In npm package settings, add this GitHub Actions trusted publisher:
 

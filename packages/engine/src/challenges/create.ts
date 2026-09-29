@@ -1,3 +1,4 @@
+import { requireAccess, requireActiveProject } from "../projects/store.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
 import { Effect } from "effect";
@@ -22,8 +23,11 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
     const previous = yield* transaction(
       config,
       Effect.gen(function* () {
+        const access = yield* requireAccess(request.projectId, request.principalId);
         yield* lockOperation(op);
-        return yield* replay(config.settings.crypto, op, CreateResult);
+        const existing = yield* replay(config.settings.crypto, op, CreateResult);
+        if (existing === undefined) yield* requireActiveProject(access.project);
+        return existing;
       }),
     );
     if (previous !== undefined) return previous;
@@ -35,9 +39,11 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
     return yield* transaction(
       config,
       Effect.gen(function* () {
+        const access = yield* requireAccess(request.projectId, request.principalId);
         yield* lockOperation(op);
         const existing = yield* replay(config.settings.crypto, op, CreateResult);
         if (existing !== undefined) return existing;
+        yield* requireActiveProject(access.project);
         const time = yield* databaseTime;
         const prepared: PrepareInput = {
           ...input,
@@ -53,7 +59,7 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
         const sql = yield* PgClient.PgClient;
         yield* sql`INSERT INTO otp_router.challenges(id,operation_id,code_length,max_incorrect_guesses,verification_state) VALUES (${id},${delivery.id},${managed.codeLength},${managed.maxIncorrectGuesses},'active')`;
         yield* sql`INSERT INTO otp_router.challenge_secrets(challenge_id,verifier) VALUES (${id},${sql.json(digest(verification, verifierInput(config.settings.crypto, { id, projectId: request.projectId, purpose: input.purpose, contextId: input.contextId }, code)))})`;
-        yield* attachCode(config, delivery, code);
+        yield* attachCode(config, delivery, code, request.principalId);
         const body = yield* snapshot(config, yield* findChallenge(id), time);
         const response: CreateResult = { outcome: "created", body, replayed: false };
         return yield* saveResult(config.settings.crypto, op, {

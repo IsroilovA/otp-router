@@ -178,7 +178,7 @@ export default defineConfig({
     fallbackLocales: [],
     policies: { benchmark: { providerInstanceIds: ["benchmark-fake"], managed: { lifetimeSeconds: 600 }, maxSends: 10, resendCooldownSeconds: 30 } },
     purposes: { benchmark: ["benchmark"] },
-    projects: { demo: { policyIds: ["benchmark"], sendLimit15m: 10000, sendLimit24h: 100000, authorization: "disabled" } },
+    administration: { principalIds: ["backend"], administrators: { admin: { actions: ["create"], projectIds: ["demo"], creationPrefixes: [], grantablePrincipalIds: ["backend"], editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"], sendLimit15mCeiling: 10000, sendLimit24hCeiling: 100000, mayDisableAuthorization: true } }, authorizationFloor: false },
     deploymentSendLimit15m: 1000000,
     deploymentSendLimit24h: 1000000,
     recipientCreateLimit15m: 5,
@@ -190,7 +190,7 @@ export default defineConfig({
   },
   settings: {
     databaseUrl: process.env.DATABASE_URL,
-    principals: [{ id: "backend", projectIds: ["demo"], keys: [${JSON.stringify(API_KEY)}] }],
+    administrators: [{ id: "admin", keys: ["admin-test-credential-with-at-least-32-bytes"] }], principals: [{ id: "backend", keys: [${JSON.stringify(API_KEY)}] }],
     role: process.env.OTP_BENCHMARK_ROLE,
     port: Number(process.env.OTP_BENCHMARK_PORT),
     internalPort: Number(process.env.OTP_BENCHMARK_INTERNAL_PORT),
@@ -495,6 +495,21 @@ const createChallenge = async (
   recipientSequence += 1;
   const phone = `+99890${String(sequence).padStart(7, "0")}`;
   const started = performance.now();
+  const provisioned = await fetch(`http://127.0.0.1:${String(apiPort)}/v1/admin/projects`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer admin-test-credential-with-at-least-32-bytes",
+      "content-type": "application/json",
+      "idempotency-key": "provision-demo",
+    },
+    body: JSON.stringify({
+      id: "demo",
+      settings: { authorizationRequired: false, sendLimit15m: 10000, sendLimit24h: 100000 },
+      principalIds: ["backend"],
+    }),
+  });
+  if (provisioned.status !== 201) throw new Error(`Provision failed: ${provisioned.status}`);
+  await provisioned.arrayBuffer();
   const response = await fetch(`http://127.0.0.1:${String(apiPort)}/v1/projects/demo/challenges`, {
     method: "POST",
     headers: {

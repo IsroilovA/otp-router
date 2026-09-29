@@ -35,13 +35,32 @@ const configuration: Configuration = {
     fallbackLocales: [],
     policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
     purposes: { login: ["login"] },
-    projects: {
-      demo: {
-        policyIds: ["login"],
-        sendLimit15m: 10000,
-        sendLimit24h: 100000,
-        authorization: "disabled",
+    administration: {
+      principalIds: ["backend"],
+      administrators: {
+        admin: {
+          actions: [
+            "create",
+            "read",
+            "list",
+            "update",
+            "suspend",
+            "reactivate",
+            "retire",
+            "grant",
+            "revoke",
+            "audit",
+          ],
+          projectIds: [],
+          creationPrefixes: ["demo", "alpha", "beta"],
+          grantablePrincipalIds: ["backend"],
+          editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+          sendLimit15mCeiling: 1000000,
+          sendLimit24hCeiling: 1000000,
+          mayDisableAuthorization: true,
+        },
       },
+      authorizationFloor: false,
     },
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1000,

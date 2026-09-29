@@ -107,7 +107,13 @@ export const OperationResult = Schema.Struct({
 });
 export type OperationResult = typeof OperationResult.Type;
 const mutation = <S extends Schema.Top>(input: S) =>
-  Schema.Struct({ projectId: Identifier, key: Opaque, requestId: Opaque, input });
+  Schema.Struct({
+    principalId: Identifier,
+    projectId: Identifier,
+    key: Opaque,
+    requestId: Opaque,
+    input,
+  });
 const targeted = <S extends Schema.Top>(input: S) =>
   Schema.Struct({ ...mutation(input).fields, operationId: Schema.String });
 export const PrepareRequest = mutation(PrepareInput);
@@ -127,7 +133,11 @@ export class Delivery extends Context.Service<
     readonly submitCode: (
       request: typeof SubmitRequest.Type,
     ) => Effect.Effect<OperationResult, DomainError>;
-    readonly status: (projectId: string, id: string) => Effect.Effect<OperationResult, DomainError>;
+    readonly status: (
+      projectId: string,
+      id: string,
+      principalId: string,
+    ) => Effect.Effect<OperationResult, DomainError>;
     readonly deliver: (
       request: typeof DeliverRequest.Type,
     ) => Effect.Effect<OperationResult, DomainError>;

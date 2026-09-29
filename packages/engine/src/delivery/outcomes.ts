@@ -1,3 +1,4 @@
+import { intentEligible } from "../projects/store.js";
 import { suppressPendingAttempts, transitionAttempts } from "./attempts.js";
 import { appendEvidence } from "./evidence.js";
 import { changed } from "./changes.js";
@@ -44,7 +45,7 @@ export const mergeLockedOutcome = (
     if (decision.suppressPending === "all") yield* suppressPendingAttempts(operation.id);
     else if (decision.suppressPending === "fallback")
       yield* suppressPendingAttempts(operation.id, "fallback");
-    if (decision.advance) {
+    if (decision.advance && (yield* intentEligible(delivery.intent_id))) {
       const next = nextProvider(
         yield* availableProviders(config, operation, time),
         delivery.route_position,
@@ -54,7 +55,10 @@ export const mergeLockedOutcome = (
         next.retryAt === undefined &&
         operation.send_count < operation.snapshot.maxSends
       )
-        yield* schedule(operation, next.position, "fallback", time);
+        yield* schedule(operation, next.position, "fallback", {
+          time,
+          intentId: delivery.intent_id,
+        });
     }
   });
 

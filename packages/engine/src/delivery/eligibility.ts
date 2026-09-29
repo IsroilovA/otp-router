@@ -41,7 +41,11 @@ export const availableProviders = (
     );
     const blocks = yield* quotaBlocks(
       [
-        ...commonSendLimits(config.settings, operation.recipient_token, operation.project_id),
+        ...(yield* commonSendLimits(
+          config.settings,
+          operation.recipient_token,
+          operation.project_id,
+        )),
         ...candidates.flatMap(({ provider }) =>
           providerSendLimits(config.settings, provider.providerInstanceId),
         ),

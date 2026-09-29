@@ -11,7 +11,7 @@ node --input-type=module <<'NODE'
 import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 const key = () => randomBytes(32).toString("base64url");
-const names = ["API_KEY", "FAKE_CALLBACK_SECRET", "ENCRYPTION_KEY",
+const names = ["API_KEY", "ADMIN_KEY", "FAKE_CALLBACK_SECRET", "ENCRYPTION_KEY",
   "VERIFICATION_KEY", "FINGERPRINT_KEY", "RECIPIENT_KEY"];
 const secrets = names.map(name => `OTP_ROUTER_${name}=${key()}\n`).join("");
 writeFileSync(".env", `${readFileSync(".env.example", "utf8")}\n${secrets}`,
@@ -51,7 +51,7 @@ node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/rou
 
 `--check-schema` changes the database; neither check sends messages. See [validation](configuration.md#validation) for their scope.
 
-Stop the host process before `pnpm db:down`; the latter preserves its development volume. Follow the [HTTP walkthrough](../examples/http/README.md) to exercise both server flows. The fake provider never exposes a usable OTP.
+Stop the host process before `pnpm db:down`; the latter preserves its development volume. Provision the demo project with `node --env-file=.env examples/admin/run.ts`, then follow the [HTTP walkthrough](../examples/http/README.md) to exercise both server flows. The fake provider never exposes a usable OTP.
 
 Build custom adapters into the image using the [adapter example](../examples/custom-adapter/README.md).
 

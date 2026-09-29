@@ -40,13 +40,32 @@ const configuration: Configuration = {
     fallbackLocales: [],
     policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
     purposes: { login: ["login"] },
-    projects: {
-      demo: {
-        policyIds: ["login"],
-        sendLimit15m: 10000,
-        sendLimit24h: 100000,
-        authorization: "disabled",
+    administration: {
+      principalIds: ["backend"],
+      administrators: {
+        admin: {
+          actions: [
+            "create",
+            "read",
+            "list",
+            "update",
+            "suspend",
+            "reactivate",
+            "retire",
+            "grant",
+            "revoke",
+            "audit",
+          ],
+          projectIds: [],
+          creationPrefixes: ["demo", "alpha", "beta"],
+          grantablePrincipalIds: ["backend"],
+          editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+          sendLimit15mCeiling: 1000000,
+          sendLimit24hCeiling: 1000000,
+          mayDisableAuthorization: true,
+        },
       },
+      authorizationFloor: false,
     },
     deploymentSendLimit15m: 2,
     deploymentSendLimit24h: 3,
@@ -136,6 +155,7 @@ describe("database compatibility and maintenance", () => {
   const create = (operationKey: string) =>
     Effect.runPromise(
       current().router.create({
+        principalId: "backend",
         projectId: "demo",
         key: operationKey,
         input: createInput,
@@ -186,6 +206,7 @@ describe("database compatibility and maintenance", () => {
     await current().run(validateStoredKeys(rotated.settings));
     const replay = await current().run(
       createChallenge(rotated, {
+        principalId: "backend",
         projectId: "demo",
         key: operationKey,
         input: createInput,
@@ -428,6 +449,7 @@ describe("database compatibility and maintenance", () => {
     );
     await Effect.runPromise(
       harness.router.cancel({
+        principalId: "backend",
         projectId: "demo",
         key: "cancel-retained-operation",
         challengeId: firstChallengeId,
@@ -514,7 +536,9 @@ describe("database compatibility and maintenance", () => {
         harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${randomUUID()},${occurredAt}) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'deployment','',event_id,kind FROM event`,
       );
     }
-    const limits = sendLimits(harness.configuration.settings, "unused-recipient", "fake", "demo");
+    const limits = await harness.run(
+      sendLimits(harness.configuration.settings, "unused-recipient", "fake", "demo"),
+    );
     expect(await harness.run(quotaRetryAt(limits, now))).toBe("2030-01-02T13:00:00.000Z");
     expect(
       await harness.run(quotaRetryAt(limits, new Date("2030-01-02T13:00:00.000Z"))),

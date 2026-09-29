@@ -1,3 +1,4 @@
+import { requireAccess } from "../projects/store.js";
 import { terminate as closeOperation } from "../delivery/store.js";
 import { verifierInput } from "./crypto.js";
 import { changed } from "../delivery/changes.js";
@@ -34,6 +35,7 @@ export const verifyChallenge = (
   domainTransaction(
     config,
     Effect.gen(function* () {
+      yield* requireAccess(request.projectId, request.principalId, false);
       const op = {
         ...operation(
           config.settings.crypto,

@@ -1,4 +1,17 @@
 import {
+  ProjectSnapshot,
+  ProjectSettings,
+  CreateProjectInput,
+  ProjectPage,
+  AuditPage,
+} from "@otp-router/engine/projects";
+import {
+  ForbiddenError,
+  ProjectConflictError,
+  RevisionConflictError,
+  ProjectNotFoundError,
+} from "./responses.js";
+import {
   InvalidRequestError,
   UnauthorizedError,
   NotFoundError,
@@ -77,6 +90,9 @@ export class RequestValidation extends HttpApiMiddleware.Service<RequestValidati
 ) {}
 
 const commonErrors = [
+  ForbiddenError.pipe(HttpApiSchema.status(403)),
+  ProjectConflictError.pipe(HttpApiSchema.status(409)),
+  ProjectNotFoundError.pipe(HttpApiSchema.status(404)),
   InvalidRequestError.pipe(HttpApiSchema.status(400)),
   UnauthorizedError.pipe(HttpApiSchema.status(401)),
   InternalError.pipe(HttpApiSchema.status(500)),
@@ -268,6 +284,94 @@ const ApplicationGroup = HttpApiGroup.make("application").add(
     .middleware(ApplicationAuth)
     .annotateMerge(OpenApi.annotations({ summary: "Cancel an active challenge" })),
 );
+export class AdminContext extends Context.Service<
+  AdminContext,
+  { readonly actorId: string; readonly requestId: string }
+>()("otp-router/http/AdminContext") {}
+export class AdminAuth extends HttpApiMiddleware.Service<AdminAuth, { provides: AdminContext }>()(
+  "otp-router/http/AdminAuth",
+  {
+    error: UnauthorizedError.pipe(HttpApiSchema.status(401)),
+    security: { bearer: HttpApiSecurity.bearer },
+  },
+) {}
+const ProjectResponse = HttpApiSchema.WithHeaders(ProjectSnapshot, {
+  etag: Schema.String.check(Schema.isPattern(/^"[1-9][0-9]*"$/u)),
+  "idempotency-replayed": Schema.optionalKey(Schema.Literal("true")),
+  "x-request-id": Schema.String,
+});
+const RevisionHeaders = Schema.Struct({
+  ...MutationHeaders.fields,
+  "if-match": Schema.String.check(Schema.isPattern(/^"[1-9][0-9]{0,9}"$/u)),
+});
+const adminErrors = [
+  ...commonErrors,
+  conflict,
+  tooLarge,
+  RevisionConflictError.pipe(HttpApiSchema.status(412)),
+];
+const AdminGroup = HttpApiGroup.make("administration").add(
+  HttpApiEndpoint.post("createProject", "/v1/admin/projects", {
+    headers: MutationHeaders,
+    payload: CreateProjectInput,
+    success: ProjectResponse.pipe(HttpApiSchema.status(201)),
+    error: adminErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.get("getProject", "/v1/admin/projects/:projectId", {
+    params: { projectId: Schema.String },
+    success: ProjectResponse,
+    error: adminErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.get("listProjects", "/v1/admin/projects", {
+    query: HistoryQuery,
+    success: ProjectPage,
+    error: adminErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.put("updateProject", "/v1/admin/projects/:projectId", {
+    params: { projectId: Schema.String },
+    headers: RevisionHeaders,
+    payload: ProjectSettings,
+    success: ProjectResponse,
+    error: adminErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.post("transitionProject", "/v1/admin/projects/:projectId/lifecycle", {
+    params: { projectId: Schema.String },
+    headers: RevisionHeaders,
+    payload: Schema.Struct({ action: Schema.Literals(["suspend", "reactivate", "retire"]) }),
+    success: ProjectResponse,
+    error: adminErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.post("changeGrant", "/v1/admin/projects/:projectId/grants", {
+    params: { projectId: Schema.String },
+    headers: RevisionHeaders,
+    payload: Schema.Struct({
+      action: Schema.Literals(["grant", "revoke"]),
+      principalId: Schema.String.check(Schema.isPattern(/^[a-zA-Z0-9_-]{1,64}$/u)),
+    }),
+    success: ProjectResponse,
+    error: adminErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.get("projectAudit", "/v1/admin/projects/:projectId/audit", {
+    params: { projectId: Schema.String },
+    query: HistoryQuery,
+    success: AuditPage,
+    error: adminErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+);
 const WebhookGroup = HttpApiGroup.make("providerCallbacks").add(
   HttpApiEndpoint.get("providerHandshake", "/webhooks/:providerInstanceId", {
     params: { providerInstanceId: Schema.String },
@@ -295,12 +399,13 @@ const WebhookGroup = HttpApiGroup.make("providerCallbacks").add(
   }),
 );
 export const OtpRouterApi = HttpApi.make("otpRouter")
-  .add(ApplicationGroup, HistoryGroup, WebhookGroup)
+  .add(ApplicationGroup, HistoryGroup, AdminGroup, WebhookGroup)
   .annotateMerge(
     OpenApi.annotations({
       title: "OTP Router API",
-      version: "1.0.0",
-      description: "Backend challenge operations and provider callback ingress.",
+      version: "0.1.0",
+      description:
+        "Project administration, backend delivery and verification, and provider callback ingress.",
     }),
   );
 const makeOpenApiDocument = () => ({

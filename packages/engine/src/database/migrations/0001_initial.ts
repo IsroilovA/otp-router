@@ -4,8 +4,36 @@ import { Effect } from "effect";
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE SCHEMA otp_router`;
+  yield* sql`CREATE TABLE otp_router.schema_identity (singleton boolean PRIMARY KEY CHECK (singleton), baseline text NOT NULL)`;
+  yield* sql`INSERT INTO otp_router.schema_identity VALUES (true,'project-administration-v1')`;
+  yield* sql`CREATE TABLE otp_router.projects (
+    id text PRIMARY KEY, state text NOT NULL CHECK (state IN ('active','suspended','retired')),
+    revision integer NOT NULL CHECK (revision > 0), send_epoch integer NOT NULL DEFAULT 1 CHECK (send_epoch > 0),
+    authorization_required boolean NOT NULL, send_limit_15m integer NOT NULL CHECK (send_limit_15m > 0),
+    send_limit_24h integer NOT NULL CHECK (send_limit_24h > 0), created_at timestamptz NOT NULL DEFAULT clock_timestamp()
+  )`;
+  yield* sql`CREATE TABLE otp_router.project_principal_grants (
+    id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), principal_id text NOT NULL,
+    granted_at timestamptz NOT NULL DEFAULT clock_timestamp(), revoked_at timestamptz,
+    CHECK (revoked_at IS NULL OR revoked_at >= granted_at)
+  )`;
+  yield* sql`CREATE UNIQUE INDEX active_grant ON otp_router.project_principal_grants(project_id,principal_id) WHERE revoked_at IS NULL`;
+  yield* sql`CREATE TABLE otp_router.admin_request_receipts (
+    actor_id text NOT NULL, key text NOT NULL, fingerprint text NOT NULL,
+    response jsonb NOT NULL, project_id text NOT NULL REFERENCES otp_router.projects(id),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(), retain_until timestamptz,
+    PRIMARY KEY (actor_id,key), CHECK (retain_until IS NULL OR retain_until > created_at)
+  )`;
+  yield* sql`CREATE INDEX admin_receipts_expiry ON otp_router.admin_request_receipts(retain_until) WHERE retain_until IS NOT NULL`;
+  yield* sql`CREATE TABLE otp_router.project_admin_events (
+    id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), actor_id text NOT NULL,
+    action text NOT NULL CHECK (action IN ('create','update','suspend','reactivate','retire','grant','revoke')),
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(), revision integer NOT NULL CHECK (revision > 0),
+    details jsonb NOT NULL, UNIQUE(project_id,revision)
+  )`;
+  yield* sql`CREATE TABLE otp_router.configured_catalog (singleton boolean PRIMARY KEY CHECK (singleton), fingerprint text NOT NULL)`;
   yield* sql`CREATE TABLE otp_router.delivery_operations (
-    id uuid PRIMARY KEY, project_id text NOT NULL, creation_sequence bigint, owner text NOT NULL CHECK (owner IN ('external','challenge')),
+    id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), creation_sequence bigint, owner text NOT NULL CHECK (owner IN ('external','challenge')),
     purpose text NOT NULL, context_id text NOT NULL, recipient_token text NOT NULL,
     policy_id text NOT NULL,
     authorization_required boolean NOT NULL,
@@ -57,8 +85,29 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE otp_router.challenge_secrets (
     challenge_id uuid PRIMARY KEY REFERENCES otp_router.challenges(id) ON DELETE CASCADE, verifier jsonb NOT NULL
   )`;
+  yield* sql`CREATE TABLE otp_router.send_intents (
+    id uuid PRIMARY KEY, operation_id uuid NOT NULL REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
+    principal_grant_id uuid NOT NULL REFERENCES otp_router.project_principal_grants(id),
+    project_send_epoch integer NOT NULL CHECK (project_send_epoch > 0),
+    action text NOT NULL CHECK (action IN ('initial','resend','next','select')),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(), UNIQUE(operation_id,id)
+  )`;
+  yield* sql`CREATE INDEX intents_grant ON otp_router.send_intents(principal_grant_id)`;
+  yield* sql`CREATE FUNCTION otp_router.check_intent_project() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM otp_router.delivery_operations o
+        JOIN otp_router.project_principal_grants g ON g.project_id = o.project_id
+        WHERE o.id = NEW.operation_id AND g.id = NEW.principal_grant_id)
+      THEN RAISE EXCEPTION 'Intent grant project mismatch' USING ERRCODE = '23514'; END IF;
+      RETURN NEW;
+    END
+  $$`;
+  yield* sql`CREATE TRIGGER intent_project BEFORE INSERT OR UPDATE ON otp_router.send_intents
+    FOR EACH ROW EXECUTE FUNCTION otp_router.check_intent_project()`;
   yield* sql`CREATE TABLE otp_router.delivery_attempts (
     id uuid PRIMARY KEY, operation_id uuid NOT NULL REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
+    intent_id uuid NOT NULL,
+    FOREIGN KEY (operation_id,intent_id) REFERENCES otp_router.send_intents(operation_id,id),
     route_position integer NOT NULL CHECK (route_position >= 0),
     routing_revision integer NOT NULL CHECK (routing_revision > 0),
     reason text NOT NULL CHECK (reason IN ('initial','fallback','resend','next','select')),
@@ -93,11 +142,22 @@ export default Effect.gen(function* () {
   yield* sql`CREATE FUNCTION otp_router.reject_identity_change() RETURNS trigger LANGUAGE plpgsql AS $$
     BEGIN RAISE EXCEPTION 'Saved routing identity is immutable' USING ERRCODE = '23514'; END
   $$`;
+  yield* sql`CREATE TRIGGER immutable_project_id BEFORE UPDATE ON otp_router.projects
+    FOR EACH ROW WHEN (OLD.id IS DISTINCT FROM NEW.id OR (OLD.state = 'retired' AND NEW.state <> 'retired')) EXECUTE FUNCTION otp_router.reject_identity_change()`;
+  yield* sql`CREATE TRIGGER reserved_project_id BEFORE DELETE ON otp_router.projects
+    FOR EACH ROW EXECUTE FUNCTION otp_router.reject_identity_change()`;
+  yield* sql`CREATE TRIGGER immutable_operation_project BEFORE UPDATE ON otp_router.delivery_operations
+    FOR EACH ROW WHEN (OLD.project_id IS DISTINCT FROM NEW.project_id) EXECUTE FUNCTION otp_router.reject_identity_change()`;
+  yield* sql`CREATE TRIGGER immutable_intent BEFORE UPDATE ON otp_router.send_intents
+    FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION otp_router.reject_identity_change()`;
+  yield* sql`CREATE TRIGGER immutable_grant BEFORE UPDATE ON otp_router.project_principal_grants
+    FOR EACH ROW WHEN ((OLD.id,OLD.project_id,OLD.principal_id,OLD.granted_at) IS DISTINCT FROM (NEW.id,NEW.project_id,NEW.principal_id,NEW.granted_at)
+      OR (OLD.revoked_at IS NOT NULL AND OLD.revoked_at IS DISTINCT FROM NEW.revoked_at)) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER immutable_route_step BEFORE UPDATE ON otp_router.operation_route_steps
     FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER immutable_attempt_route BEFORE UPDATE ON otp_router.delivery_attempts
-    FOR EACH ROW WHEN ((OLD.id,OLD.operation_id,OLD.route_position,OLD.routing_revision,OLD.reason,OLD.created_at)
-      IS DISTINCT FROM (NEW.id,NEW.operation_id,NEW.route_position,NEW.routing_revision,NEW.reason,NEW.created_at))
+    FOR EACH ROW WHEN ((OLD.id,OLD.operation_id,OLD.intent_id,OLD.route_position,OLD.routing_revision,OLD.reason,OLD.created_at)
+      IS DISTINCT FROM (NEW.id,NEW.operation_id,NEW.intent_id,NEW.route_position,NEW.routing_revision,NEW.reason,NEW.created_at))
     EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE UNIQUE INDEX attempts_advancement ON otp_router.delivery_attempts(operation_id,routing_revision,route_position) WHERE reason = 'fallback'`;
   yield* sql`CREATE UNIQUE INDEX attempts_creation ON otp_router.delivery_attempts(operation_id,creation_sequence)`;

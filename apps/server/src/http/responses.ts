@@ -112,6 +112,16 @@ export const ResponseBody = Schema.Union([
 
 export const statusForError = (code: ErrorCode): number => {
   switch (code) {
+    case "project_access_denied":
+    case "admin_forbidden":
+      return 403;
+    case "revision_conflict":
+      return 412;
+    case "project_conflict":
+    case "project_inactive":
+      return 409;
+    case "project_not_found":
+      return 404;
     case "invalid_request":
       return 400;
     case "unauthorized":
@@ -162,3 +172,20 @@ export const statusForOutcome = (
       return 422;
   }
 };
+
+export const ForbiddenError = errorEnvelope(
+  "ForbiddenError",
+  Schema.Literals(["project_access_denied", "admin_forbidden"]),
+);
+export const ProjectConflictError = errorEnvelope(
+  "ProjectConflictError",
+  Schema.Literals(["project_conflict", "project_inactive"]),
+);
+export const RevisionConflictError = errorEnvelope(
+  "RevisionConflictError",
+  Schema.Literal("revision_conflict"),
+);
+export const ProjectNotFoundError = errorEnvelope(
+  "ProjectNotFoundError",
+  Schema.Literal("project_not_found"),
+);

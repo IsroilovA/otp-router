@@ -1,3 +1,5 @@
+import { validateCatalog, assertCatalog } from "./projects/catalog.js";
+import { ProjectsLive } from "./projects/service.js";
 import { DeliveryHistoryLive } from "./notifications/history.js";
 import type { DeliveryOwner } from "./delivery/owner.js";
 import { DeliveryOwnerLive } from "./challenges/delivery-owner.js";
@@ -25,7 +27,11 @@ const makeControl = Effect.gen(function* () {
   const config = Context.get(context, RouterConfig);
   const sql = Context.get(context, SqlClient.SqlClient);
   return {
-    probe: sql`SELECT 1`.pipe(Effect.asVoid),
+    probe: sql`SELECT 1`.pipe(
+      Effect.andThen(assertCatalog(config)),
+      Effect.provide(context),
+      Effect.asVoid,
+    ),
     startWorkers: (options: Parameters<typeof startWorkers>[0]) =>
       startWorkers(options).pipe(Effect.provide(context)),
     replayNotification: (eventId: string) =>
@@ -61,6 +67,7 @@ export const makeEngineLayer = (options: {
           options.identityMode === "adopt-recipient-key",
         ).pipe(Effect.provide(database));
       }
+      yield* validateCatalog(options.configuration).pipe(Effect.provide(database));
       const queue = yield* Layer.build(makeQueueLayer(options.databaseUrl));
       yield* initializeQueues.pipe(Effect.provide(queue));
       const dependencies = Layer.succeedContext(
@@ -68,6 +75,7 @@ export const makeEngineLayer = (options: {
       );
       return yield* Layer.build(
         Layer.mergeAll(
+          ProjectsLive,
           RouterLive,
           DeliveryLive,
           DeliveryHistoryLive,

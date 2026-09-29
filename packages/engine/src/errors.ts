@@ -1,6 +1,12 @@
 import { Data, Schema } from "effect";
 export const ErrorCode = Schema.Literals([
   "invalid_request",
+  "project_not_found",
+  "project_access_denied",
+  "project_inactive",
+  "admin_forbidden",
+  "revision_conflict",
+  "project_conflict",
   "history_cursor_expired",
   "operation_not_found",
   "operation_unavailable",

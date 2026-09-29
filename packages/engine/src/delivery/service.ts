@@ -1,3 +1,4 @@
+import { requireAccess, requireActiveProject } from "../projects/store.js";
 import type { ApplicationOperation } from "../diagnostics/log.js";
 import { observeOperation, type InfrastructureError } from "../diagnostics/operation.js";
 import { admissionLimit, lockQuotas } from "./quotas.js";
@@ -44,22 +45,31 @@ const prepare = (
     const id = identity(config.settings.crypto, code === undefined ? "prepare" : "create", request);
     const previous = yield* domainTransaction(
       config,
-      replay(config.settings.crypto, id, input, code),
+      Effect.gen(function* () {
+        const access = yield* requireAccess(request.projectId, request.principalId);
+        const existing = yield* replay(config.settings.crypto, id, input, code);
+        if (existing === undefined) yield* requireActiveProject(access.project);
+        return existing;
+      }),
     );
     if (previous !== undefined) return previous;
     const route = yield* prepareRoute(config, input, request.projectId);
     return yield* deliveryTransaction(
       config,
       Effect.gen(function* () {
+        const access = yield* requireAccess(request.projectId, request.principalId);
         const existing = yield* replay(config.settings.crypto, id, input, code);
         if (existing !== undefined) return existing;
+        yield* requireActiveProject(access.project);
         const operation = yield* admitOperation(config, input, {
           ...route,
           projectId: request.projectId,
           owner: "external",
         });
         const attached =
-          code === undefined ? operation : yield* attachCode(config, operation, code);
+          code === undefined
+            ? operation
+            : yield* attachCode(config, operation, code, request.principalId);
         const time = yield* databaseTime;
         const response: OperationResult = {
           outcome: code === undefined ? "prepared" : "created",
@@ -85,6 +95,7 @@ const mutate = (config: RuntimeConfiguration, command: Mutation) =>
     config,
     Effect.gen(function* () {
       const { request, action } = command;
+      const access = yield* requireAccess(request.projectId, request.principalId);
       const code = command.action === "submit" ? command.request.input.code : undefined;
       const input = command.action === "submit" ? {} : request.input;
       const id = identity(config.settings.crypto, action, request);
@@ -92,6 +103,7 @@ const mutate = (config: RuntimeConfiguration, command: Mutation) =>
       const previous = yield* replay(config.settings.crypto, id, input, code);
       // Existing results have no new send effects, including after terminal fingerprint erasure.
       if (previous !== undefined) return previous;
+      if (action !== "close") yield* requireActiveProject(access.project);
       const initial = yield* findProjectOperation(request.projectId, request.operationId);
       if (action === "deliver") yield* lockQuotas([admissionLimit(initial.recipient_token)]);
       const locked = yield* findOperation(request.operationId, true);
@@ -100,10 +112,13 @@ const mutate = (config: RuntimeConfiguration, command: Mutation) =>
       const operation = yield* expire(locked, time);
       switch (command.action) {
         case "submit":
-          yield* attachCode(config, operation, command.request.input.code);
+          yield* attachCode(config, operation, command.request.input.code, request.principalId);
           break;
         case "deliver":
-          yield* requestSend(config, operation, command.request.input, time);
+          yield* requestSend(config, operation, command.request.input, {
+            time,
+            principalId: request.principalId,
+          });
           break;
         case "close":
           if (operation.state !== "closed" && operation.state !== "expired")
@@ -203,13 +218,17 @@ export const DeliveryLive = Layer.effect(
           ),
           request.requestId,
         ),
-      status: (projectId, id) =>
+      status: (projectId, id, principalId) =>
         run(
           "delivery.status",
           validate(Schema.String, id).pipe(
             Effect.flatMap((value) =>
-              findProjectOperation(projectId, value).pipe(
-                Effect.andThen(deliveryStatus(config, value)),
+              domainTransaction(
+                config,
+                requireAccess(projectId, principalId).pipe(
+                  Effect.andThen(findProjectOperation(projectId, value)),
+                  Effect.andThen(deliveryStatus(config, value)),
+                ),
               ),
             ),
           ),

@@ -10,6 +10,21 @@ API_KEY=$(node --env-file=.env -p 'process.env.OTP_ROUTER_API_KEY')
 new_key() { node -p 'require("node:crypto").randomUUID()'; }
 ```
 
+## Provision the project
+
+Use a separate administrator credential. Keep the creation key and payload unchanged on retries. The response carries the project ETag; subsequent settings, lifecycle, and grant changes require that value in `If-Match`.
+
+```sh
+ADMIN_KEY=$(node --env-file=.env -p 'process.env.OTP_ROUTER_ADMIN_KEY')
+curl -fsS -D - -X POST "$BASE/v1/admin/projects" \
+  -H "Authorization: Bearer $ADMIN_KEY" -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: provision-demo-v1' \
+  --data-binary '{"id":"demo","settings":{"authorizationRequired":false,"sendLimit15m":100,"sendLimit24h":1000},"principalIds":["backend"]}'
+unset ADMIN_KEY
+```
+
+This matches the TypeScript [administration example](../admin/run.ts). Use `authorizationRequired: true` for the authorized configuration, including all retries.
+
 ## Managed verification
 
 Create a challenge and retain the request key and exact body. The response contains `challengeId`; it does not contain the generated code.

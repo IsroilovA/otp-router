@@ -33,6 +33,7 @@ const password = randomBytes(24).toString("hex");
 const router = {
   DATABASE_URL: `postgres://otp_router:${password}@postgres:5432/otp_router`,
   OTP_ROUTER_API_KEY: secret(),
+  OTP_ROUTER_ADMIN_KEY: secret(),
   OTP_ROUTER_FAKE_CALLBACK_SECRET: secret(),
   OTP_ROUTER_ENCRYPTION_KEY: secret(),
   OTP_ROUTER_VERIFICATION_KEY: secret(),
@@ -49,6 +50,12 @@ docker compose --project-name "$project" -f examples/deployment/compose.yaml exe
 import { randomUUID } from "node:crypto";
 
 if (process.getuid?.() === 0) throw new Error("router container runs as root");
+const provisioned = await fetch("http://127.0.0.1:3000/v1/admin/projects", {
+  method: "POST", headers: { authorization: `Bearer ${process.env.OTP_ROUTER_ADMIN_KEY}`, "content-type": "application/json", "idempotency-key": "smoke-project" },
+  body: JSON.stringify({ id: "demo", settings: { authorizationRequired: false, sendLimit15m: 100, sendLimit24h: 1000 }, principalIds: ["backend"] }),
+});
+if (provisioned.status !== 201) throw new Error(`provision status ${provisioned.status}`);
+await provisioned.arrayBuffer();
 const base = "http://127.0.0.1:3000/v1/projects/demo/challenges";
 const headers = {
   authorization: `Bearer ${process.env.OTP_ROUTER_API_KEY}`,

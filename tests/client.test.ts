@@ -1,3 +1,4 @@
+import { Projects } from "@otp-router/engine/projects";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { NodeHttpServer } from "@effect/platform-node";
@@ -74,13 +75,32 @@ beforeAll(async () => {
       fallbackLocales: [],
       policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
       purposes: { login: ["login"] },
-      projects: {
-        demo: {
-          policyIds: ["login"],
-          sendLimit15m: 1000,
-          sendLimit24h: 10000,
-          authorization: "disabled",
+      administration: {
+        principalIds: ["backend"],
+        administrators: {
+          admin: {
+            actions: [
+              "create",
+              "read",
+              "list",
+              "update",
+              "suspend",
+              "reactivate",
+              "retire",
+              "grant",
+              "revoke",
+              "audit",
+            ],
+            projectIds: [],
+            creationPrefixes: ["demo", "alpha", "beta"],
+            grantablePrincipalIds: ["backend"],
+            editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+            sendLimit15mCeiling: 1000000,
+            sendLimit24hCeiling: 1000000,
+            mayDisableAuthorization: true,
+          },
         },
+        authorizationFloor: false,
       },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
@@ -90,10 +110,12 @@ beforeAll(async () => {
   scope = await Effect.runPromise(Scope.make());
   const server = createServer();
   const api = makeHttpApiLayer({
-    principals: [{ id: "backend", projectIds: ["demo"], keys: [bearerToken] }],
+    administrators: [{ id: "admin", keys: ["admin-test-credential-with-at-least-32-bytes"] }],
+    principals: [{ id: "backend", keys: [bearerToken] }],
   }).pipe(
     HttpRouter.provideRequest(
       Layer.mergeAll(
+        Layer.succeed(Projects, runtime.projects),
         Layer.succeed(Router, runtime.router),
         Layer.succeed(Delivery, runtime.delivery),
         Layer.succeed(DeliveryHistory, runtime.history),
@@ -201,4 +223,88 @@ it("integrates managed verification, external delivery, replay, auth and history
   await expect(
     client.createChallenge({ ...input, contextId: "changed" }, { idempotencyKey: key }),
   ).rejects.toMatchObject({ code: "idempotency_conflict", status: 409 });
+});
+
+it("admin client preserves revision headers, lost-response replay and credential separation", async () => {
+  const { createAdminClient, OtpRouterApiError } = await import("@otp-router/client");
+  const adminToken = "admin-test-credential-with-at-least-32-bytes";
+  let loseResponse = true;
+  const administrator = createAdminClient({
+    baseUrl,
+    bearerToken: adminToken,
+    fetch: async (input, init) => {
+      const response = await fetch(input, init);
+      if (loseResponse && response.status === 201) {
+        loseResponse = false;
+        await response.arrayBuffer();
+        throw new Error("Simulated lost response after commit");
+      }
+      return response;
+    },
+  });
+  const input = {
+    id: "demo_http",
+    settings: { authorizationRequired: false, sendLimit15m: 10, sendLimit24h: 100 },
+    principalIds: ["backend"],
+  };
+  const key = randomUUID();
+  await expect(administrator.createProject(input, { idempotencyKey: key })).rejects.toMatchObject({
+    kind: "transport",
+  });
+  const created = await administrator.createProject(input, { idempotencyKey: key });
+  expect(created).toMatchObject({
+    status: 201,
+    replayed: true,
+    etag: '"1"',
+    data: { id: "demo_http", revision: 1 },
+  });
+  const suspensionKey = randomUUID();
+  const suspended = await administrator.suspendProject(input.id, {
+    idempotencyKey: suspensionKey,
+    etag: '"1"',
+  });
+  expect(suspended.etag).toBe('"2"');
+  const replay = await administrator.suspendProject(input.id, {
+    idempotencyKey: suspensionKey,
+    etag: '"1"',
+  });
+  expect(replay.data).toEqual(suspended.data);
+  expect(replay.replayed).toBe(true);
+  await expect(
+    administrator.reactivateProject(input.id, { idempotencyKey: randomUUID(), etag: '"1"' }),
+  ).rejects.toMatchObject({ error: { code: "revision_conflict" }, status: 412 });
+  const active = await administrator.reactivateProject(input.id, {
+    idempotencyKey: randomUUID(),
+    etag: '"2"',
+  });
+  expect(active.data.revision).toBe(3);
+  await expect(
+    administrator.updateProject(input.id, input.settings, {
+      idempotencyKey: randomUUID(),
+      etag: 'W/"3"',
+    }),
+  ).rejects.toMatchObject({ kind: "invalid_request" });
+  const regular = createAdminClient({ baseUrl, bearerToken });
+  await expect(regular.getProject(input.id)).rejects.toBeInstanceOf(OtpRouterApiError);
+  await expect(regular.getProject(input.id)).rejects.toMatchObject({
+    error: { code: "unauthorized" },
+  });
+  const incorrectClass = createClient({ baseUrl, bearerToken: adminToken, projectId: input.id });
+  await expect(incorrectClass.listOperations()).rejects.toMatchObject({
+    error: { code: "unauthorized" },
+  });
+  const page = await administrator.listProjects({ limit: 1 });
+  expect(page.data.projects).toHaveLength(1);
+  expect(page.data.nextCursor).not.toBeNull();
+  const audit = await administrator.listAudit(input.id);
+  expect(audit.data.events.map((event) => event.action)).toEqual([
+    "create",
+    "suspend",
+    "reactivate",
+  ]);
+  const granted = await administrator.revokePrincipal(input.id, "backend", {
+    idempotencyKey: randomUUID(),
+    etag: '"3"',
+  });
+  expect(granted.data.grants).toEqual([]);
 });

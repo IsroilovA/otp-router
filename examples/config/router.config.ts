@@ -47,13 +47,32 @@ export default defineConfig({
         },
       },
       purposes: { login: ["login"] },
-      projects: {
-        demo: {
-          policyIds: ["login"],
-          sendLimit15m: 10000,
-          sendLimit24h: 100000,
-          authorization: "disabled",
+      administration: {
+        principalIds: ["backend"],
+        administrators: {
+          admin: {
+            actions: [
+              "create",
+              "read",
+              "list",
+              "update",
+              "suspend",
+              "reactivate",
+              "retire",
+              "grant",
+              "revoke",
+              "audit",
+            ],
+            projectIds: [],
+            creationPrefixes: ["demo"],
+            grantablePrincipalIds: ["backend"],
+            editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"],
+            sendLimit15mCeiling: 1000000,
+            sendLimit24hCeiling: 1000000,
+            mayDisableAuthorization: true,
+          },
         },
+        authorizationFloor: false,
       },
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1_000,
@@ -73,7 +92,8 @@ export default defineConfig({
   },
   settings: {
     databaseUrl: required("DATABASE_URL"),
-    principals: [{ id: "backend", projectIds: ["demo"], keys: [apiKey] }],
+    administrators: [{ id: "admin", keys: [required("OTP_ROUTER_ADMIN_KEY")] }],
+    principals: [{ id: "backend", keys: [apiKey] }],
     host: process.env["OTP_ROUTER_HOST"] ?? "127.0.0.1",
     internalHost: process.env["OTP_ROUTER_INTERNAL_HOST"] ?? "127.0.0.1",
   },

@@ -1,3 +1,4 @@
+import { lockProject, intentEligible } from "../projects/store.js";
 import { transitionAttempts } from "./attempts.js";
 import { authorizeAttempt, projectBlock } from "./authorization.js";
 import { changed } from "./changes.js";
@@ -68,7 +69,8 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
     Effect.gen(function* () {
       const initial = yield* findAttempt(job.attemptId);
       const original = yield* findOperation(initial.operation_id);
-      const limits = sendLimits(
+      yield* lockProject(original.project_id);
+      const limits = yield* sendLimits(
         config.settings,
         original.recipient_token,
         initial.provider_instance_id,
@@ -93,7 +95,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         return undefined;
       }
       if (delivery.state !== "pending") return undefined;
-      if (stale(operation, delivery, job)) {
+      if (stale(operation, delivery, job) || !(yield* intentEligible(delivery.intent_id))) {
         yield* count("suppressed", "ineligible");
         yield* transitionAttempts(
           sql`UPDATE otp_router.delivery_attempts SET invocation = 'not_invoked', state = 'suppressed' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
@@ -104,7 +106,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* sql`UPDATE otp_router.delivery_operations SET processing_started = true WHERE id = ${operation.id}`;
       yield* changed(operation.id);
       const sharedBudget = yield* checkQuotas(
-        commonSendLimits(config.settings, operation.recipient_token, operation.project_id),
+        yield* commonSendLimits(config.settings, operation.recipient_token, operation.project_id),
         time,
       ).pipe(
         Effect.as(true),
