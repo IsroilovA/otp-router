@@ -100,6 +100,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         yield* transitionAttempts(
           sql`UPDATE otp_router.delivery_attempts SET invocation = 'not_invoked', state = 'suppressed' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
         );
+        yield* changed(operation.id);
         return undefined;
       }
       if (!(yield* authorizationPermitsDispatch(operation, delivery, time))) return undefined;

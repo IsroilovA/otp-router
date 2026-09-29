@@ -130,19 +130,23 @@ export const mutateProject = (config: RuntimeConfiguration, input: typeof AdminR
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${canonical(["admin", actorId, key])},0))`;
         yield* sql`DELETE FROM otp_router.admin_request_receipts WHERE actor_id = ${actorId} AND key = ${key} AND retain_until <= clock_timestamp()`;
         const receipt = (yield* rows(
-          Schema.Struct({ fingerprint: Schema.String, response: AdminResult }),
-          sql`SELECT fingerprint,response FROM otp_router.admin_request_receipts WHERE actor_id = ${actorId} AND key = ${key}`,
+          Schema.Struct({
+            fingerprint: Schema.String,
+            response: AdminResult,
+            details: Schema.NullOr(ChangeDetails),
+          }),
+          sql`SELECT r.fingerprint,r.response,e.details FROM otp_router.admin_request_receipts r LEFT JOIN otp_router.project_admin_events e ON e.id = r.event_id WHERE r.actor_id = ${actorId} AND r.key = ${key}`,
         ))[0];
         if (receipt !== undefined) {
           if (receipt.fingerprint !== fingerprint)
             return yield* Effect.fail(new DomainError({ code: "idempotency_conflict" }));
-          // Recheck editable settings against the allowlisted original change, not current state.
-          const event = (yield* rows(
-            Schema.Struct({ details: ChangeDetails }),
-            sql`SELECT details FROM otp_router.project_admin_events WHERE project_id = ${projectId} AND revision = ${receipt.response.body.revision}`,
-          ))[0];
-          if (event?.details.action === "update")
-            yield* authorizeSettingChanges(permissions, event.details.before, event.details.after);
+          // A no-op has no event. Recheck permissions only for this request's original change.
+          if (receipt.details?.action === "update")
+            yield* authorizeSettingChanges(
+              permissions,
+              receipt.details.before,
+              receipt.details.after,
+            );
           if (command.action === "create" && new Set(permissions.editableSettings).size !== 3)
             return yield* Effect.fail(new DomainError({ code: "admin_forbidden" }));
           return { ...receipt.response, replayed: true };
@@ -154,18 +158,19 @@ export const mutateProject = (config: RuntimeConfiguration, input: typeof AdminR
         if (details !== undefined && command.action !== "create")
           yield* sql`UPDATE otp_router.projects SET revision = revision + 1 WHERE id = ${projectId}`;
         const body = yield* projectSnapshot(projectId);
+        const eventId = details === undefined ? null : randomUUID();
         if (details !== undefined) {
           const validated = yield* Schema.decodeUnknownEffect(ChangeDetails)(details, {
             onExcessProperty: "error",
           });
-          yield* sql`INSERT INTO otp_router.project_admin_events(id,project_id,actor_id,action,revision,details) VALUES (${randomUUID()},${projectId},${actorId},${command.action},${body.revision},${JSON.stringify(validated)}::jsonb)`;
+          yield* sql`INSERT INTO otp_router.project_admin_events(id,project_id,actor_id,action,revision,details) VALUES (${eventId},${projectId},${actorId},${command.action},${body.revision},${JSON.stringify(validated)}::jsonb)`;
         }
         const response: typeof AdminResult.Type = {
           status: command.action === "create" ? 201 : 200,
           body,
           replayed: false,
         };
-        yield* sql`INSERT INTO otp_router.admin_request_receipts(actor_id,key,fingerprint,response,project_id,retain_until) VALUES (${actorId},${key},${fingerprint},${JSON.stringify(response)}::jsonb,${projectId},${command.action === "create" ? sql`NULL` : sql`clock_timestamp() + interval '7 days'`})`;
+        yield* sql`INSERT INTO otp_router.admin_request_receipts(actor_id,key,fingerprint,response,project_id,event_id,retain_until) VALUES (${actorId},${key},${fingerprint},${JSON.stringify(response)}::jsonb,${projectId},${eventId},${command.action === "create" ? sql`NULL` : sql`clock_timestamp() + interval '7 days'`})`;
         return response;
       }),
     );

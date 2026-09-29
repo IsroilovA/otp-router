@@ -12,7 +12,7 @@ Configuration is trusted executable TypeScript. Install its imports with the dep
 - Enable manual provider/channel selection deliberately and restrict its choices when necessary. Selectors may narrow routes but cannot relax limits.
 - Ensure timeouts, delivery windows, code formats, and locale templates fit every enabled capability. Use [provider setup](provider-setup.md) for remote account requirements.
 
-API and worker roles validate a compatible policy, provider, principal, administrator-permission, and capability catalog before readiness. The live catalog is registered for each process lifetime; an incompatible catalog cannot join running replicas. Startup rejects missing principals still named by active grants, an unavailable authorizer required by retained active work or project settings, and projects below the authorization floor. Stop all roles before changing the catalog, following the [drain procedure](operations.md#configuration-changes).
+API and worker roles validate a matching policy, provider, principal, administrator-permission, and capability catalog before readiness. The live catalog is registered for each process lifetime; a different catalog cannot join running replicas. Startup rejects missing principals still named by active grants, an unavailable authorizer required by retained active work or project settings, and projects below the authorization floor. Follow the [configuration rollout procedure](operations.md#configuration-changes) when changing deployment settings.
 
 Startup rejects malformed provider constraints, policies whose lifetime or code length cannot fit a routed provider, and provider budget or label references without a registered instance. Validate the full deployment entry before directing traffic to it.
 

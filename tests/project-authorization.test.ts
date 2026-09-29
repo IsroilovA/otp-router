@@ -1237,7 +1237,7 @@ it("invalidates queued sends even when the operation requires no external author
       },
     }),
   );
-  await create();
+  const created = await create();
   const work = await job();
   await Effect.runPromise(
     app().projects.mutate({
@@ -1262,5 +1262,18 @@ it("invalidates queued sends even when the operation requires no external author
     state: "suppressed",
     invocation: "not_invoked",
     authorization: { state: "not_required" },
+  });
+  const current = await Effect.runPromise(
+    app().delivery.status("alpha", created.body.operationId, "backend"),
+  );
+  expect(current.body).toMatchObject({ state: "failed", reason: "delivery_failed" });
+  expect(current.body.revision).toBeGreaterThan(created.body.revision);
+  const events = (await Effect.runPromise(app().history.events("alpha", {}, "backend"))).events;
+  expect(events.filter((event) => event.type === "delivery.updated").at(-1)).toMatchObject({
+    delivery: {
+      operationId: created.body.operationId,
+      revision: current.body.revision,
+      state: "failed",
+    },
   });
 });

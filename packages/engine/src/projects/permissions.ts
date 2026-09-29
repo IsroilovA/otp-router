@@ -51,6 +51,12 @@ export const authorizeCommand = (
           ? command.settings
           : undefined;
     if (settings !== undefined) yield* authorizeSettings(config, permissions, settings);
+    if (
+      command.action === "create" &&
+      !command.input.settings.authorizationRequired &&
+      !permissions.mayDisableAuthorization
+    )
+      return yield* Effect.fail(new DomainError({ code: "admin_forbidden" }));
     return permissions;
   });
 const authorizeSettings = (
@@ -62,8 +68,7 @@ const authorizeSettings = (
     if (
       settings.sendLimit15m > permissions.sendLimit15mCeiling ||
       settings.sendLimit24h > permissions.sendLimit24hCeiling ||
-      (!settings.authorizationRequired &&
-        (config.settings.administration.authorizationFloor || !permissions.mayDisableAuthorization))
+      (!settings.authorizationRequired && config.settings.administration.authorizationFloor)
     )
       return yield* Effect.fail(new DomainError({ code: "admin_forbidden" }));
     if (settings.authorizationRequired && config.authorizer === undefined)
@@ -76,6 +81,12 @@ export const authorizeSettingChanges = (
   after: typeof ProjectSettings.Type,
 ) =>
   Effect.gen(function* () {
+    if (
+      before.authorizationRequired &&
+      !after.authorizationRequired &&
+      !permissions.mayDisableAuthorization
+    )
+      return yield* Effect.fail(new DomainError({ code: "admin_forbidden" }));
     for (const field of ["authorizationRequired", "sendLimit15m", "sendLimit24h"] as const)
       if (before[field] !== after[field] && !permissions.editableSettings.includes(field))
         return yield* Effect.fail(new DomainError({ code: "admin_forbidden" }));

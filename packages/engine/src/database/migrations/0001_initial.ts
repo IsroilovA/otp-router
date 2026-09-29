@@ -18,19 +18,20 @@ export default Effect.gen(function* () {
     CHECK (revoked_at IS NULL OR revoked_at >= granted_at)
   )`;
   yield* sql`CREATE UNIQUE INDEX active_grant ON otp_router.project_principal_grants(project_id,principal_id) WHERE revoked_at IS NULL`;
-  yield* sql`CREATE TABLE otp_router.admin_request_receipts (
-    actor_id text NOT NULL, key text NOT NULL, fingerprint text NOT NULL,
-    response jsonb NOT NULL, project_id text NOT NULL REFERENCES otp_router.projects(id),
-    created_at timestamptz NOT NULL DEFAULT clock_timestamp(), retain_until timestamptz,
-    PRIMARY KEY (actor_id,key), CHECK (retain_until IS NULL OR retain_until > created_at)
-  )`;
-  yield* sql`CREATE INDEX admin_receipts_expiry ON otp_router.admin_request_receipts(retain_until) WHERE retain_until IS NOT NULL`;
   yield* sql`CREATE TABLE otp_router.project_admin_events (
     id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), actor_id text NOT NULL,
     action text NOT NULL CHECK (action IN ('create','update','suspend','reactivate','retire','grant','revoke')),
     occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(), revision integer NOT NULL CHECK (revision > 0),
     details jsonb NOT NULL, UNIQUE(project_id,revision)
   )`;
+  yield* sql`CREATE TABLE otp_router.admin_request_receipts (
+    actor_id text NOT NULL, key text NOT NULL, fingerprint text NOT NULL,
+    response jsonb NOT NULL, project_id text NOT NULL REFERENCES otp_router.projects(id),
+    event_id uuid REFERENCES otp_router.project_admin_events(id),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(), retain_until timestamptz,
+    PRIMARY KEY (actor_id,key), CHECK (retain_until IS NULL OR retain_until > created_at)
+  )`;
+  yield* sql`CREATE INDEX admin_receipts_expiry ON otp_router.admin_request_receipts(retain_until) WHERE retain_until IS NOT NULL`;
   yield* sql`CREATE TABLE otp_router.configured_catalog (singleton boolean PRIMARY KEY CHECK (singleton), fingerprint text NOT NULL)`;
   yield* sql`CREATE TABLE otp_router.delivery_operations (
     id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), creation_sequence bigint, owner text NOT NULL CHECK (owner IN ('external','challenge')),
