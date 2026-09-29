@@ -26,6 +26,7 @@ beforeEach(() => {
   vi.stubEnv("TAG", "server-v0.1.0-alpha.1");
   vi.stubEnv("VERSION", "0.1.0-alpha.1");
   vi.stubEnv("PRERELEASE", "true");
+  vi.stubEnv("PREVIOUS_TAG", "");
 });
 
 test("restores incomplete draft assets before publishing and tolerates a completed rerun", async () => {
@@ -80,7 +81,8 @@ test("creates an absent client release but does not interpret lookup failures as
       "--verify-tag",
       "--title",
       "Client 0.1.0-alpha.1",
-      "--generate-notes",
+      "--notes",
+      "Initial client release of OTP Router.\n\n[Documentation and source](https://github.com/IsroilovA/otp-router/tree/client-v0.1.0-alpha.1) · [Full history](https://github.com/IsroilovA/otp-router/commits/client-v0.1.0-alpha.1/)",
       "--prerelease",
     ],
     { stdio: "inherit" },
@@ -90,4 +92,29 @@ test("creates an absent client release but does not interpret lookup failures as
   cli.view.mockReturnValue({ status: 1, stdout: "", stderr: "connection refused" });
   await expect(run("client")).rejects.toThrow("Could not inspect GitHub Release");
   expect(cli.run).not.toHaveBeenCalled();
+});
+
+test("generates subsequent notes from the supplied component tag", async () => {
+  vi.stubEnv("PREVIOUS_TAG", "server-v0.1.0-alpha.0");
+  cli.view
+    .mockReturnValueOnce({ status: 1, stdout: "", stderr: "release not found\n" })
+    .mockReturnValue(release(false, required));
+  await run();
+  expect(cli.run).toHaveBeenCalledWith(
+    "gh",
+    [
+      "release",
+      "create",
+      "server-v0.1.0-alpha.1",
+      ...required,
+      "--verify-tag",
+      "--title",
+      "Server 0.1.0-alpha.1",
+      "--generate-notes",
+      "--notes-start-tag",
+      "server-v0.1.0-alpha.0",
+      "--prerelease",
+    ],
+    { stdio: "inherit" },
+  );
 });

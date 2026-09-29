@@ -1,6 +1,6 @@
 # Managed and external capabilities
 
-The self-hosted HTTP server exposes managed verification and external-code delivery. Integrate through the [HTTP contract](api.md), directly or with the [TypeScript client](client.md). The private engine package shares behavior between HTTP handlers, workers, and callbacks; it is not a separately released SDK. [Package exports](../packages/engine/package.json) also support trusted deployment extensions, as shown in the [custom adapter](../examples/custom-adapter/README.md).
+Integrate managed verification and external-code delivery through the [HTTP API](api.md) or [TypeScript client](client.md). The engine is a private workspace package; use its [supported exports](../packages/engine/package.json) for trusted [deployment extensions](../examples/custom-adapter/README.md).
 
 ## Managed verification
 
@@ -17,6 +17,6 @@ External callers own code generation, verification, authorization, and associati
 
 ## Integration obligations
 
-Deployments own worker startup, readiness, and shutdown. API-only processes require a worker elsewhere for delivery and cleanup. Importing engine packages starts no resources.
+Follow the [deployment requirements](operations.md) for workers, readiness, and shutdown.
 
 Use [public events](webhooks.md) for committed changes, status reads for snapshots, and [attempt history](history.md) for complete retained evidence and feed reconciliation. Replayed results may describe an earlier state; follow [idempotency](api.md#idempotency). Operational recovery follows the [operations guide](operations.md).

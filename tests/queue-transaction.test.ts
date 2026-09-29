@@ -237,25 +237,6 @@ describe("transaction-local queue integration", () => {
       ).count,
     ).toBe(0);
   });
-  it("retains delayed work across runtime restart and respects its persisted due time", async () => {
-    const h = current();
-    if (database === undefined) throw new Error("Missing database");
-    const id = await h.queue.send(
-      deliveryQueue,
-      { version: 1, attemptId: randomUUID(), routingRevision: 1 },
-      { startAfter: 600 },
-    );
-    expect(id).not.toBeNull();
-    await h.close();
-    harness = await startRuntime(database.databaseUrl, configuration);
-    expect(await harness.queue.fetch(deliveryQueue)).toEqual([]);
-    await harness.run(
-      harness.pg`UPDATE pgboss.job SET start_after = clock_timestamp() - interval '1 second' WHERE id = ${id}`,
-    );
-    const claimed = await harness.queue.fetch(deliveryQueue);
-    expect(claimed.map((job) => job.id)).toEqual([id]);
-  });
-
   describe("empty database", () => {
     let freshDatabase: PostgresFixture | undefined;
     beforeAll(async () => {

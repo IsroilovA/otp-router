@@ -22,7 +22,7 @@ it.effect(
         });
       }
       const parsed = yield* parseJson('{"items":[{"a":1},{"a":2}],"__proto__":{"safe":true}}');
-      expect(parsed).toEqual(JSON.parse('{"items":[{"a":1},{"a":2}],"__proto__":{"safe":true}}'));
+      expect(parsed).toEqual({ items: [{ a: 1 }, { a: 2 }], ["__proto__"]: { safe: true } });
       expect(Object.hasOwn(parsed ?? {}, "__proto__")).toBe(true);
     }),
 );

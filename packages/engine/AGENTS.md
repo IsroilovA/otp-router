@@ -10,14 +10,11 @@
 
 ## Persistence
 
-- Use parameterized Effect SQL and `SqlSchema` result validation. SQL result annotations alone do not validate rows. Keep queries with their feature and transactions in `SqlClient.withTransaction`.
+- Use parameterized Effect SQL and schema-validated query results. Type annotations do not validate database rows.
 - Application updates and deletes require explicit predicates. Explain and review intentional whole-table operations; lint does not inspect SQL strings.
-- Commit domain changes, replay receipts, events, and queued work atomically. Transactional enqueue must use the current SQL connection; another pool with the same URL cannot join it.
-- Never hold a database transaction across provider or selector network work. Preserve the [transaction guarantees](../../docs/data-model.md).
+- Commit domain changes, replay receipts, events, and queued work in the same transaction.
+- Never hold a database transaction across provider, selector, or authorization network calls. Preserve the [transaction guarantees](../../docs/data-model.md).
 
 ## Delivery and security
 
 - Preserve [routing](../../docs/routing.md) and [security](../../docs/security.md) contracts when changing dispatch, verification, recovery, or callbacks.
-- Uncertain delivery never authorizes automatic resend or fallback. Disable transport retries; reserve eligibility and quota before invocation. Recovery must not repeat a dispatched send.
-- Explicit resend preserves the original code, deadline, and guess count. Verification and delivery are independent states.
-- Never expose OTPs, credentials, full recipients, binding data, or raw provider payloads through logs, metrics, or errors. Persist only allowlisted provider diagnostics.

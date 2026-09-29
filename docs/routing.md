@@ -28,7 +28,7 @@ Provider TTL limits delivery attempts, not code validity. Some providers can del
 
 ## State and evidence
 
-Verification progresses from active to verified, locked, expired, or cancelled. These terminal states never reopen. Treat an overdue active row as expired even before cleanup runs. Delivery exhaustion leaves verification available until the original deadline and guess limits.
+Verification progresses from active to verified, locked, expired, or cancelled. Terminal states never reopen. An overdue challenge is expired even before cleanup runs. Delivery exhaustion leaves verification available until the original deadline and guess limits.
 
 Recovery treats unresolved dispatched work as uncertain and never sends it again. Explicit resend is a new attempt.
 

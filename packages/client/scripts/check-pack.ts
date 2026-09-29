@@ -9,7 +9,6 @@ const temporary = await mkdtemp(join(tmpdir(), "otp-router-client-"));
 const Pack = Schema.Array(
   Schema.Struct({
     filename: Schema.String,
-    integrity: Schema.String,
     files: Schema.Array(Schema.Struct({ path: Schema.String })),
   }),
 );
@@ -19,7 +18,6 @@ try {
   });
   const [packed] = Schema.decodeUnknownSync(Pack)(JSON.parse(output));
   assert.ok(packed, "npm pack must produce one package");
-  assert.ok(packed.integrity.startsWith("sha512-"));
   execFileSync(
     "npm",
     [

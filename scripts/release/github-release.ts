@@ -7,6 +7,7 @@ const environment = Schema.decodeUnknownSync(
     TAG: Schema.NonEmptyString,
     VERSION: Schema.NonEmptyString,
     PRERELEASE: Schema.Literals(["true", "false"]),
+    PREVIOUS_TAG: Schema.String,
   }),
 )(process.env);
 const prerelease = environment.PRERELEASE === "true";
@@ -43,7 +44,12 @@ if (existing === undefined) {
     "--verify-tag",
     "--title",
     `${product === "server" ? "Server" : "Client"} ${environment.VERSION}`,
-    "--generate-notes",
+    ...(environment.PREVIOUS_TAG === ""
+      ? [
+          "--notes",
+          `Initial ${product} release of OTP Router.\n\n[Documentation and source](https://github.com/IsroilovA/otp-router/tree/${environment.TAG}) · [Full history](https://github.com/IsroilovA/otp-router/commits/${environment.TAG}/)`,
+        ]
+      : ["--generate-notes", "--notes-start-tag", environment.PREVIOUS_TAG]),
     ...(prerelease ? ["--prerelease"] : []),
   );
 } else {

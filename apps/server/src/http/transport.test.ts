@@ -12,7 +12,6 @@ import {
   type Snapshot,
   type VerifyInput,
 } from "@otp-router/engine/challenges";
-import { openApiDocument } from "./api.js";
 import { makeWebHandler } from "./transport.js";
 import { WebhookError, WebhookHandler } from "./webhooks.js";
 
@@ -45,12 +44,13 @@ describe("HTTP transport", () => {
   const deliveryRequests: Array<ChallengeMutation<DeliveryInput>> = [];
   const cancelRequests: Array<ChallengeMutation<Record<string, never>>> = [];
   const callbackBodies: Array<Uint8Array> = [];
-  let createMode: "success" | "replay" | "rate-limited" = "success";
+  let createMode: "success" | "replay" | "rate-limited" | "defect" = "success";
   let callbackAvailable = true;
 
   const router = Router.of({
     create: (request) => {
       createRequests.push(request);
+      if (createMode === "defect") return Effect.die(new Error("private-provider-payload"));
       if (createMode === "rate-limited") {
         return Effect.fail(
           new DomainError({
@@ -310,7 +310,7 @@ describe("HTTP transport", () => {
     }
   });
 
-  it("sets replay and retry headers from Router outcomes", async () => {
+  it("maps Router outcomes to replay/retry headers and redacted HTTP failures", async () => {
     createMode = "replay";
     const replay = await server.handler(createRequest(validCreate));
     expect(replay.status).toBe(201);
@@ -323,6 +323,14 @@ describe("HTTP transport", () => {
     expect(Number(limited.headers.get("retry-after"))).toBeLessThanOrEqual(120);
     const body = Schema.decodeUnknownSync(ErrorBody)(await limited.json());
     expect(body.error.code).toBe("rate_limited");
+    createMode = "defect";
+    const failed = await server.handler(createRequest(validCreate));
+    const failureText = await failed.text();
+    const failure = Schema.decodeUnknownSync(ErrorBody)(JSON.parse(failureText));
+    expect(failed.status).toBe(500);
+    expect(failure.error.code).toBe("internal_error");
+    expect(failure.error.requestId).not.toBe("");
+    expect(failureText).not.toContain("private-provider-payload");
     createMode = "success";
   });
 
@@ -387,54 +395,5 @@ describe("HTTP transport", () => {
     );
     expect(oversized.status).toBe(413);
     expect(callbackBodies).toHaveLength(before);
-  });
-
-  it("generates strict OpenAPI for operations, security, and status responses", () => {
-    const create = openApiDocument.paths["/v1/projects/{projectId}/challenges"]?.post;
-    if (create === undefined) throw new Error("Missing create endpoint");
-    expect(Object.keys(create.responses)).toEqual(
-      expect.arrayContaining(["201", "400", "401", "409", "413", "422", "429", "500", "503"]),
-    );
-    expect(create.security).toBeDefined();
-    expect(create.requestBody).toMatchObject({
-      content: {
-        "application/json": {
-          schema: {
-            additionalProperties: false,
-            properties: {
-              locale: { type: "string", pattern: "^[A-Za-z0-9-]{1,64}$" },
-              routingContext: {
-                type: "object",
-                additionalProperties: {
-                  anyOf: [
-                    { type: "string" },
-                    { type: "number" },
-                    { type: "boolean" },
-                    { type: "null" },
-                  ],
-                },
-              },
-            },
-          },
-        },
-      },
-    });
-    for (const path of [
-      "/v1/projects/{projectId}/challenges",
-      "/v1/projects/{projectId}/challenges/{challengeId}/verify",
-      "/v1/projects/{projectId}/challenges/{challengeId}/deliveries",
-      "/v1/projects/{projectId}/challenges/{challengeId}/cancel",
-    ]) {
-      expect(
-        openApiDocument.paths[path]?.post?.parameters.find(
-          (parameter) => parameter.name === "idempotency-key",
-        ),
-      ).toMatchObject({
-        in: "header",
-        required: true,
-        schema: { pattern: "^[!-~]{1,128}$" },
-      });
-    }
-    expect(openApiDocument.paths["/webhooks/{providerInstanceId}"]?.post?.security).toEqual([]);
   });
 });

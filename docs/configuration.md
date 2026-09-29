@@ -2,7 +2,7 @@
 
 Start from the [fake configuration](../examples/config/router.config.ts) or [built-in providers](../examples/config/builtins.config.ts). [Engine](../packages/engine/src/config/config.ts) and [server](../apps/server/src/config/config.ts) schemas own fields, defaults, and bounds; the entries and [.env.example](../.env.example) own environment mappings.
 
-Configuration is trusted executable TypeScript. Install its imports with the deployment and keep secrets outside the image. Environment variables affect only fields the entry explicitly reads; Node requires `--env-file` to load a local secrets file. Configuration is immutable while running. Configure explicit [projects and backend grants](projects.md), and choose [send authorization](authorization.md) separately for each project.
+Configuration is trusted executable TypeScript. Install its imports with the deployment and keep secrets outside the image. Environment variables affect only fields the entry reads. Pass `--env-file` to Node to load a local secrets file. Configuration is immutable while running. Configure [projects and backend grants](projects.md) and choose [send authorization](authorization.md) for each project.
 
 ## Policies
 

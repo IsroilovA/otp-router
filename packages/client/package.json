@@ -1,6 +1,6 @@
 {
   "name": "@otp-router/client",
-  "version": "0.1.0-alpha.1",
+  "version": "0.0.1",
   "description": "Typed backend HTTP client for self-hosted OTP Router",
   "type": "module",
   "license": "MIT",

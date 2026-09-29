@@ -1,9 +1,9 @@
 # OTP Router client
 
-A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 24 or newer. ESM only. This alpha package may introduce breaking changes.
+A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 24 or newer. ESM only. Pin the version and review [release compatibility and upgrade notes](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md) before upgrading.
 
 ```sh
-npm install @otp-router/client@next
+npm install --save-exact @otp-router/client@0.0.1
 ```
 
 ```ts
@@ -32,13 +32,13 @@ const current = await client.getChallenge(result.data.challengeId);
 
 Run this only on a trusted backend. Keep credentials and codes out of client applications and logs. Creation acknowledges durable work; provider acceptance does not verify a person.
 
-Methods cover managed challenges (`createChallenge`, `getChallenge`, `verifyChallenge`, `sendChallenge`, `cancelChallenge`), external code delivery (`prepareDelivery`, `createDelivery`, `getDelivery`, `submitDeliveryCode`, `sendDelivery`, `closeDelivery`), and history (`listOperations`, `listAttempts`, `getAttempt`, `listEvents`). The generated TypeScript declarations own exact signatures and DTO fields.
+The client supports managed challenges, external-code delivery, and history. Exported TypeScript declarations define methods and DTO fields.
 
-Request `*TransferDto` types and response `*DecodeDto` types come from the server's endpoint schemas. Requests and responses are validated at runtime. Responses return `{ data, status, replayed, requestId, retryAfter }`; header metadata can be `null` when the server does not supply it. History queries accept numeric limits and opaque cursor strings.
+Requests and responses are validated at runtime. Results include response data and HTTP metadata; unavailable header metadata is `null`.
 
 Every mutation requires an explicit `idempotencyKey`. There are no automatic retries. After an ambiguous failure, retain the original payload/key and reconcile or retry with that same pair according to the [HTTP contract](https://github.com/IsroilovA/otp-router/blob/main/docs/api.md#idempotency). Replays can contain older snapshots.
 
-`OtpRouterApiError` exposes a validated `error` DTO discriminated by `error.code`, plus HTTP metadata. Only `incorrect_code` carries the optional `reason: "locked"` field. Branch on codes, not messages:
+`OtpRouterApiError` contains a validated error and HTTP metadata. Branch on `error.code`, not messages:
 
 ```ts
 try {
@@ -57,6 +57,6 @@ try {
 
 `OtpRouterClientError` distinguishes configuration, invalid requests, invalid responses, transport failures, timeout, caller abort, and unexpected defects through `kind` and its `error` DTO. Raw bodies, credentials, and underlying network errors are not attached. A transport failure or timeout does not establish that a mutation failed on the server.
 
-The default deadline is 30 seconds and covers the complete request/response. Set `timeoutMs` on the client or per request; pass an `AbortSignal` in request options to cancel. A signal that is already aborted prevents the request from starting. Deadlines are positive integer milliseconds. Redirects are rejected. An optional `fetch` implementation supports transport injection.
+The default deadline is 30 seconds for the complete request/response. Set `timeoutMs` on the client or per request in positive integer milliseconds. Pass an `AbortSignal` to cancel; an already-aborted signal prevents the request. Cancellation does not undo server work. Base URLs may include a reverse-proxy path prefix; redirects are rejected. Supply `fetch` to use a custom transport.
 
 See the [client integration guide](https://github.com/IsroilovA/otp-router/blob/main/docs/client.md), [HTTP contract](https://github.com/IsroilovA/otp-router/blob/main/docs/api.md), and [history contract](https://github.com/IsroilovA/otp-router/blob/main/docs/history.md).

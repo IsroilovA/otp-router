@@ -1,6 +1,6 @@
 services:
   router:
-    image: ${OTP_ROUTER_IMAGE:-ghcr.io/isroilova/otp-router:0.1.0-alpha.1}
+    image: ${OTP_ROUTER_IMAGE:-ghcr.io/isroilova/otp-router:0.0.1}
     env_file: ${OTP_ROUTER_ENV_FILE:?Set OTP_ROUTER_ENV_FILE to an absolute path to the secrets file}
     environment:
       OTP_ROUTER_HOST: 0.0.0.0

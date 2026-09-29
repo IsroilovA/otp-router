@@ -2,7 +2,15 @@
 
 Use a dedicated PostgreSQL database and compatible configuration across all roles. Run at least one worker or combined process; an API-only deployment can accept work without delivering it. Pin the image and configuration together, and keep secrets outside image layers.
 
-The [published-image Compose example](../examples/deployment/compose.yaml) runs a combined router with PostgreSQL. Set `OTP_ROUTER_ENV_FILE` to an absolute path to a router-only environment file containing `DATABASE_URL` (using the `postgres` hostname) and the secrets read by your configuration entry. Set `OTP_ROUTER_POSTGRES_ENV_FILE` to a separate absolute path containing `POSTGRES_PASSWORD`; its value must match the password in `DATABASE_URL`. Set `OTP_ROUTER_CONFIG_DIR` to an absolute path containing the entry named by `OTP_ROUTER_CONFIG_FILE` (default `router.config.ts`). Keep these files outside the repository, restrict their permissions, and make the configuration directory readable by the image's `node` user. Configure a new deployment identity and real providers before directing production traffic; the [fake local entry](../examples/config/router.config.ts) is only for tests and sends no messages.
+The [deployment Compose example](../examples/deployment/compose.yaml) runs a combined router with PostgreSQL. Supply these absolute paths:
+
+| Variable | Contents |
+| --- | --- |
+| `OTP_ROUTER_ENV_FILE` | Router environment file with `DATABASE_URL` using hostname `postgres`, plus the secrets your configuration reads |
+| `OTP_ROUTER_POSTGRES_ENV_FILE` | Separate environment file with `POSTGRES_PASSWORD`, matching `DATABASE_URL` |
+| `OTP_ROUTER_CONFIG_DIR` | Directory containing `router.config.ts`, or the entry selected by `OTP_ROUTER_CONFIG_FILE` |
+
+Keep secrets outside the repository with restricted permissions. Make configuration readable by the container's `node` user. Set a production deployment identity and [real providers](provider-setup.md) before enabling traffic; the local fake provider sends no messages.
 
 ```sh
 export OTP_ROUTER_ENV_FILE=/absolute/path/router.env
@@ -11,13 +19,13 @@ export OTP_ROUTER_CONFIG_DIR=/absolute/path/config
 docker compose -f examples/deployment/compose.yaml up -d --wait
 ```
 
-The example defaults to `ghcr.io/isroilova/otp-router:0.1.0-alpha.1`, binds the application port to host loopback, and keeps the internal readiness endpoint inside the container. Pin the router and PostgreSQL image digests for a real deployment and place a TLS or private-network frontend in front of the application as needed. `down` retains the database volume; `down --volumes` removes it. The example's 40-second container stop grace exceeds the default 30-second application grace; increase it if your configuration increases `shutdownGraceMs`.
+The example pins a router version, binds its application port to host loopback, and keeps readiness inside the container. Pin router and PostgreSQL image digests in production and provide TLS or private-network access. `down` retains the database volume; `down --volumes` removes it.
 
 ## Startup and shutdown
 
 Allow startup to apply router and queue migrations; the database account needs schema/migration privileges. Never downgrade a newer schema. Readiness requires initialized local resources and PostgreSQL, not messaging-provider availability. Monitor each role independently.
 
-Keep health/metrics private. Stop traffic and new job claims before draining work; allow the container more shutdown time than the application grace period. Interrupted dispatched sends remain uncertain and retain quota reservations.
+Keep health/metrics private. Stop traffic and new job claims before draining work. Set container shutdown time above the configured `shutdownGraceMs`. Interrupted dispatched sends remain uncertain and retain quota reservations.
 
 ## Configuration changes
 
@@ -25,7 +33,11 @@ For incompatible changes, stop creation and let active operations finish or expi
 
 Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials throughout the configured history reconciliation window, unless compromise requires revocation. Emergency disables require stopping workers and restarting with the affected instance disabled.
 
-During unreleased development, all router schema changes are folded into the initial schema. There are no incremental upgrade migrations or backfills, and existing development databases are not upgraded in place. After a schema change, use a new empty database, or explicitly recreate a confirmed disposable database after preserving anything needed. Never mix workers from incompatible builds against the same database; no reset is performed automatically.
+## Database upgrades
+
+Releases that change the router schema include ordered migrations and any required backfills. Startup applies pending migrations to an existing database; a fresh installation applies the complete migration history. Database resets are not an upgrade procedure.
+
+Before upgrading, read the release notes for supported source versions, compatibility, and any drain requirements. Back up the database and preserve its keys, then validate the upgrade on a restored copy. Stop incompatible API and worker processes before applying migrations; never mix incompatible builds against the same database. Confirm readiness before restoring traffic. To recover from an incompatible upgrade, restore the matching database backup, application version, configuration, and keys using the [database restore procedure](#database-restore); do not run older code against the newer schema.
 
 ## API-key rotation
 
@@ -33,7 +45,7 @@ Deploy old and new keys to every API process, switch callers, then remove the ol
 
 ## Database restore
 
-Back up the complete database and preserve its cryptographic keys separately. Stop all API and worker processes before restoring, then invalidate restored active flows:
+Back up the complete database and preserve its cryptographic keys separately. Stop all API and worker processes before restoring, then invalidate restored active flows. In this and the following CLI examples, replace `.env` and the example configuration path with your deployment files:
 
 ```sh
 node --env-file=.env apps/server/dist/main.js --invalidate-restored --config "$PWD/examples/config/router.config.ts"
@@ -65,7 +77,7 @@ Replay restores the notification attempt budget and requeues the original event,
 
 ## Troubleshooting
 
-Start with `docker compose -f apps/server/compose.yaml ps` and `docker compose -f apps/server/compose.yaml logs --tail=100 router`. Use `--check-config` to validate local settings; use `--check-schema` only when database changes are intended.
+Run `docker compose ps` and `docker compose logs --tail=100 router` with the same Compose file, environment, and project used for deployment. Use `--check-config` to validate settings; use `--check-schema` only when database changes are intended.
 
 - Identity mismatch: restore the correct deployment configuration or use a separate database; never bypass the check by deleting needed data.
 - Missing retained keys: restore their original IDs and bytes.

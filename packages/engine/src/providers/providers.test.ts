@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, Fiber, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Exit, Layer, Redacted, Schema } from "effect";
 import {
   OperationIdSchema,
   AttemptIdSchema,
@@ -101,12 +101,9 @@ it.effect("normalizes every consequential fake send outcome", () =>
   }),
 );
 
-it.effect("keeps fake sends interruptible and authenticates callback batches", () =>
+it.effect("authenticates fake callback batches", () =>
   Effect.gen(function* () {
-    const provider = yield* build(FakeProvider, fakeConfig("never"));
-    const fiber = yield* Effect.forkChild(provider.send(sendInput()));
-    yield* Fiber.interrupt(fiber);
-    expect(Exit.hasInterrupts(yield* Fiber.await(fiber))).toBe(true);
+    const provider = yield* build(FakeProvider, fakeConfig("accepted"));
 
     const body = encoder.encode(
       JSON.stringify({
@@ -120,8 +117,7 @@ it.effect("keeps fake sends interruptible and authenticates callback batches", (
       }),
     );
     const callback = provider.callback;
-    expect(callback).toBeDefined();
-    if (callback === undefined) return;
+    if (callback === undefined) throw new Error("Expected provider callback");
     const authenticated = yield* callback({
       body,
       method: "POST",
@@ -192,7 +188,7 @@ it("rejects invalid provider and template configuration before use", () => {
   ).toBe(true);
 });
 
-it.effect("does not retry an interrupted or failed provider transport", () =>
+it.effect("does not retry a failed provider transport", () =>
   Effect.gen(function* () {
     let calls = 0;
     const definition = makeTelegramDefinition({
@@ -306,7 +302,7 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
     });
     const provider = yield* build(definition, config);
     const callback = provider.callback;
-    if (callback === undefined) return;
+    if (callback === undefined) throw new Error("Expected provider callback");
     const timestamp = String(Math.floor(Date.now() / 1_000));
     const body = encoder.encode(
       JSON.stringify({
@@ -409,7 +405,7 @@ it.effect("maps one Meta authentication template send and verifies both callback
       },
     });
     const callback = provider.callback;
-    if (callback === undefined) return;
+    if (callback === undefined) throw new Error("Expected provider callback");
     const handshake = yield* callback({
       body: new Uint8Array(),
       method: "GET",

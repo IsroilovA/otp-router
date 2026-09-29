@@ -57,8 +57,11 @@ if (existing) {
 }
 
 const channel = prerelease(manifest.version) === null ? "latest" : "next";
+const previous = otherVersions
+  .filter(({ version }) => compare(version, current) < 0)
+  .sort((left, right) => compare(right.version, left.version))[0];
 appendFileSync(
   environment.GITHUB_OUTPUT,
-  `state=${state}\nversion=${manifest.version}\ntag=${tag}\nchannel=${channel}\nprerelease=${channel === "next"}\n`,
+  `state=${state}\nversion=${manifest.version}\ntag=${tag}\nchannel=${channel}\nprerelease=${channel === "next"}\nprevious_tag=${previous?.tag ?? ""}\n`,
 );
 process.stdout.write(`${product}: ${tag} (${state}, ${channel})\n`);

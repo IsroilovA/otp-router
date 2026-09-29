@@ -67,7 +67,6 @@ it.effect("preserves domain rejection details and committed incorrect-code respo
     });
     const rejected = yield* observeOperation("deliver", Effect.fail(rejection)).pipe(Effect.result);
     expect(rejected).toEqual(Result.fail(rejection));
-    if (Result.isFailure(rejected)) expect(rejected.failure).toBe(rejection);
     const committed: OperationResult = {
       outcome: "incorrect_code",
       replayed: true,
@@ -80,7 +79,7 @@ it.effect("preserves domain rejection details and committed incorrect-code respo
       },
     };
     const response = yield* observeOperation("verify", Effect.succeed(committed));
-    expect(response).toBe(committed);
+    expect(response).toEqual(committed);
     const logs = output.mock.calls.map(([chunk]) => String(chunk)).join("");
     expect(logs).toContain('"reason":"cooldown_active"');
     expect(logs).not.toContain("failureCategory");

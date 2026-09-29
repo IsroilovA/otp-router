@@ -8,11 +8,11 @@ Compare purpose and context before checking a code or consuming a guess. Success
 
 Enforce per-challenge guess and send limits, project-scoped recipient creation/send/guess limits, and deployment send caps. Provider caps can further restrict sends. Changing purpose, policy, channel, or challenge does not reset recipient usage within a project. See [limit scopes](projects.md#limit-scopes). The adopting application's public endpoints also need abuse controls.
 
-Use database-backed rolling windows. Count a wrong guess only when an active, correctly bound request reaches comparison and fails. Existing quota rejections and replays consume nothing. Recipient guess limits can temporarily block correct submissions; the challenge's own exhausted guess budget permanently locks it.
+Limits use durable rolling windows. Count a wrong guess only when an active, correctly bound request reaches comparison and fails. Quota rejections and replays consume nothing. Recipient guess limits can temporarily block correct submissions; exhausting the challenge's guess budget permanently locks it.
 
 Reserve every provider invocation before network work. Failed and uncertain sends retain their reservation. A send-count cap is not an exact monetary budget.
 
-Parse international numbers with the maintained phone-number library and normalize to E.164 before quota lookup. Require a country code; never infer a local region. Format validation does not establish ownership or reachability.
+Require international numbers with a country code and normalize to E.164 before quota lookup. Never infer a local region. Format validation does not establish ownership or reachability.
 
 Configuration schemas define defaults and supported bounds. Providers may narrow those bounds. See [routing](routing.md) for deadlines and delivery actions.
 
@@ -20,7 +20,7 @@ Configuration schemas define defaults and supported bounds. Providers may narrow
 
 Store the recipient and recoverable code encrypted with authenticated encryption. Store a keyed verifier separately. Bind ciphertext to its deployment, project, delivery operation, and field so it cannot be moved between records. Use independent keys for encryption, verification, request fingerprints, and recipient lookup.
 
-Load secrets from the environment or a secret store. Never put OTPs, credentials, full recipients, context IDs, routing context, message text, raw provider payloads, or authorization headers in logs or metrics. Persist provider diagnostics only from the adapter's declared allowlist. Keep internal health and metrics endpoints private.
+Load secrets from the environment or a secret store. Never put OTPs, credentials, full recipients, context IDs, routing context, message text, raw provider payloads, or authorization headers in logs, metrics, or errors. Persist only allowlisted provider diagnostics. Keep internal health and metrics endpoints private.
 
 ## Retention
 
@@ -40,6 +40,4 @@ Follow the [API-key rotation procedure](operations.md#api-key-rotation) separate
 
 ## External code handoff
 
-External callers own generation, verification, authorization and the association between operation references and upstream flows. The router's [external lifecycle](engine.md#external-delivery) provides delivery without an authentication claim.
-
-Delivery-only deployments need encryption, fingerprint and stable recipient keys, but no verification key. Attachment fingerprints have a separate cryptographic purpose from request fingerprints and managed verifiers. Both capabilities share admission and send quotas within each project; guess limits remain managed-only.
+The [external lifecycle](engine.md#external-delivery) leaves verification with the caller. Delivery-only deployments need encryption, fingerprint, and stable recipient keys, but no verification key. Attachment and request fingerprints must remain cryptographically separated. Guess limits apply only to managed verification; [admission and send quotas](projects.md#limit-scopes) cover both capabilities.
