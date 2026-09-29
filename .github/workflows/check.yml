@@ -96,7 +96,7 @@ jobs:
           if docker buildx imagetools inspect --raw "$IMAGE:$VERSION" > "$RUNNER_TEMP/manifest.json" 2> "$RUNNER_TEMP/inspect.err"; then
             node scripts/release/check-image.ts "$RUNNER_TEMP/manifest.json"
             echo 'exists=true' >> "$GITHUB_OUTPUT"
-          elif rg -qi '404 Not Found|manifest unknown|not found' "$RUNNER_TEMP/inspect.err"; then
+          elif grep -Eqi '404 Not Found|manifest unknown|not found' "$RUNNER_TEMP/inspect.err"; then
             if [ "$RELEASE_STATE" = recover ]; then
               echo 'A tag exists at this commit, but the exact image is absent' >&2
               exit 1
@@ -200,7 +200,7 @@ jobs:
         run: |
           if npm view "@otp-router/client@$VERSION" dist.integrity --registry=https://registry.npmjs.org > "$RUNNER_TEMP/registry-integrity" 2> "$RUNNER_TEMP/npm-view.err"; then
             node scripts/release/check-integrity.ts "$RUNNER_TEMP/registry-integrity" "$RUNNER_TEMP/pack.json"
-          elif rg -q 'E404' "$RUNNER_TEMP/npm-view.err"; then
+          elif grep -q 'E404' "$RUNNER_TEMP/npm-view.err"; then
             if [ "$RELEASE_STATE" = recover ]; then
               echo 'A tag exists at this commit, but the exact npm version is absent' >&2
               exit 1
