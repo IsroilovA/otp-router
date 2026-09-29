@@ -47,25 +47,29 @@ test("component versions release independently and stale retries cannot move a c
     manifest(directory, "server", "0.1.0-alpha.1");
     manifest(directory, "client", "0.1.0-alpha.1");
     const first = commit(directory);
-    expect(run(directory, "server", first)).toContain("state=publish\n");
+    const initialServer = run(directory, "server", first);
+    expect(initialServer).toContain("state=publish\n");
     expect(run(directory, "client", first)).toContain("state=publish\n");
-    expect(run(directory, "server", first)).toContain("channel=next\nprerelease=true\n");
-    expect(run(directory, "server", first)).toContain("previous_tag=\n");
+    expect(initialServer).toContain("channel=next\nprerelease=true\n");
+    expect(initialServer).toContain("previous_tag=\n");
 
     git(directory, "tag", "server-v0.1.0-alpha.1");
     expect(run(directory, "server", first)).toContain("state=recover\n");
-    expect(run(directory, "client", first)).toContain("state=publish\n");
-    expect(run(directory, "client", first)).toContain("previous_tag=\n");
+    const independentClient = run(directory, "client", first);
+    expect(independentClient).toContain("state=publish\n");
+    expect(independentClient).toContain("previous_tag=\n");
 
     manifest(directory, "server", "0.1.0-alpha.2");
     const second = commit(directory);
     git(directory, "tag", "client-v8.0.0");
-    expect(run(directory, "server", second)).toContain("state=publish\n");
-    expect(run(directory, "server", second)).toContain("previous_tag=server-v0.1.0-alpha.1\n");
+    const nextServer = run(directory, "server", second);
+    expect(nextServer).toContain("state=publish\n");
+    expect(nextServer).toContain("previous_tag=server-v0.1.0-alpha.1\n");
     git(directory, "tag", "server-v0.1.0-alpha.2");
     git(directory, "checkout", "-q", first);
-    expect(run(directory, "server", first)).toContain("state=skip\n");
-    expect(run(directory, "server", first)).toContain("previous_tag=\n");
+    const staleServer = run(directory, "server", first);
+    expect(staleServer).toContain("state=skip\n");
+    expect(staleServer).toContain("previous_tag=\n");
     git(directory, "checkout", "-q", second);
 
     manifest(directory, "server", "0.1.0-alpha.0");
@@ -87,8 +91,9 @@ test("stable version selects latest and rejects mismatched push commit", () => {
     const sha = commit(directory);
     git(directory, "tag", "server-v0.0.9");
     git(directory, "tag", "server-v0.0.10");
-    expect(run(directory, "server", sha)).toContain("channel=latest\nprerelease=false\n");
-    expect(run(directory, "server", sha)).toContain("previous_tag=server-v0.0.10\n");
+    const stableServer = run(directory, "server", sha);
+    expect(stableServer).toContain("channel=latest\nprerelease=false\n");
+    expect(stableServer).toContain("previous_tag=server-v0.0.10\n");
     expect(() => run(directory, "server", "0".repeat(40))).toThrow(/main push commit/);
   } finally {
     rmSync(directory, { recursive: true, force: true });
