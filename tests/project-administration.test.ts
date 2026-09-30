@@ -437,6 +437,8 @@ it.each(["suspend", "revoke"] as const)(
     try {
       await transition(action);
       await transition(action === "suspend" ? "reactivate" : "grant");
+      // A duplicate worker suppresses the invalidated intent before the approval returns.
+      await app().run(dispatch(app().configuration, work));
     } finally {
       release.resolve();
     }
@@ -569,15 +571,21 @@ it("rejects old schema baselines and incompatible live catalogs without changing
         .pipe(Effect.result),
     ),
   ).toMatchObject({ _tag: "Failure", failure: { _tag: "SchemaCompatibilityError" } });
-  await expect(
-    startRuntime(db().databaseUrl, {
-      ...configuration,
-      settings: {
-        ...configuration.settings,
-        policies: { login: { providerInstanceIds: ["first"] } },
+  for (const settings of [
+    { ...configuration.settings, policies: { login: { providerInstanceIds: ["first"] } } },
+    { ...configuration.settings, historyRetentionDays: 1 },
+    {
+      ...configuration.settings,
+      webhook: {
+        url: "http://127.0.0.1:12345/events",
+        signingSecret: `whsec_${Buffer.alloc(32, 5).toString("base64")}`,
       },
-    }),
-  ).rejects.toMatchObject({ reason: "incompatible_catalog" });
+    },
+  ]) {
+    await expect(
+      startRuntime(db().databaseUrl, { ...configuration, settings }).then((other) => other.close()),
+    ).rejects.toMatchObject({ reason: "incompatible_catalog" });
+  }
   expect(await Effect.runPromise(app().projects.get("admin", "alpha"))).toEqual(before);
   await app().close();
   runtime = await startRuntime(db().databaseUrl, configuration);

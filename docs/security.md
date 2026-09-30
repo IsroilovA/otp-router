@@ -6,7 +6,7 @@ For managed challenges, the router generates a cryptographically random numeric 
 
 Compare purpose and context before checking a code or consuming a guess. Successful verification produces one durable result. A new operation key cannot verify an already verified challenge again. Replays retrieve the original result.
 
-Enforce per-challenge guess and send limits, project-scoped recipient creation/send/guess limits, and deployment send caps. Provider caps can further restrict sends. Changing purpose, policy, channel, or challenge does not reset recipient usage within a project. See [limit scopes](projects.md#limit-scopes). The adopting application's public endpoints also need abuse controls.
+Enforce per-challenge guess and send limits, project-scoped recipient creation/send/guess limits, and deployment send caps. Provider caps can further restrict sends. Changing purpose, policy, channel, or challenge does not reset recipient usage within a project. See [limit scopes](projects.md#limits-and-history). The adopting application's public endpoints also need abuse controls.
 
 Limits use durable rolling windows. Count a wrong guess only when an active, correctly bound request reaches comparison and fails. Quota rejections and replays consume nothing. Recipient guess limits can temporarily block correct submissions; exhausting the challenge's guess budget permanently locks it.
 
@@ -42,4 +42,4 @@ Follow the [API-key rotation procedure](operations.md#api-key-rotation) separate
 
 ## External code handoff
 
-The [external lifecycle](engine.md#external-delivery) leaves verification with the caller. Delivery-only deployments need encryption, fingerprint, and stable recipient keys, but no verification key. Attachment and request fingerprints must remain cryptographically separated. Guess limits apply only to managed verification; [admission and send quotas](projects.md#limit-scopes) cover both capabilities.
+The [external lifecycle](engine.md#external-delivery) leaves verification with the caller. Delivery-only deployments need encryption, fingerprint, and stable recipient keys, but no verification key. Attachment and request fingerprints must remain cryptographically separated. Guess limits apply only to managed verification; [admission and send quotas](projects.md#limits-and-history) cover both capabilities.

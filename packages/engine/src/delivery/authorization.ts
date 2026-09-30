@@ -102,6 +102,7 @@ const waitForAuthorization = (
   retryAt?: string,
 ) =>
   Effect.gen(function* () {
+    if (attempt.authorization_state !== "pending") return;
     const sql = yield* SqlClient.SqlClient;
     const retry = new Date(
       Math.max(time.getTime() + 5000, retryAt === undefined ? 0 : Date.parse(retryAt)),
@@ -133,7 +134,7 @@ const finishAuthorization = (
       const attempt = yield* findAttempt(claim.request.attemptId);
       if (
         attempt.authorization_generation !== claim.generation ||
-        attempt.authorization_state !== "pending"
+        !["pending", "expired"].includes(attempt.authorization_state)
       )
         return;
       const sql = yield* SqlClient.SqlClient;
@@ -166,7 +167,8 @@ const finishAuthorization = (
         operation.routing_revision === attempt.routing_revision &&
         validUntil > time &&
         (block?.generation ?? 0) === claim.projectGeneration;
-      // Even a stale approval is durable evidence for reservation release. It cannot send.
+      // Expiring a claim suppresses dispatch, but its matching late decision is still evidence.
+      // A suppressed attempt cannot become usable again.
       yield* transitionAttempts(
         sql`UPDATE otp_router.delivery_attempts SET authorization_state = 'approved', approved_at = ${time}, approval_expires_at = ${validUntil}, authorization_lease_until = NULL, invocation = ${usable ? "not_started" : "not_invoked"}, state = ${usable ? "pending" : "suppressed"}, diagnostic_code = ${usable ? null : "approval_unused"} WHERE id = ${attempt.id} RETURNING *`,
       );
