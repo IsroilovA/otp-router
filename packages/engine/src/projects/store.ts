@@ -1,4 +1,3 @@
-import { policyAuthorityEligible } from "../runtime/store.js";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { rows } from "../database/query.js";
@@ -77,19 +76,4 @@ export const requireAccess = (projectId: string, principalId: string, sending = 
     const project = yield* findProject(projectId);
     if (sending) yield* requireActiveProject(project);
     return { project, grantId: grant.id };
-  });
-export const intentEligible = (intentId: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const result = yield* rows(
-      Schema.Struct({ eligible: Schema.Boolean }),
-      sql`SELECT EXISTS (
-    SELECT 1 FROM otp_router.send_intents i
-    JOIN otp_router.delivery_operations o ON o.id = i.operation_id
-    JOIN otp_router.projects p ON p.id = o.project_id
-    JOIN otp_router.project_principal_grants g ON g.id = i.principal_grant_id
-    WHERE i.id = ${intentId} AND p.state = 'active' AND p.send_epoch = i.project_send_epoch AND g.revoked_at IS NULL
-  ) AS eligible`,
-    );
-    return result[0]?.eligible === true && (yield* policyAuthorityEligible(intentId));
   });

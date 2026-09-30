@@ -1,6 +1,6 @@
 import { constructProvider, providerConfiguration } from "../runtime/providers.js";
 import { resource } from "../runtime/store.js";
-import { lockProject, intentEligible } from "../projects/store.js";
+import { lockProject } from "../projects/store.js";
 import { transitionAttempts } from "./attempts.js";
 import { authorizeAttempt, projectBlock } from "./authorization.js";
 import { changed } from "./changes.js";
@@ -34,7 +34,7 @@ import {
 import { expire, findOperation, findAttempt, findSecrets } from "./store.js";
 import type { Operation, Attempt } from "./records.js";
 import type { DeliveryJob } from "../queue/contracts.js";
-import { availableProviders } from "./eligibility.js";
+import { availableProviders, intentEligible } from "./eligibility.js";
 import { recordAccepted } from "./callbacks.js";
 import { mergeLockedOutcome, recordOutcome, type Outcome } from "./outcomes.js";
 

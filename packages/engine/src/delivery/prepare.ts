@@ -1,5 +1,5 @@
 import { constructProvider } from "../runtime/providers.js";
-import { resolvePolicy } from "../runtime/resolve.js";
+import { resolvePolicy, type PreparedRoute } from "../runtime/resolve.js";
 import { Effect, Schema } from "effect";
 import { parsePhoneNumberFromString } from "libphonenumber-js/max";
 import { duration } from "../diagnostics/metrics.js";
@@ -7,7 +7,6 @@ import { SelectorResult, type RuntimeConfiguration } from "../config/config.js";
 import { LocaleSchema, NormalizedPhoneSchema } from "../providers/contract.js";
 import { DomainError } from "../errors.js";
 import type { PrepareInput } from "./contracts.js";
-import type { PolicySnapshot } from "./records.js";
 export const normalizePhone = (phone: string) =>
   Effect.gen(function* () {
     if (!phone.startsWith("+"))
@@ -45,12 +44,12 @@ export const prepareRoute = (
     const providers = yield* Effect.forEach(route.providerInstanceIds, (id) =>
       Effect.gen(function* () {
         const entry = resolved.providers.find(({ instance }) => instance.id === id);
-        if (entry === undefined || entry.instance.data.kind !== "instance")
+        if (entry === undefined)
           return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
         const { instance } = entry;
-        const provider = yield* constructProvider(entry.prepared);
         if (instance.data.kind !== "instance")
           return yield* Effect.die(new Error("Invalid instance"));
+        const provider = yield* constructProvider(entry.prepared);
         const template = yield* provider
           .resolveTemplate(locales)
           .pipe(Effect.mapError(() => new DomainError({ code: "delivery_unavailable" })));
@@ -76,7 +75,7 @@ export const prepareRoute = (
         };
       }),
     );
-    const saved: Omit<PolicySnapshot, "authorizationRequired"> = {
+    const saved: PreparedRoute = {
       policyId: input.policyId,
       policyRevision: resolved.revision,
       policyEpoch: resolved.epoch,

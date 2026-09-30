@@ -300,7 +300,7 @@ export const startRuntime = async (
       await queue.deleteAllJobs();
       await run(
         sql.unsafe(
-          "TRUNCATE TABLE otp_router.runtime_resources, otp_router.runtime_revisions, otp_router.account_secret_versions, otp_router.runtime_receipts, otp_router.runtime_events, otp_router.projects, otp_router.project_principal_grants, otp_router.admin_request_receipts, otp_router.project_admin_events, otp_router.project_send_blocks, otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.request_receipts, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_operations CASCADE",
+          "TRUNCATE TABLE otp_router.provider_accounts, otp_router.provider_instances, otp_router.routing_policies, otp_router.allowance_scopes, otp_router.account_secret_versions, otp_router.runtime_receipts, otp_router.runtime_events, otp_router.projects, otp_router.project_principal_grants, otp_router.admin_request_receipts, otp_router.project_admin_events, otp_router.project_send_blocks, otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.request_receipts, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_operations CASCADE",
         ),
       );
       await seed();

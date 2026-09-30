@@ -38,7 +38,7 @@ export const validateCapabilities = (config: RuntimeConfiguration) =>
           WHERE (r.state <> 'retired' AND v.revision = r.configuration_revision)
           OR EXISTS (SELECT 1 FROM otp_router.operation_route_steps s WHERE (v.kind = 'instance' AND s.provider_instance_id = v.resource_id AND s.instance_revision = v.revision) OR (v.kind = 'account' AND s.account_id = v.resource_id))
           OR EXISTS (SELECT 1 FROM otp_router.delivery_operations o WHERE v.kind = 'policy' AND o.policy_id = v.resource_id AND o.policy_revision = v.revision)
-          OR EXISTS (SELECT 1 FROM otp_router.callback_inbox i JOIN otp_router.runtime_resources instance ON instance.kind = 'instance' AND instance.id = i.provider_instance_id WHERE (v.kind = 'instance' AND v.resource_id = instance.id) OR (v.kind = 'account' AND v.resource_id = instance.data->>'accountId'))`,
+          OR EXISTS (SELECT 1 FROM otp_router.callback_inbox i JOIN otp_router.provider_instances instance ON instance.id = i.provider_instance_id WHERE (v.kind = 'instance' AND v.resource_id = instance.id AND i.instance_revisions @> jsonb_build_array(v.revision)) OR (v.kind = 'account' AND v.resource_id = instance.account_id))`,
         );
         for (const { data } of retained)
           yield* validateRetainedData(config, data).pipe(Effect.mapError(incompatible));

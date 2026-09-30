@@ -27,17 +27,12 @@ export const SavedProvider = Schema.Struct({
   executionSettings: InstanceSettings,
   minCodeLength: Schema.Int,
   maxCodeLength: Schema.Int,
-  grantId: Schema.String,
-  accountEpoch: Schema.Int,
-  instanceEpoch: Schema.Int,
   manualSelectionAllowed: Schema.Boolean,
 });
 export type SavedProvider = typeof SavedProvider.Type;
 export const PolicySnapshot = Schema.Struct({
   policyId: Schema.String,
   policyRevision: Schema.Int,
-  policyEpoch: Schema.Int,
-  policyGrantId: Schema.String,
   policy: Policy,
   authorizationRequired: Schema.Boolean,
   maxSends: Schema.Int,

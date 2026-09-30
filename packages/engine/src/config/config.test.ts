@@ -60,6 +60,8 @@ it.effect(
         { ...base.settings, automaticSendRetries: 1 },
         { ...base.settings, timedFallbackSeconds: 5 },
         { ...base.settings, deploymentSendLimit24h: 0 },
+        { ...base.settings, deploymentSendLimit15m: 2147483648 },
+        { ...base.settings, deploymentSendLimit24h: 2147483648 },
         ...[
           "http://example.com/hooks",
           "https://user:password@example.com/hooks",

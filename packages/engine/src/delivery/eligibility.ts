@@ -15,6 +15,27 @@ import { type Choice } from "./input.js";
 import { DomainError } from "../errors.js";
 import type { Operation, SavedProvider } from "./records.js";
 
+export const intentEligible = (intentId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const result = yield* rows(
+      Schema.Struct({ eligible: Schema.Boolean }),
+      sql`SELECT EXISTS (
+        SELECT 1 FROM otp_router.send_intents i
+        JOIN otp_router.delivery_operations o ON o.id = i.operation_id
+        JOIN otp_router.projects p ON p.id = i.project_id
+        JOIN otp_router.project_principal_grants g ON g.id = i.principal_grant_id
+        JOIN otp_router.routing_policies policy ON policy.id = o.policy_id
+        JOIN otp_router.runtime_grants assignment ON assignment.id = i.authority->>'policyGrantId'
+          AND assignment.project_id = i.project_id AND assignment.kind = 'policy' AND assignment.resource_id = policy.id
+        WHERE i.id = ${intentId} AND p.state = 'active' AND p.send_epoch = i.project_send_epoch
+          AND g.revoked_at IS NULL AND assignment.revoked_at IS NULL
+          AND policy.state = 'enabled' AND policy.epoch = (i.authority->>'policyEpoch')::integer
+      ) AS eligible`,
+    );
+    return result[0]?.eligible === true;
+  });
+
 export interface ProviderAvailability {
   readonly provider: SavedProvider;
   readonly position: number;

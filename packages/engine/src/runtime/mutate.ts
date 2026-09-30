@@ -10,13 +10,12 @@ import { DomainError } from "../errors.js";
 import { scoped } from "../projects/permissions.js";
 import { findProject, lockProject } from "../projects/store.js";
 import {
-  type ResourceData,
-  type ResourceKind,
   type RuntimeCommand,
   type RuntimePermission,
   RuntimeRequest,
   RuntimeResult,
 } from "./contracts.js";
+import { insertResource, saveConfiguration, resourceTable } from "./persistence.js";
 import { encryptAccountSecret } from "./providers.js";
 import { publicResource, type ResourceRecord, resource } from "./store.js";
 import {
@@ -56,29 +55,29 @@ const commandPermission = (command: typeof RuntimeCommand.Type): typeof RuntimeP
     ? "policy"
     : "manage";
 };
-const insertResource = (id: string, data: typeof ResourceData.Type) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const exists = yield* rows(
-      Schema.Struct({ id: Schema.String }),
-      sql`SELECT id FROM otp_router.runtime_resources WHERE kind = ${data.kind} AND id = ${id}`,
-    );
-    if (exists.length > 0)
-      return yield* Effect.fail(new DomainError({ code: "resource_conflict" }));
-    yield* sql`INSERT INTO otp_router.runtime_resources(kind,id,data) VALUES (${data.kind},${id},${JSON.stringify(data)}::jsonb)`;
-  });
 const updateResource = (
   config: RuntimeConfiguration,
   command: Extract<typeof RuntimeCommand.Type, { action: "update" }>,
   before: ResourceRecord,
 ) =>
   Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
     if (before.state === "retired") return yield* Effect.fail(invalidRuntime());
-    const data = yield* updatedData(before, command.settings);
-    yield* validateData(config, data);
+    const updated = yield* updatedData(before, command);
+    yield* validateData(config, updated);
+    const data =
+      updated.kind === "policy"
+        ? {
+            ...updated,
+            settings: {
+              ...updated.settings,
+              manualProviderIds: updated.settings.providerInstanceIds.filter((id) =>
+                updated.settings.manualProviderIds.includes(id),
+              ),
+            },
+          }
+        : updated;
     if (canonical(data) === canonical(before.data)) return false;
-    yield* sql`UPDATE otp_router.runtime_resources SET data = ${JSON.stringify(data)}::jsonb, configuration_revision = revision + 1 WHERE kind = ${before.kind} AND id = ${before.id}`;
+    yield* saveConfiguration(before.id, before.revision + 1, data);
     return true;
   });
 const transitionResource = (
@@ -91,7 +90,7 @@ const transitionResource = (
     if (before.state === command.state) return false;
     if (before.state === "retired") return yield* Effect.fail(invalidRuntime());
     if (command.state === "enabled") yield* validateEnable(config, before);
-    yield* sql`UPDATE otp_router.runtime_resources SET state = ${command.state}, epoch = epoch + ${command.state === "enabled" ? 0 : 1} WHERE kind = ${before.kind} AND id = ${before.id}`;
+    yield* sql`UPDATE ${sql(resourceTable(command.kind))} SET state = ${command.state}, epoch = epoch + ${command.state === "enabled" ? 0 : 1} WHERE id = ${before.id}`;
     return true;
   });
 const rotateSecret = (
@@ -116,10 +115,7 @@ const rotateSecret = (
       command.secrets,
     );
     yield* sql`INSERT INTO otp_router.account_secret_versions(id,account_id,purpose,ciphertext) VALUES (${id},${before.id},${command.purpose},${JSON.stringify(encrypted)}::jsonb)`;
-    if (command.purpose === "send")
-      yield* sql`UPDATE otp_router.runtime_resources SET send_version = ${id} WHERE kind = 'account' AND id = ${before.id}`;
-    else
-      yield* sql`UPDATE otp_router.runtime_resources SET callback_version = ${id} WHERE kind = 'account' AND id = ${before.id}`;
+    yield* sql`INSERT INTO otp_router.account_current_secrets(account_id,purpose,version_id) VALUES (${before.id},${command.purpose},${id}) ON CONFLICT (account_id,purpose) DO UPDATE SET version_id = EXCLUDED.version_id`;
     return true;
   });
 const revokeSecret = (
@@ -128,14 +124,13 @@ const revokeSecret = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    if (before.kind !== "account") return yield* Effect.fail(invalidRuntime());
     const changed = yield* rows(
       Schema.Struct({ id: Schema.String }),
       sql`UPDATE otp_router.account_secret_versions SET revoked = true WHERE account_id = ${before.id} AND id = ${command.versionId} AND purpose = 'callback' AND NOT revoked RETURNING id`,
     );
     if (changed.length === 0) return false;
     if (before.callback_version === command.versionId)
-      yield* sql`UPDATE otp_router.runtime_resources SET callback_version = NULL WHERE kind = 'account' AND id = ${before.id}`;
+      yield* sql`DELETE FROM otp_router.account_current_secrets WHERE account_id = ${before.id} AND purpose = 'callback' AND version_id = ${command.versionId}`;
     return true;
   });
 const invalidateRevision = (
@@ -144,11 +139,9 @@ const invalidateRevision = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    if (before.kind !== "instance" && before.kind !== "policy")
-      return yield* Effect.fail(invalidRuntime());
     const changed = yield* rows(
       Schema.Struct({ revision: Schema.Int }),
-      sql`UPDATE otp_router.runtime_revisions SET invalidated = true WHERE kind = ${before.kind} AND resource_id = ${before.id} AND revision = ${command.revision} AND NOT invalidated RETURNING revision`,
+      sql`UPDATE ${sql(command.kind === "instance" ? "otp_router.instance_revisions" : "otp_router.policy_revisions")} SET invalidated = true WHERE ${sql(command.kind === "instance" ? "instance_id" : "policy_id")} = ${before.id} AND revision = ${command.revision} AND NOT invalidated RETURNING revision`,
     );
     return changed.length > 0;
   });
@@ -158,11 +151,6 @@ const changeAssignment = (
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
-    if (
-      before.kind === "scope" ||
-      (command.action === "grant" && before.kind === "account" && command.allInstances !== true)
-    )
-      return yield* Effect.fail(invalidRuntime());
     yield* findProject(command.projectId);
     const grant = (yield* rows(
       Schema.Struct({ id: Schema.String }),
@@ -171,7 +159,7 @@ const changeAssignment = (
     if (command.action === "grant") {
       if (before.state === "retired") return yield* Effect.fail(invalidRuntime());
       if (grant !== undefined) return false;
-      yield* sql`INSERT INTO otp_router.runtime_grants(id,project_id,kind,resource_id) VALUES (${randomUUID()},${command.projectId},${before.kind},${before.id})`;
+      yield* sql`INSERT INTO otp_router.runtime_grants(id,project_id,${sql(`${command.kind}_id`)}) VALUES (${randomUUID()},${command.projectId},${before.id})`;
     } else {
       if (grant === undefined) return false;
       yield* sql`UPDATE otp_router.runtime_grants SET revoked_at = clock_timestamp() WHERE id = ${grant.id}`;
@@ -263,7 +251,6 @@ export const mutateRuntime = (config: RuntimeConfiguration, input: typeof Runtim
           yield* validateData(config, command.data);
           yield* insertResource(command.id, command.data);
           if (command.firstInstance !== undefined) {
-            if (command.data.kind !== "account") return yield* Effect.fail(invalidRuntime());
             const first = command.firstInstance;
             const data = {
               kind: "instance" as const,
@@ -273,18 +260,15 @@ export const mutateRuntime = (config: RuntimeConfiguration, input: typeof Runtim
             };
             yield* validateData(config, data);
             yield* insertResource(first.id, data);
-            yield* saveRevision("instance", first.id);
             yield* sql`INSERT INTO otp_router.runtime_events(id,actor_id,action,kind,resource_id,revision) VALUES (${randomUUID()},${actorId},'create','instance',${first.id},1)`;
           }
           changed = true;
         } else {
           changed = yield* changeResource(config, command, yield* resource(kind, command.id));
           if (changed)
-            yield* sql`UPDATE otp_router.runtime_resources SET revision = revision + 1 WHERE kind = ${kind} AND id = ${command.id}`;
+            yield* sql`UPDATE ${sql(resourceTable(kind))} SET revision = revision + 1 WHERE id = ${command.id}`;
         }
         if (changed) {
-          if (command.action === "create" || command.action === "update")
-            yield* saveRevision(kind, command.id);
           const current = yield* resource(kind, command.id);
           yield* sql`INSERT INTO otp_router.runtime_events(id,actor_id,action,kind,resource_id,revision,project_id) VALUES (${randomUUID()},${actorId},${command.action},${kind},${command.id},${current.revision},${projectId})`;
         }
@@ -296,9 +280,4 @@ export const mutateRuntime = (config: RuntimeConfiguration, input: typeof Runtim
         return response;
       }),
     );
-  });
-const saveRevision = (kind: typeof ResourceKind.Type, id: string) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    yield* sql`INSERT INTO otp_router.runtime_revisions(kind,resource_id,revision,data) SELECT kind,id,revision,data FROM otp_router.runtime_resources WHERE kind = ${kind} AND id = ${id}`;
   });

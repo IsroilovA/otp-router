@@ -368,6 +368,26 @@ it("runtime admin client preserves redacted replay, revisions, access control an
   const key = randomUUID();
   const first = await admin.mutateRuntime(create, { idempotencyKey: key });
   expect(first).toMatchObject({ status: 200, etag: '"1"', data: { id: create.id, revision: 1 } });
+  expect(first.data).toEqual({ id: create.id, revision: 1, data: create.data });
+  const invalid = await fetch(`${baseUrl}/v1/admin/runtime/commands`, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer admin-test-credential-with-at-least-32-bytes",
+      "content-type": "application/json",
+      "idempotency-key": randomUUID(),
+    },
+    body: JSON.stringify({
+      command: {
+        action: "lifecycle",
+        kind: "scope",
+        id: create.id,
+        expectedRevision: 1,
+        state: "disabled",
+      },
+    }),
+  });
+  expect(invalid.status).toBe(400);
+  expect(await invalid.json()).toMatchObject({ error: { code: "invalid_request" } });
   const listed = await admin.listRuntimeResources("scope", { limit: 1 });
   expect(listed.data.resources).toHaveLength(1);
   const replay = await admin.mutateRuntime(create, { idempotencyKey: key });

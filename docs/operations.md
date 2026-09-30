@@ -39,7 +39,7 @@ A new upstream account requires a new account identity. Ordinary sender/template
 
 ## Database upgrades
 
-Server `0.2.0` deliberately replaces the `0.0.1` router baseline and requires a fresh database. There is no incremental migration, import, backfill, or compatibility path. Old databases are explicitly rejected even when their migration number is also one. The router never resets a database automatically. pg-boss retains its own migration history unchanged.
+Server `0.2.0` deliberately replaces the published `0.1.0` and earlier router baselines and requires a fresh database. There is no incremental migration, import, backfill, or compatibility path. Old databases are explicitly rejected even when their migration number is also one. The router never resets a database automatically. pg-boss retains its own migration history unchanged.
 
 This baseline includes runtime accounts, encrypted secret versions, immutable execution revisions, policy/provider assignments, shared allowance scopes, and operation integration references. Databases initialized from earlier development baselines are also incompatible. Coordinate the server/client update with strict authorization and webhook/event consumers before enabling callers that supply references; see [release compatibility](releases.md#pending-breaking-replacement).
 

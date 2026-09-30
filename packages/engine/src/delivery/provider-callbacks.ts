@@ -57,7 +57,12 @@ export const ProviderCallbacksLive = Layer.effect(
           );
           const revisions = yield* rows(
             Schema.Struct({ revision: Schema.Int, data: ResourceData }),
-            sql`SELECT revision,data FROM otp_router.runtime_revisions WHERE kind = 'instance' AND resource_id = ${instance.id} ORDER BY revision DESC`,
+            sql`SELECT v.revision,v.data FROM otp_router.runtime_revisions v
+              WHERE v.kind = 'instance' AND v.resource_id = ${instance.id}
+                AND ((${instance.state !== "retired"} AND v.revision = ${instance.configuration_revision})
+                  OR EXISTS (SELECT 1 FROM otp_router.operation_route_steps s WHERE s.provider_instance_id = v.resource_id AND s.instance_revision = v.revision)
+                  OR EXISTS (SELECT 1 FROM otp_router.callback_inbox i WHERE i.provider_instance_id = v.resource_id AND i.instance_revisions @> jsonb_build_array(v.revision)))
+              ORDER BY v.revision DESC`,
           );
           if (account.data.kind !== "account")
             return yield* Effect.die(new Error("Invalid account"));

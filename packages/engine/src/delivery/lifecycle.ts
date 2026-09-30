@@ -1,4 +1,4 @@
-import { revalidateRoute } from "../runtime/resolve.js";
+import { revalidateRoute, type PreparedRoute } from "../runtime/resolve.js";
 import { findProject } from "../projects/store.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
@@ -9,7 +9,7 @@ import { digest, equalDigest, encrypt, recipientToken } from "../crypto.js";
 import { DomainError } from "../errors.js";
 import { enqueueExpiry } from "../queue/jobs.js";
 import type { PrepareInput } from "./contracts.js";
-import type { Operation, PolicySnapshot } from "./records.js";
+import type { Operation } from "./records.js";
 import { changed } from "./changes.js";
 import { availableProviders, resolveChoice } from "./eligibility.js";
 import { admissionLimit, checkQuotas, countQuotas, lockQuotas, recipientLimit } from "./quotas.js";
@@ -20,7 +20,7 @@ export const admitOperation = (
   config: RuntimeConfiguration,
   input: PrepareInput,
   prepared: {
-    readonly saved: Omit<PolicySnapshot, "authorizationRequired">;
+    readonly saved: PreparedRoute;
     readonly projectId: string;
     readonly owner: Operation["owner"];
   },
@@ -63,10 +63,10 @@ export const admitOperation = (
     );
     const id = randomUUID();
     const sql = yield* PgClient.PgClient;
-    yield* sql`INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,integration_reference,recipient_token,policy_id,policy_revision,policy_snapshot,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.projectId},${prepared.owner},${input.purpose},${input.contextId},${input.integrationReference ?? null},${token},${input.policyId},${saved.policyRevision},${JSON.stringify(saved)}::jsonb,${saved.authorizationRequired},${saved.maxSends},${saved.resendCooldownSeconds},${saved.manualSelectionEnabled},'prepared',${time},${deadline},${target.position},${time})`;
+    yield* sql`INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,integration_reference,recipient_token,policy_id,policy_revision,authorization_required,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.projectId},${prepared.owner},${input.purpose},${input.contextId},${input.integrationReference ?? null},${token},${input.policyId},${saved.policyRevision},${saved.authorizationRequired},'prepared',${time},${deadline},${target.position},${time})`;
     for (const [position, provider] of saved.providers.entries()) {
-      yield* sql`INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,account_id,instance_revision,execution_settings,min_code_length,max_code_length,manual_selection_allowed)
-        VALUES (${id},${position},${provider.providerInstanceId},${provider.label},${provider.pluginId},${provider.contractVersion},${provider.channel},${provider.resolvedLocale},${JSON.stringify(provider.template)}::jsonb,${provider.sendTimeoutMs},${provider.minDeliveryWindowMs},${provider.accountId},${provider.instanceRevision},${JSON.stringify(provider.executionSettings)}::jsonb,${provider.minCodeLength},${provider.maxCodeLength},${provider.manualSelectionAllowed})`;
+      yield* sql`INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,account_id,instance_revision,min_code_length,max_code_length,manual_selection_allowed)
+        VALUES (${id},${position},${provider.providerInstanceId},${provider.label},${provider.pluginId},${provider.contractVersion},${provider.channel},${provider.resolvedLocale},${JSON.stringify(provider.template)}::jsonb,${provider.sendTimeoutMs},${provider.minDeliveryWindowMs},${provider.accountId},${provider.instanceRevision},${provider.minCodeLength},${provider.maxCodeLength},${provider.manualSelectionAllowed})`;
     }
     yield* sql`INSERT INTO otp_router.delivery_secrets(operation_id,phone) VALUES (${id},${sql.json(encrypt(config.settings.crypto, { projectId: prepared.projectId, operationId: id }, "phone", input.recipient.phoneNumber))})`;
     yield* countQuotas(limits, id, time);
@@ -104,8 +104,7 @@ export const attachCode = (
       return operation;
     }
     // Provider changes affect new attachments, not comparison with a saved code.
-    for (const saved of operation.snapshot.providers) {
-      const provider = saved;
+    for (const provider of operation.snapshot.providers) {
       if (code.length < provider.minCodeLength || code.length > provider.maxCodeLength)
         return yield* Effect.fail(new DomainError({ code: "invalid_request" }));
     }

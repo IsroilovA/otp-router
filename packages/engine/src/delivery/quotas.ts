@@ -1,4 +1,3 @@
-import { resource } from "../runtime/store.js";
 import { findProject } from "../projects/store.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
@@ -56,10 +55,20 @@ export const commonSendLimits = (settings: Settings, token: string, projectId: s
   });
 export const providerSendLimits = (providerId: string) =>
   Effect.gen(function* () {
-    const instance = yield* resource("instance", providerId);
-    if (instance.data.kind !== "instance") return yield* Effect.die(new Error("Invalid instance"));
-    const account = yield* resource("account", instance.data.accountId);
-    if (account.data.kind !== "account") return yield* Effect.die(new Error("Invalid account"));
+    const sql = yield* SqlClient.SqlClient;
+    const instance = (yield* rows(
+      Schema.Struct({ account_id: Schema.String }),
+      sql`SELECT account_id FROM otp_router.provider_instances WHERE id = ${providerId}`,
+    ))[0];
+    if (instance === undefined)
+      return yield* Effect.fail(new DomainError({ code: "resource_not_found" }));
+    const scopes = yield* rows(
+      Schema.Struct({ id: Schema.String, send_limit_15m: Schema.Int, send_limit_24h: Schema.Int }),
+      sql`SELECT id,send_limit_15m,send_limit_24h FROM otp_router.allowance_scopes WHERE id IN (
+        SELECT scope_id FROM otp_router.instance_allowances WHERE instance_id = ${providerId}
+        UNION SELECT scope_id FROM otp_router.account_allowances WHERE account_id = ${instance.account_id}
+      )`,
+    );
     const limits: Limit[] = [
       {
         scope: "instance",
@@ -70,28 +79,26 @@ export const providerSendLimits = (providerId: string) =>
       },
       {
         scope: "account",
-        scopeId: account.id,
+        scopeId: instance.account_id,
         kind: "send",
         maximum: 2147483647,
         windowMs: 86400000,
       },
     ];
-    for (const id of new Set([...instance.data.scopeIds, ...account.data.scopeIds])) {
-      const scope = yield* resource("scope", id);
-      if (scope.data.kind !== "scope") return yield* Effect.die(new Error("Invalid scope"));
+    for (const scope of scopes) {
       limits.push(
         {
           scope: "shared",
-          scopeId: id,
+          scopeId: scope.id,
           kind: "send",
-          maximum: scope.data.limits.sendLimit15m,
+          maximum: scope.send_limit_15m,
           windowMs: 900000,
         },
         {
           scope: "shared",
-          scopeId: id,
+          scopeId: scope.id,
           kind: "send",
-          maximum: scope.data.limits.sendLimit24h,
+          maximum: scope.send_limit_24h,
           windowMs: 86400000,
         },
       );

@@ -2,7 +2,7 @@ import { Effect, Schema } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { DomainError } from "../errors.js";
 import { deliveryWindowFits } from "../providers/timing.js";
-import { InstanceSettings, Limits, Policy, type ResourceData } from "./contracts.js";
+import { type Policy, type ResourceData, type RuntimeCommand } from "./contracts.js";
 import { providerConfiguration } from "./providers.js";
 import { type ResourceRecord, resource } from "./store.js";
 
@@ -106,32 +106,20 @@ export const validateData = (config: RuntimeConfiguration, data: typeof Resource
       for (const id of data.scopeIds) yield* resource("scope", id);
     }
   });
-export const updatedData = (before: ResourceRecord, settings: unknown) =>
+export const updatedData = (
+  before: ResourceRecord,
+  command: Extract<typeof RuntimeCommand.Type, { action: "update" }>,
+) =>
   Effect.gen(function* () {
-    switch (before.data.kind) {
+    switch (command.kind) {
       case "instance":
-        return {
-          ...before.data,
-          settings: yield* Schema.decodeUnknownEffect(InstanceSettings)(settings, {
-            onExcessProperty: "error",
-          }).pipe(Effect.mapError(invalidRuntime)),
-        };
+        if (before.data.kind !== "instance")
+          return yield* Effect.die(new Error("Invalid instance"));
+        return { ...before.data, settings: command.settings };
       case "policy":
-        return {
-          ...before.data,
-          settings: yield* Schema.decodeUnknownEffect(Policy)(settings, {
-            onExcessProperty: "error",
-          }).pipe(Effect.mapError(invalidRuntime)),
-        };
+        return { kind: "policy" as const, settings: command.settings };
       case "scope":
-        return {
-          ...before.data,
-          limits: yield* Schema.decodeUnknownEffect(Limits)(settings, {
-            onExcessProperty: "error",
-          }).pipe(Effect.mapError(invalidRuntime)),
-        };
-      case "account":
-        return yield* Effect.fail(invalidRuntime());
+        return { kind: "scope" as const, limits: command.settings };
     }
   });
 export const validateEnable = (config: RuntimeConfiguration, record: ResourceRecord) =>

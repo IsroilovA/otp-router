@@ -14,6 +14,7 @@ import {
   CallbackAuthenticationError,
   CallbackFormatError,
   ProviderInstance,
+  ProviderConfigurationError,
   type ProviderDefinition,
   defineProvider,
   FakeProvider,
@@ -27,7 +28,7 @@ import { DeliveryJob, deliveryQueue } from "../packages/engine/src/queue/contrac
 import {
   type Policy,
   type ResourceKind,
-  type RuntimeCommand,
+  RuntimeCommand,
 } from "../packages/engine/src/runtime/contracts.js";
 import { mutateRuntime } from "../packages/engine/src/runtime/mutate.js";
 import { constructProvider, secretVersion } from "../packages/engine/src/runtime/providers.js";
@@ -229,7 +230,7 @@ const mutate = (command: typeof RuntimeCommand.Type, key = randomUUID()) =>
 const read = (kind: typeof ResourceKind.Type, id: string) =>
   Effect.runPromise(app().runtime.get("admin", kind, id));
 const lifecycle = async (
-  kind: typeof ResourceKind.Type,
+  kind: Exclude<typeof ResourceKind.Type, "scope">,
   id: string,
   state: "enabled" | "disabled" | "retired",
 ) =>
@@ -241,7 +242,7 @@ const lifecycle = async (
     expectedRevision: (await read(kind, id)).revision,
   });
 const grant = async (
-  kind: "instance" | "account" | "policy",
+  kind: "instance" | "policy",
   id: string,
   projectId = "demo",
   action: "grant" | "revoke" = "grant",
@@ -413,6 +414,17 @@ it("filters unauthorized steps without policy access implying provider access; v
       ),
     ),
   ).toEqual([{ provider_instance_id: "r-second" }]);
+  const appended = await h.run(
+    h.pg`INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,account_id,instance_revision,min_code_length,max_code_length,manual_selection_allowed)
+      SELECT operation_id,1,'r-first',label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,'r-account-one',1,min_code_length,max_code_length,manual_selection_allowed
+      FROM otp_router.operation_route_steps WHERE operation_id = ${created.body.operationId} AND position = 0`.pipe(
+      Effect.result,
+    ),
+  );
+  expect(appended).toMatchObject({
+    _tag: "Failure",
+    failure: { reason: { cause: { code: "23514" } } },
+  });
   await expect(
     mutate({
       action: "create",
@@ -449,6 +461,102 @@ it("filters unauthorized steps without policy access implying provider access; v
   await expect(lifecycle("account", "r-account-one", "enabled")).rejects.toMatchObject({
     code: "invalid_request",
   });
+});
+
+it("preserves runtime identities, immutable revisions and revoked grant lifetimes in storage", async () => {
+  await mutate({
+    action: "create",
+    id: "r-extra",
+    data: { kind: "scope", limits: { sendLimit15m: 1, sendLimit24h: 1 } },
+  });
+  await mutate({
+    action: "create",
+    id: "r-third",
+    data: {
+      kind: "instance",
+      accountId: "r-account-two",
+      settings: settings("r-third"),
+      scopeIds: [],
+    },
+  });
+  await grant("instance", "r-first", "demo", "revoke");
+  await lifecycle("account", "r-account-one", "retired");
+  const sql = app().pg;
+  for (const change of [
+    sql`UPDATE otp_router.provider_accounts SET state = 'enabled' WHERE id = 'r-account-one'`,
+    sql`UPDATE otp_router.provider_instances SET account_id = 'r-account-two' WHERE id = 'r-first'`,
+    sql`DELETE FROM otp_router.instance_allowances WHERE instance_id = 'r-first'`,
+    sql`INSERT INTO otp_router.instance_allowances(instance_id,scope_id) VALUES ('r-first','r-extra')`,
+    sql`INSERT INTO otp_router.policy_steps(policy_id,revision,position,instance_id,manual_selection_allowed) VALUES ('r-policy',1,2,'r-third',false)`,
+    sql`UPDATE otp_router.instance_revisions SET settings = jsonb_set(settings,'{label}','"rewritten"') WHERE instance_id = 'r-first'`,
+    sql`UPDATE otp_router.runtime_grants SET revoked_at = NULL WHERE kind = 'instance' AND resource_id = 'r-first' AND project_id = 'demo'`,
+    sql`UPDATE otp_router.runtime_grants SET project_id = 'alpha' WHERE kind = 'instance' AND resource_id = 'r-first' AND project_id = 'demo'`,
+  ]) {
+    expect(await app().run(change.pipe(Effect.result))).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: { cause: { code: "23514" } } },
+    });
+  }
+  await mutate({
+    action: "create",
+    id: "r-reserved",
+    data: { kind: "scope", limits: { sendLimit15m: 1, sendLimit24h: 1 } },
+  });
+  expect(await read("scope", "r-reserved")).toEqual({
+    id: "r-reserved",
+    revision: 1,
+    data: { kind: "scope", limits: { sendLimit15m: 1, sendLimit24h: 1 } },
+  });
+  expect(
+    await app().run(
+      sql`DELETE FROM otp_router.allowance_scopes WHERE id = 'r-reserved'`.pipe(Effect.result),
+    ),
+  ).toMatchObject({ _tag: "Failure" });
+});
+
+it("enforces account ownership, allowance membership, policy targets and credential purpose with foreign keys", async () => {
+  const sql = app().pg;
+  const account = await read("account", "r-account-one");
+  const other = await read("account", "r-account-two");
+  for (const change of [
+    sql`INSERT INTO otp_router.provider_instances(id,account_id) VALUES ('r-orphan','r-missing')`,
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO otp_router.provider_accounts(id,adapter_id,schema_version,identity) VALUES ('r-new-account','runtime-test','1','{}')`;
+        yield* sql`INSERT INTO otp_router.account_allowances(account_id,scope_id) VALUES ('r-new-account','r-missing')`;
+      }),
+    ),
+    sql`INSERT INTO otp_router.instance_allowances(instance_id,scope_id) VALUES ('r-missing','r-shared')`,
+    sql.withTransaction(
+      Effect.gen(function* () {
+        yield* sql`INSERT INTO otp_router.policy_revisions(policy_id,revision,settings) SELECT policy_id,999,settings FROM otp_router.policy_revisions WHERE policy_id = 'r-policy' AND revision = 1`;
+        yield* sql`INSERT INTO otp_router.policy_steps(policy_id,revision,position,instance_id,manual_selection_allowed) VALUES ('r-policy',999,0,'r-missing',false)`;
+      }),
+    ),
+    sql`INSERT INTO otp_router.runtime_grants(id,project_id,instance_id) VALUES (${randomUUID()},'demo','r-missing')`,
+    sql`INSERT INTO otp_router.account_secret_versions(id,account_id,purpose) VALUES (${randomUUID()},'r-missing','send')`,
+    sql`UPDATE otp_router.account_current_secrets SET version_id = ${other.sendCredentialVersion} WHERE account_id = 'r-account-one' AND purpose = 'send'`,
+    sql`UPDATE otp_router.account_current_secrets SET version_id = ${account.callbackVersion} WHERE account_id = 'r-account-one' AND purpose = 'send'`,
+  ])
+    expect(await app().run(change.pipe(Effect.result))).toMatchObject({
+      _tag: "Failure",
+      failure: { reason: { cause: { code: "23503" } } },
+    });
+  expect((await read("account", account.id)).sendCredentialVersion).toBe(
+    account.sendCredentialVersion,
+  );
+});
+
+it("treats policy manual choices as membership for no-op updates", async () => {
+  const current = await read("policy", "r-policy");
+  const noop = await mutate({
+    action: "update",
+    kind: "policy",
+    id: current.id,
+    expectedRevision: current.revision,
+    settings: { ...policy, manualProviderIds: [...policy.manualProviderIds].reverse() },
+  });
+  expect(noop.body.revision).toBe(current.revision);
 });
 
 it.each(["managed", "external"] as const)(
@@ -605,6 +713,7 @@ it("invalidates saved configuration explicitly and honors disabled automatic fal
   await create();
   const work = await job();
   const instance = await read("instance", "r-first");
+  if (instance.configurationRevision === undefined) throw new Error("Missing instance revision");
   await mutate({
     action: "invalidate",
     kind: "instance",
@@ -631,6 +740,9 @@ it("invalidates saved configuration explicitly and honors disabled automatic fal
 
 it("shares allowance consumption across accounts, projects and capabilities without duplicate memberships or resets", async () => {
   const scope = await read("scope", "r-shared");
+  expect(scope).not.toHaveProperty("state");
+  expect(scope).not.toHaveProperty("epoch");
+  expect(scope).not.toHaveProperty("configurationRevision");
   await mutate({
     action: "update",
     kind: "scope",
@@ -835,7 +947,7 @@ it("requires explicit account-wide access and rejects invalid policy bounds atom
     expectedRevision: account.revision,
     projectId: "alpha",
   };
-  await expect(mutate(command)).rejects.toMatchObject({ code: "invalid_request" });
+  expect(Schema.is(RuntimeCommand)(command)).toBe(false);
   await mutate({ ...command, allInstances: true });
   await grant("policy", "r-policy", "alpha");
   await create("external", "alpha");
@@ -1067,4 +1179,35 @@ it("binds callback evidence and early inbox reconciliation to authenticated send
   expect(
     (await Effect.runPromise(app().history.attempt("demo", early.attemptId, "backend"))).state,
   ).toBe("delivered");
+});
+
+it("does not construct obsolete callback configurations after a drained adapter upgrade", async () => {
+  await updateInstance("r-first", "accepted", "obsolete");
+  await updateInstance("r-first", "accepted", "current");
+  const upgraded: ProviderDefinition = {
+    ...adapter,
+    version: "2.0.0",
+    makeCallback: (options) =>
+      Schema.is(Schema.Struct({ sender: Schema.Literal("obsolete") }))(options.execution)
+        ? Effect.fail(new ProviderConfigurationError({ diagnosticCode: "obsolete_sender" }))
+        : adapter.makeCallback(options),
+  };
+  if (database === undefined) throw new Error("Missing database");
+  await app().close();
+  try {
+    runtime = await startRuntime(database.databaseUrl, { ...configuration, adapters: [upgraded] });
+    await create();
+    const work = await job();
+    await app().run(dispatch(app().configuration, work));
+    const callbacks = await callbackService();
+    await Effect.runPromise(
+      callbacks.ingest(callbackRequest("r-first", work.attemptId, "callback-old")),
+    );
+    expect(
+      (await Effect.runPromise(app().history.attempt("demo", work.attemptId, "backend"))).state,
+    ).toBe("delivered");
+  } finally {
+    await app().close();
+    runtime = await startRuntime(database.databaseUrl, configuration);
+  }
 });

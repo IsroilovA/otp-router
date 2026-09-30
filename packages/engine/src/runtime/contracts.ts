@@ -35,35 +35,47 @@ export const InstanceSettings = Schema.Struct({
   templates: Schema.Record(Locale, Schema.Json),
   sendTimeoutMs: bounded(1, 60000),
 });
-export const ResourceData = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("account"),
-    adapterId: Identifier,
-    schemaVersion: Schema.NonEmptyString,
-    identity: Schema.Json,
-    scopeIds: Schema.Array(Identifier),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("instance"),
-    accountId: Identifier,
-    settings: InstanceSettings,
-    scopeIds: Schema.Array(Identifier),
-  }),
-  Schema.Struct({ kind: Schema.Literal("policy"), settings: Policy }),
-  Schema.Struct({ kind: Schema.Literal("scope"), limits: Limits }),
-]);
-export const ResourceKind = Schema.Literals(["account", "instance", "policy", "scope"]);
-export const ResourceState = Schema.Literals(["disabled", "enabled", "retired"]);
-export const ResourceSnapshot = Schema.Struct({
-  id: Identifier,
-  revision: Schema.Int,
-  configurationRevision: Schema.Int,
-  epoch: Schema.Int,
-  state: ResourceState,
-  data: ResourceData,
-  sendCredentialVersion: Schema.NullOr(Schema.String),
-  callbackVersion: Schema.NullOr(Schema.String),
+export const AccountData = Schema.Struct({
+  kind: Schema.Literal("account"),
+  adapterId: Identifier,
+  schemaVersion: Schema.NonEmptyString,
+  identity: Schema.Json,
+  scopeIds: Schema.Array(Identifier),
 });
+export const InstanceData = Schema.Struct({
+  kind: Schema.Literal("instance"),
+  accountId: Identifier,
+  settings: InstanceSettings,
+  scopeIds: Schema.Array(Identifier),
+});
+export const PolicyData = Schema.Struct({ kind: Schema.Literal("policy"), settings: Policy });
+export const ScopeData = Schema.Struct({ kind: Schema.Literal("scope"), limits: Limits });
+export const ResourceData = Schema.Union([AccountData, InstanceData, PolicyData, ScopeData]);
+export const ResourceKind = Schema.Literals(["account", "instance", "policy", "scope"]);
+export const LifecycleKind = Schema.Literals(["account", "instance", "policy"]);
+export const VersionedKind = Schema.Literals(["instance", "policy"]);
+export const ResourceState = Schema.Literals(["disabled", "enabled", "retired"]);
+const identity = { id: Identifier, revision: bounded(1, 2147483647) };
+export const ResourceSnapshot = Schema.Union([
+  Schema.Struct({
+    ...identity,
+    configurationRevision: bounded(1, 2147483647),
+    epoch: bounded(1, 2147483647),
+    state: ResourceState,
+    data: Schema.Union([AccountData, InstanceData, PolicyData]),
+    sendCredentialVersion: Schema.NullOr(Schema.String),
+    callbackVersion: Schema.NullOr(Schema.String),
+  }),
+  Schema.Struct({
+    ...identity,
+    data: ScopeData,
+    state: Schema.optionalKey(Schema.Never),
+    epoch: Schema.optionalKey(Schema.Never),
+    configurationRevision: Schema.optionalKey(Schema.Never),
+    sendCredentialVersion: Schema.optionalKey(Schema.Never),
+    callbackVersion: Schema.optionalKey(Schema.Never),
+  }),
+]);
 export const RuntimePermission = Schema.Literals([
   "read",
   "manage",
@@ -72,43 +84,88 @@ export const RuntimePermission = Schema.Literals([
   "assign",
   "audit",
 ]);
-const target = { kind: ResourceKind, id: Identifier, expectedRevision: bounded(1, 2147483647) };
+const target = { id: Identifier, expectedRevision: bounded(1, 2147483647) };
+const firstInstance = Schema.Struct({
+  id: Identifier,
+  settings: InstanceSettings,
+  scopeIds: Schema.Array(Identifier),
+});
 export const RuntimeCommand = Schema.Union([
   Schema.Struct({
     action: Schema.Literal("create"),
     id: Identifier,
-    data: ResourceData,
-    firstInstance: Schema.optionalKey(
-      Schema.Struct({
-        id: Identifier,
-        settings: InstanceSettings,
-        scopeIds: Schema.Array(Identifier),
-      }),
-    ),
+    data: AccountData,
+    firstInstance: Schema.optionalKey(firstInstance),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("create"),
+    id: Identifier,
+    data: Schema.Union([InstanceData, PolicyData, ScopeData]),
+    firstInstance: Schema.optionalKey(Schema.Never),
   }),
   Schema.Struct({
     action: Schema.Literal("update"),
     ...target,
-    settings: Schema.Union([InstanceSettings, Policy, Limits]),
+    kind: Schema.Literal("instance"),
+    settings: InstanceSettings,
   }),
-  Schema.Struct({ action: Schema.Literal("lifecycle"), ...target, state: ResourceState }),
+  Schema.Struct({
+    action: Schema.Literal("update"),
+    ...target,
+    kind: Schema.Literal("policy"),
+    settings: Policy,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("update"),
+    ...target,
+    kind: Schema.Literal("scope"),
+    settings: Limits,
+  }),
+  Schema.Struct({
+    action: Schema.Literal("lifecycle"),
+    ...target,
+    kind: LifecycleKind,
+    state: ResourceState,
+  }),
   Schema.Struct({
     action: Schema.Literal("rotate"),
     ...target,
+    kind: Schema.Literal("account"),
     purpose: Schema.Literals(["send", "callback"]),
     secrets: Schema.Json,
   }),
-  Schema.Struct({ action: Schema.Literal("revoke-secret"), ...target, versionId: Schema.String }),
+  Schema.Struct({
+    action: Schema.Literal("revoke-secret"),
+    ...target,
+    kind: Schema.Literal("account"),
+    versionId: Schema.String,
+  }),
   Schema.Struct({
     action: Schema.Literal("invalidate"),
     ...target,
+    kind: VersionedKind,
     revision: bounded(1, 2147483647),
   }),
   Schema.Struct({
-    action: Schema.Literals(["grant", "revoke"]),
+    action: Schema.Literal("grant"),
     ...target,
+    kind: Schema.Literal("account"),
     projectId: Identifier,
-    allInstances: Schema.optionalKey(Schema.Literal(true)),
+    allInstances: Schema.Literal(true),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("grant"),
+    ...target,
+    kind: VersionedKind,
+    projectId: Identifier,
+    allInstances: Schema.optionalKey(Schema.Never),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("revoke"),
+    ...target,
+    kind: LifecycleKind,
+    projectId: Identifier,
+    allInstances: Schema.optionalKey(Schema.Never),
   }),
 ]);
 export const RuntimeRequest = Schema.Struct({
@@ -120,7 +177,7 @@ export const RuntimeResult = Schema.Struct({ body: ResourceSnapshot, replayed: S
 export const Assignment = Schema.Struct({
   id: Schema.String,
   projectId: Identifier,
-  kind: ResourceKind,
+  kind: LifecycleKind,
   resourceId: Identifier,
   revoked: Schema.Boolean,
 });

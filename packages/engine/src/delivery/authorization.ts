@@ -1,4 +1,5 @@
-import { lockProject, intentEligible } from "../projects/store.js";
+import { lockProject } from "../projects/store.js";
+import { intentEligible } from "./eligibility.js";
 import { transitionAttempts } from "./attempts.js";
 import type { Attempt, Operation } from "./records.js";
 import { Effect, Schema } from "effect";

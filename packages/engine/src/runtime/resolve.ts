@@ -8,6 +8,18 @@ import { DomainError } from "../errors.js";
 import { providerConfiguration } from "./providers.js";
 import { activeGrant, instanceAuthority, resource, revisionValid } from "./store.js";
 
+// Admission authority exists only while preparing a route. Later sends capture
+// their own grant lifetimes in immutable send intents.
+export type PreparedRoute = Omit<PolicySnapshot, "authorizationRequired" | "providers"> & {
+  readonly policyEpoch: number;
+  readonly policyGrantId: string;
+  readonly providers: readonly (PolicySnapshot["providers"][number] & {
+    readonly grantId: string;
+    readonly accountEpoch: number;
+    readonly instanceEpoch: number;
+  })[];
+};
+
 export const resolvePolicy = (
   config: RuntimeConfiguration,
   projectId: string,
@@ -68,10 +80,7 @@ export const resolvePolicy = (
       };
     }),
   );
-export const revalidateRoute = (
-  projectId: string,
-  saved: Omit<PolicySnapshot, "authorizationRequired">,
-) =>
+export const revalidateRoute = (projectId: string, saved: PreparedRoute) =>
   Effect.gen(function* () {
     const policy = yield* resource("policy", saved.policyId);
     if (

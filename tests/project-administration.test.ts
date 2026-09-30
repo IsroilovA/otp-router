@@ -629,18 +629,23 @@ it("rejects old schema baselines and incompatible live capabilities without chan
         .pipe(Effect.result),
     ),
   ).toMatchObject({ _tag: "Failure", failure: { _tag: "SchemaCompatibilityError" } });
-  expect(
-    await app().run(
-      sql
-        .withTransaction(
-          Effect.gen(function* () {
-            yield* sql`UPDATE otp_router.schema_identity SET baseline = 'project-administration-integration-reference-v1' WHERE singleton`;
-            yield* migrate.pipe(Effect.provide(NodeServices.layer));
-          }),
-        )
-        .pipe(Effect.result),
-    ),
-  ).toMatchObject({ _tag: "Failure", failure: { _tag: "SchemaCompatibilityError" } });
+  for (const baseline of [
+    "project-administration-integration-reference-v1",
+    "runtime-configuration-v1",
+    "runtime-configuration-v2",
+  ])
+    expect(
+      await app().run(
+        sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`UPDATE otp_router.schema_identity SET baseline = ${baseline} WHERE singleton`;
+              yield* migrate.pipe(Effect.provide(NodeServices.layer));
+            }),
+          )
+          .pipe(Effect.result),
+      ),
+    ).toMatchObject({ _tag: "Failure", failure: { _tag: "SchemaCompatibilityError" } });
   for (const settings of [
     { ...configuration.settings, historyRetentionDays: 1 },
     {
@@ -906,11 +911,16 @@ it("enforces same-project intent grants and allows revoking historical access af
   if (grant === undefined) throw new Error("Missing grant");
   const invalid = await app().run(
     app()
-      .pg`INSERT INTO otp_router.send_intents(id,operation_id,principal_grant_id,project_send_epoch,action) VALUES (${randomUUID()},${created.body.operationId},${grant.id},1,'resend')`.pipe(
+      .pg`INSERT INTO otp_router.send_intents(id,operation_id,project_id,principal_grant_id,project_send_epoch,action,authority)
+        SELECT ${randomUUID()},operation_id,project_id,${grant.id},project_send_epoch,'resend',authority
+        FROM otp_router.send_intents WHERE operation_id = ${created.body.operationId}`.pipe(
       Effect.result,
     ),
   );
-  expect(invalid).toMatchObject({ _tag: "Failure", failure: { _tag: "SqlError" } });
+  expect(invalid).toMatchObject({
+    _tag: "Failure",
+    failure: { _tag: "SqlError", reason: { cause: { code: "23503" } } },
+  });
   await transition("retire");
   expect(
     (await Effect.runPromise(app().delivery.status("alpha", created.body.operationId, "backend")))

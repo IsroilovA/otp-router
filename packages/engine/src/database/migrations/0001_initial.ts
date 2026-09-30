@@ -1,3 +1,4 @@
+import { runtimeSchema, runtimeProjectSchema } from "../../runtime/schema.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect } from "effect";
 
@@ -5,19 +6,11 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE SCHEMA otp_router`;
   yield* sql`CREATE TABLE otp_router.schema_identity (singleton boolean PRIMARY KEY CHECK (singleton), baseline text NOT NULL)`;
-  yield* sql`INSERT INTO otp_router.schema_identity VALUES (true,'runtime-configuration-v1')`;
-  yield* sql`CREATE TABLE otp_router.runtime_resources (
-    kind text NOT NULL CHECK (kind IN ('account','instance','policy','scope')), id text NOT NULL,
-    revision integer NOT NULL DEFAULT 1, configuration_revision integer NOT NULL DEFAULT 1, epoch integer NOT NULL DEFAULT 1,
-    state text NOT NULL DEFAULT 'disabled' CHECK (state IN ('disabled','enabled','retired')),
-    data jsonb NOT NULL, send_version text, callback_version text,
-    PRIMARY KEY(kind,id), CHECK (data->>'kind' = kind))`;
-  yield* sql`CREATE TABLE otp_router.runtime_revisions (kind text NOT NULL, resource_id text NOT NULL, revision integer NOT NULL, data jsonb NOT NULL, invalidated boolean NOT NULL DEFAULT false, PRIMARY KEY(kind,resource_id,revision), FOREIGN KEY(kind,resource_id) REFERENCES otp_router.runtime_resources(kind,id))`;
-  yield* sql`CREATE TABLE otp_router.account_secret_versions (id text PRIMARY KEY, account_id text NOT NULL, purpose text NOT NULL CHECK (purpose IN ('send','callback')), ciphertext jsonb, revoked boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT clock_timestamp())`;
-  yield* sql`CREATE TABLE otp_router.runtime_events (sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, id text UNIQUE NOT NULL, actor_id text NOT NULL, action text NOT NULL, kind text NOT NULL, resource_id text NOT NULL, revision integer NOT NULL, project_id text, occurred_at timestamptz NOT NULL DEFAULT clock_timestamp())`;
-  yield* sql`CREATE TABLE otp_router.runtime_receipts (actor_id text NOT NULL, key text NOT NULL, fingerprint jsonb NOT NULL, response jsonb NOT NULL, PRIMARY KEY(actor_id,key))`;
-  yield* sql`CREATE INDEX runtime_event_resource ON otp_router.runtime_events(kind,resource_id,sequence)`;
-  yield* sql`CREATE INDEX account_secrets_purpose ON otp_router.account_secret_versions(account_id,purpose,created_at)`;
+  yield* sql`INSERT INTO otp_router.schema_identity VALUES (true,'runtime-model-v3')`;
+  yield* sql`CREATE FUNCTION otp_router.reject_identity_change() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN RAISE EXCEPTION 'Saved identity is immutable' USING ERRCODE = '23514'; END
+  $$`;
+  yield* runtimeSchema;
   yield* sql`CREATE TABLE otp_router.projects (
     id text PRIMARY KEY, state text NOT NULL CHECK (state IN ('active','suspended','retired')),
     revision integer NOT NULL CHECK (revision > 0), send_epoch integer NOT NULL DEFAULT 1 CHECK (send_epoch > 0),
@@ -27,7 +20,7 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE otp_router.project_principal_grants (
     id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), principal_id text NOT NULL,
     granted_at timestamptz NOT NULL DEFAULT clock_timestamp(), revoked_at timestamptz,
-    CHECK (revoked_at IS NULL OR revoked_at >= granted_at)
+    CHECK (revoked_at IS NULL OR revoked_at >= granted_at), UNIQUE(id,project_id)
   )`;
   yield* sql`CREATE UNIQUE INDEX active_grant ON otp_router.project_principal_grants(project_id,principal_id) WHERE revoked_at IS NULL`;
   yield* sql`CREATE TABLE otp_router.project_admin_events (
@@ -47,13 +40,12 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE otp_router.deployment_capabilities (singleton boolean PRIMARY KEY CHECK (singleton), fingerprint text NOT NULL)`;
   yield* sql`CREATE TABLE otp_router.delivery_operations (
     id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), creation_sequence bigint, owner text NOT NULL CHECK (owner IN ('external','challenge')),
+    created_transaction xid8 NOT NULL DEFAULT pg_current_xact_id(),
     purpose text NOT NULL, context_id text NOT NULL, recipient_token text NOT NULL,
     integration_reference text CHECK (length(integration_reference) BETWEEN 1 AND 128 AND integration_reference COLLATE "C" !~ '[^A-Za-z0-9._:-]'),
-    policy_id text NOT NULL, policy_revision integer NOT NULL, policy_snapshot jsonb NOT NULL,
+    policy_id text NOT NULL, policy_revision integer NOT NULL,
+    FOREIGN KEY(policy_id,policy_revision) REFERENCES otp_router.policy_revisions(policy_id,revision),
     authorization_required boolean NOT NULL,
-    max_sends integer NOT NULL CHECK (max_sends BETWEEN 1 AND 10),
-    resend_cooldown_seconds integer NOT NULL CHECK (resend_cooldown_seconds >= 0),
-    manual_selection_enabled boolean NOT NULL,
     state text NOT NULL CHECK (state IN ('prepared','active','closed','expired')),
     created_at timestamptz NOT NULL, expires_at timestamptz NOT NULL, terminal_at timestamptz, history_updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     public_revision integer NOT NULL DEFAULT 0 CHECK (public_revision >= 0), public_snapshot jsonb,
@@ -62,7 +54,7 @@ export default Effect.gen(function* () {
     automatic_stopped boolean NOT NULL DEFAULT false, recipient_invalid boolean NOT NULL DEFAULT false, current_attempt_id uuid,
     initial_position integer NOT NULL CHECK (initial_position >= 0), next_user_send_at timestamptz NOT NULL,
     CHECK ((state IN ('prepared','active')) = (terminal_at IS NULL)),
-    CHECK (expires_at > created_at)
+    CHECK (expires_at > created_at), UNIQUE(id,project_id)
   )`;
   yield* sql`CREATE UNIQUE INDEX operations_creation ON otp_router.delivery_operations(project_id,creation_sequence)`;
   yield* sql`CREATE INDEX operations_expiry ON otp_router.delivery_operations(expires_at) WHERE state IN ('prepared','active')`;
@@ -75,16 +67,46 @@ export default Effect.gen(function* () {
     resolved_locale text NOT NULL, template jsonb NOT NULL,
     send_timeout_ms bigint NOT NULL CHECK (send_timeout_ms BETWEEN 1 AND 9007199254740991),
     min_delivery_window_ms bigint NOT NULL CHECK (min_delivery_window_ms BETWEEN 0 AND 9007199254740991),
-    account_id text NOT NULL, instance_revision integer NOT NULL, execution_settings jsonb NOT NULL,
+    account_id text NOT NULL, instance_revision integer NOT NULL,
+    FOREIGN KEY(provider_instance_id,account_id) REFERENCES otp_router.provider_instances(id,account_id),
+    FOREIGN KEY(provider_instance_id,instance_revision) REFERENCES otp_router.instance_revisions(instance_id,revision),
     min_code_length integer NOT NULL, max_code_length integer NOT NULL,
     manual_selection_allowed boolean NOT NULL,
     PRIMARY KEY (operation_id,position), UNIQUE (operation_id,provider_instance_id)
   )`;
   yield* sql`CREATE INDEX route_accounts ON otp_router.operation_route_steps(account_id)`;
   yield* sql`CREATE INDEX route_instance_revisions ON otp_router.operation_route_steps(provider_instance_id,instance_revision)`;
+  yield* sql`CREATE FUNCTION otp_router.check_route_creation() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM otp_router.delivery_operations WHERE id = NEW.operation_id AND created_transaction <> pg_current_xact_id())
+      THEN RAISE EXCEPTION 'Saved route is immutable after creation' USING ERRCODE = '23514'; END IF;
+      RETURN NEW;
+    END
+  $$`;
+  yield* sql`CREATE TRIGGER sealed_route BEFORE INSERT ON otp_router.operation_route_steps
+    FOR EACH ROW EXECUTE FUNCTION otp_router.check_route_creation()`;
   yield* sql`ALTER TABLE otp_router.delivery_operations ADD CONSTRAINT initial_route_step
     FOREIGN KEY (id,initial_position) REFERENCES otp_router.operation_route_steps(operation_id,position)
     DEFERRABLE INITIALLY DEFERRED`;
+  // Reconstruct from the saved steps and immutable configuration revisions;
+  // no second route or mutable policy copy is persisted on the operation.
+  yield* sql`CREATE VIEW otp_router.operation_snapshots AS
+    SELECT o.id,jsonb_build_object(
+      'policyId',o.policy_id,'policyRevision',o.policy_revision,'policy',p.settings,
+      'authorizationRequired',o.authorization_required,
+      'maxSends',p.settings->'maxSends','resendCooldownSeconds',p.settings->'resendCooldownSeconds',
+      'manualSelectionEnabled',p.settings->'manualSelectionEnabled',
+      'providers',(SELECT jsonb_agg(jsonb_build_object(
+        'providerInstanceId',r.provider_instance_id,'label',r.label,'pluginId',r.plugin_id,'contractVersion',r.contract_version,
+        'channel',r.channel,'resolvedLocale',r.resolved_locale,'template',r.template,
+        'sendTimeoutMs',r.send_timeout_ms,'minDeliveryWindowMs',r.min_delivery_window_ms,
+        'accountId',r.account_id,'instanceRevision',r.instance_revision,'executionSettings',v.settings,
+        'minCodeLength',r.min_code_length,'maxCodeLength',r.max_code_length,'manualSelectionAllowed',r.manual_selection_allowed
+      ) ORDER BY r.position) FROM otp_router.operation_route_steps r
+        JOIN otp_router.instance_revisions v ON (v.instance_id,v.revision) = (r.provider_instance_id,r.instance_revision)
+        WHERE r.operation_id = o.id)
+    ) AS snapshot FROM otp_router.delivery_operations o
+      JOIN otp_router.policy_configurations p ON (p.policy_id,p.revision) = (o.policy_id,o.policy_revision)`;
   yield* sql`CREATE TABLE otp_router.delivery_secrets (
     operation_id uuid PRIMARY KEY REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
     phone jsonb NOT NULL, code jsonb, code_fingerprint jsonb,
@@ -104,24 +126,15 @@ export default Effect.gen(function* () {
     challenge_id uuid PRIMARY KEY REFERENCES otp_router.challenges(id) ON DELETE CASCADE, verifier jsonb NOT NULL
   )`;
   yield* sql`CREATE TABLE otp_router.send_intents (
-    id uuid PRIMARY KEY, operation_id uuid NOT NULL REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
-    principal_grant_id uuid NOT NULL REFERENCES otp_router.project_principal_grants(id),
+    id uuid PRIMARY KEY, operation_id uuid NOT NULL, project_id text NOT NULL,
+    principal_grant_id uuid NOT NULL,
+    FOREIGN KEY(operation_id,project_id) REFERENCES otp_router.delivery_operations(id,project_id) ON DELETE CASCADE,
+    FOREIGN KEY(principal_grant_id,project_id) REFERENCES otp_router.project_principal_grants(id,project_id),
     project_send_epoch integer NOT NULL CHECK (project_send_epoch > 0), authority jsonb NOT NULL,
     action text NOT NULL CHECK (action IN ('initial','resend','next','select')),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(), UNIQUE(operation_id,id)
   )`;
   yield* sql`CREATE INDEX intents_grant ON otp_router.send_intents(principal_grant_id)`;
-  yield* sql`CREATE FUNCTION otp_router.check_intent_project() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NOT EXISTS (SELECT 1 FROM otp_router.delivery_operations o
-        JOIN otp_router.project_principal_grants g ON g.project_id = o.project_id
-        WHERE o.id = NEW.operation_id AND g.id = NEW.principal_grant_id)
-      THEN RAISE EXCEPTION 'Intent grant project mismatch' USING ERRCODE = '23514'; END IF;
-      RETURN NEW;
-    END
-  $$`;
-  yield* sql`CREATE TRIGGER intent_project BEFORE INSERT OR UPDATE ON otp_router.send_intents
-    FOR EACH ROW EXECUTE FUNCTION otp_router.check_intent_project()`;
   yield* sql`CREATE TABLE otp_router.delivery_attempts (
     credential_version_id text REFERENCES otp_router.account_secret_versions(id),
     id uuid PRIMARY KEY, operation_id uuid NOT NULL REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
@@ -158,15 +171,12 @@ export default Effect.gen(function* () {
     FOREIGN KEY (id,current_attempt_id) REFERENCES otp_router.delivery_attempts(operation_id,id)
     DEFERRABLE INITIALLY DEFERRED`;
   // Saved route identity is immutable; evidence may only update an existing attempt.
-  yield* sql`CREATE FUNCTION otp_router.reject_identity_change() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN RAISE EXCEPTION 'Saved routing identity is immutable' USING ERRCODE = '23514'; END
-  $$`;
   yield* sql`CREATE TRIGGER immutable_project_id BEFORE UPDATE ON otp_router.projects
     FOR EACH ROW WHEN (OLD.id IS DISTINCT FROM NEW.id OR (OLD.state = 'retired' AND NEW.state <> 'retired')) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER reserved_project_id BEFORE DELETE ON otp_router.projects
     FOR EACH ROW EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER immutable_operation_identity BEFORE UPDATE ON otp_router.delivery_operations
-    FOR EACH ROW WHEN ((OLD.project_id,OLD.integration_reference) IS DISTINCT FROM (NEW.project_id,NEW.integration_reference)) EXECUTE FUNCTION otp_router.reject_identity_change()`;
+    FOR EACH ROW WHEN ((OLD.project_id,OLD.integration_reference,OLD.policy_id,OLD.policy_revision,OLD.created_transaction) IS DISTINCT FROM (NEW.project_id,NEW.integration_reference,NEW.policy_id,NEW.policy_revision,NEW.created_transaction)) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER immutable_intent BEFORE UPDATE ON otp_router.send_intents
     FOR EACH ROW WHEN (OLD.* IS DISTINCT FROM NEW.*) EXECUTE FUNCTION otp_router.reject_identity_change()`;
   yield* sql`CREATE TRIGGER immutable_grant BEFORE UPDATE ON otp_router.project_principal_grants
@@ -262,6 +272,5 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX quota_allocations_event ON otp_router.quota_allocations(event_id,kind)`;
   yield* sql`CREATE TABLE otp_router.provider_restrictions(provider_instance_id text PRIMARY KEY,retry_at timestamptz NOT NULL)`;
   yield* sql`CREATE TABLE otp_router.deployment_identity(singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),deployment_id text NOT NULL,recipient_key_fingerprint text NOT NULL)`;
-  yield* sql`CREATE TABLE otp_router.runtime_grants (id text PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), kind text NOT NULL, resource_id text NOT NULL, revoked_at timestamptz, FOREIGN KEY(kind,resource_id) REFERENCES otp_router.runtime_resources(kind,id))`;
-  yield* sql`CREATE UNIQUE INDEX runtime_grants_active ON otp_router.runtime_grants(project_id,kind,resource_id) WHERE revoked_at IS NULL`;
+  yield* runtimeProjectSchema;
 });
