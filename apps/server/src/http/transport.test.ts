@@ -13,7 +13,7 @@ import {
   type VerifyInput,
 } from "@otp-router/engine/challenges";
 import { makeWebHandler } from "./transport.js";
-import { WebhookError, WebhookHandler } from "./webhooks.js";
+import { WebhookError, WebhookHandler } from "./callbacks/contracts.js";
 
 const API_KEY = "test-api-key-with-at-least-thirty-two-bytes";
 

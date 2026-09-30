@@ -3,7 +3,7 @@ import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
 import { single } from "../database/query.js";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { persistEvent } from "../notifications/publication.js";
+import { persistEvent } from "../history/publication.js";
 import { type ChallengeEvent, Snapshot } from "./contracts.js";
 import { canonical } from "../crypto.js";
 import { flushChanges } from "../delivery/publication.js";

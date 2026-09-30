@@ -15,6 +15,8 @@ const featureImports = {
     "**/challenges/**",
     "**/delivery",
     "**/delivery/**",
+    "**/history",
+    "**/history/**",
     "**/notifications",
     "**/notifications/**",
   ],
@@ -166,6 +168,7 @@ export default defineConfig({
       files: [
         "packages/engine/src/challenges/**/*.ts",
         "packages/engine/src/notifications/**/*.ts",
+        "packages/engine/src/history/**/*.ts",
       ],
       rules: {
         "no-restricted-imports": ["error", { patterns: [serverImports, workerImports] }],

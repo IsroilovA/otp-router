@@ -3,7 +3,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { rows } from "../database/query.js";
 import { transaction } from "../database/transaction.js";
 
-export const cleanupNotifications = (time: Date, retentionDays: number) =>
+export const cleanupEvents = (time: Date, retentionDays: number) =>
   transaction(
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

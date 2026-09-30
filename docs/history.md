@@ -1,6 +1,6 @@
 # Attempt history and reconciliation
 
-Operation and challenge snapshots describe current state. Use attempt history and the project event feed for retained evidence. The [public schemas](../packages/engine/src/notifications/history-contracts.ts) and [HTTP reference](api.md) define wire shapes.
+Operation and challenge snapshots describe current state. Use attempt history and the project event feed for retained evidence. Workspace integrations use the private engine’s `@otp-router/engine/history` export for the history service and contracts. The [public schemas](../packages/engine/src/history/contracts.ts) and [HTTP reference](api.md) define wire shapes.
 
 ## Facts and projections
 

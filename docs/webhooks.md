@@ -1,6 +1,6 @@
 # Public updates
 
-Outbound events carry committed managed/external snapshots, attempt updates, and normalized attempt evidence. The [public event schemas](../packages/engine/src/notifications/history-contracts.ts) own their shape. Events omit codes, recipients, binding/context data, and raw provider payloads. A notification never substitutes for consuming a securely bound verification result.
+Outbound events carry committed managed/external snapshots, attempt updates, and normalized attempt evidence. The [public event schemas](../packages/engine/src/history/contracts.ts) own their shape. Events omit codes, recipients, binding/context data, and raw provider payloads. A notification never substitutes for consuming a securely bound verification result.
 
 ## Ordering and reconciliation
 

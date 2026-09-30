@@ -8,7 +8,8 @@ import { HttpRouter } from "effect/unstable/http";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createClient, type OtpRouterClient } from "@otp-router/client";
 import { Router } from "@otp-router/engine/challenges";
-import { Delivery, DeliveryHistory } from "@otp-router/engine/delivery";
+import { Delivery } from "@otp-router/engine/delivery";
+import { DeliveryHistory } from "@otp-router/engine/history";
 import {
   FakeProvider,
   ProviderInstance,
@@ -16,7 +17,7 @@ import {
   type ProviderSendInput,
 } from "@otp-router/engine/providers";
 import { makeHttpApiLayer } from "../apps/server/src/http/transport.js";
-import { WebhookError, WebhookHandler } from "../apps/server/src/http/webhooks.js";
+import { WebhookError, WebhookHandler } from "../apps/server/src/http/callbacks/contracts.js";
 import { dispatch } from "../packages/engine/src/delivery/dispatch.js";
 import { deliveryQueue, DeliveryJob } from "../packages/engine/src/queue/contracts.js";
 import {

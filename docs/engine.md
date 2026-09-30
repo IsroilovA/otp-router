@@ -25,4 +25,4 @@ Use [public events](webhooks.md) for committed changes, status reads for snapsho
 
 ## Runtime administration
 
-`@otp-router/engine/runtime` exports the `RuntimeAdministration` service and validated contracts. `makeEngineLayer` supplies it alongside project administration and delivery. Provisioning and mutations remain in the engine; HTTP authentication and transport remain in the server. Follow [runtime ownership and dispatch guarantees](runtime-configuration.md).
+`@otp-router/engine/runtime` exports the `RuntimeAdministration` service and validated contracts. `makeEngineLayer` supplies it alongside project administration and delivery. Follow [runtime ownership and dispatch guarantees](runtime-configuration.md).

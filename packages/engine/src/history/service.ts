@@ -9,7 +9,7 @@ import { RouterConfig } from "../config/runtime.js";
 import { DomainError } from "../errors.js";
 import { digest, equalDigest, type CryptoConfig } from "../crypto.js";
 import { findProjectOperation } from "../delivery/store.js";
-import { DeliveryHistory, HistoryEvent, PageInput } from "./history-contracts.js";
+import { DeliveryHistory, HistoryEvent, PageInput } from "./contracts.js";
 
 const Cursor = Schema.Struct({
   project: Schema.String,

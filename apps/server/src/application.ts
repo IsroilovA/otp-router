@@ -10,7 +10,7 @@ import {
   type Settings,
 } from "./config/config.js";
 import { makeHttpApiLayer } from "./http/transport.js";
-import { WebhooksLive } from "./http/webhook-service.js";
+import { WebhooksLive } from "./http/callbacks/service.js";
 const healthServer = (config: Settings, ready: () => boolean, makeServer: () => Server) =>
   Effect.gen(function* () {
     const engine = yield* EngineControl;

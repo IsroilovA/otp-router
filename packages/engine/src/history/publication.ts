@@ -4,7 +4,7 @@ import type { AttemptEvent } from "../delivery/history-contracts.js";
 import type { ChallengeEvent } from "../challenges/contracts.js";
 import type { DeliveryEvent } from "../delivery/contracts.js";
 import { rows } from "../database/query.js";
-import { scheduleNotification } from "./schedule.js";
+import { scheduleNotification } from "../notifications/schedule.js";
 
 export const persistEvent = (
   event:

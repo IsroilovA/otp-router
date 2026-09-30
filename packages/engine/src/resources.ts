@@ -1,7 +1,7 @@
 import { RuntimeAdministrationLive } from "./runtime/service.js";
 import { validateCapabilities, assertCapabilities } from "./config/deployment.js";
 import { ProjectsLive } from "./projects/service.js";
-import { DeliveryHistoryLive } from "./notifications/history.js";
+import { DeliveryHistoryLive } from "./history/service.js";
 import type { DeliveryOwner } from "./delivery/owner.js";
 import { DeliveryOwnerLive } from "./challenges/delivery-owner.js";
 import { DeliveryLive } from "./delivery/service.js";

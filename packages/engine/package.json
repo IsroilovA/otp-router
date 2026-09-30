@@ -37,6 +37,10 @@
       "types": "./dist/delivery/index.d.ts",
       "import": "./dist/delivery/index.js"
     },
+    "./history": {
+      "types": "./dist/history/contracts.d.ts",
+      "import": "./dist/history/contracts.js"
+    },
     "./projects": {
       "types": "./dist/projects/index.d.ts",
       "import": "./dist/projects/index.js"

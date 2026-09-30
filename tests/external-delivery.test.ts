@@ -2,7 +2,7 @@ import type { FixtureConfiguration as Configuration } from "./fixture.js";
 import { recoverDispatches } from "../packages/engine/src/delivery/recovery.js";
 import { cleanup } from "../packages/engine/src/maintenance.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
-import { WebhookError } from "../apps/server/src/http/webhooks.js";
+import { WebhookError } from "../apps/server/src/http/callbacks/contracts.js";
 import { randomUUID } from "node:crypto";
 import { Effect, Layer, Schema } from "effect";
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";

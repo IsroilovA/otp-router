@@ -26,7 +26,7 @@ import { recoverDispatches } from "../packages/engine/src/delivery/recovery.js";
 import { DeliveryJob, deliveryQueue } from "../packages/engine/src/queue/contracts.js";
 import { rows } from "../packages/engine/src/database/query.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
-import { WebhookError } from "../apps/server/src/http/webhooks.js";
+import { WebhookError } from "../apps/server/src/http/callbacks/contracts.js";
 import {
   startPostgres,
   startRuntime,

@@ -6,7 +6,7 @@ import {
   WebhookHandler,
   type WebhookHandshakeInput,
   type WebhookIngestInput,
-} from "./webhooks.js";
+} from "./contracts.js";
 const callbackInput = (input: WebhookHandshakeInput | WebhookIngestInput): CallbackInput => ({
   body: "body" in input ? input.body : new Uint8Array(),
   method: "body" in input ? "POST" : "GET",

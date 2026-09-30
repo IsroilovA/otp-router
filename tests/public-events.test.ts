@@ -1,4 +1,4 @@
-import { HistoryEvent } from "../packages/engine/src/notifications/history-contracts.js";
+import { HistoryEvent } from "../packages/engine/src/history/contracts.js";
 import { ageAdmission } from "./fixture.js";
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";

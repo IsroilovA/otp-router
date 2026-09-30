@@ -29,8 +29,8 @@ import { requestDelivery } from "../packages/engine/src/challenges/deliver.js";
 import { dispatch, dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
 import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
-import { WebhookError, WebhookHandler } from "../apps/server/src/http/webhooks.js";
-import { WebhooksLive } from "../apps/server/src/http/webhook-service.js";
+import { WebhookError, WebhookHandler } from "../apps/server/src/http/callbacks/contracts.js";
+import { WebhooksLive } from "../apps/server/src/http/callbacks/service.js";
 import {
   ProviderContractVersion,
   ProviderInstance,
