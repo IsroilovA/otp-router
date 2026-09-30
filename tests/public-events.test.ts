@@ -111,7 +111,7 @@ const gate = async () => {
   if (job === undefined) throw new Error("Delivery missing");
   const payload = Schema.decodeUnknownSync(DeliveryJob)(job.data);
   await harness.run(dispatchGate(harness.configuration, payload));
-  await harness.queue.complete(deliveryQueue, job.id);
+  await harness.queue.complete(deliveryQueue, job);
   return payload;
 };
 const outcome = (id: string, state: "accepted" | "failed" | "uncertain") =>

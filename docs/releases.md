@@ -23,6 +23,8 @@ Server `0.2.0` and client `0.2.0` target each other and replace published `serve
 
 Use a separate fresh database and follow the [database replacement procedure](operations.md#database-upgrades), including retention of the old deployment's data and keys. No migration, import, or backfill is supplied.
 
+Update host runtimes to Node.js 26.10.0 or newer and use the pinned pnpm version. Client packaging and publication use npm 12.2.0. The container now uses Node 26 on Debian Trixie; PostgreSQL images are pinned to 18.6.
+
 Update integrations together:
 
 - Remove the deployment project catalog and principal `projectIds`. Configure administrator credentials, backend principal identities, and administration ceilings; provision projects and grants through [project administration](projects.md). Direct engine calls must supply the authenticated principal ID.
@@ -65,13 +67,14 @@ Use [npm's setup guide](https://docs.npmjs.com/trusted-publishers/) or [trust co
 Before merging:
 
 ```sh
+npm install --global npm@12.2.0
 pnpm install --frozen-lockfile
 pnpm check
 pnpm test
 pnpm --filter @otp-router/client pack:check
 ```
 
-Confirm CI passes on Node 24/26 and image smoke tests pass on Linux amd64/arm64. Confirm npm trusted publishing and GHCR access are configured. Tests use fake or mocked providers; live delivery requires [provider validation](provider-setup.md).
+Confirm CI passes on Node 26.10.0 and image smoke tests pass on Linux amd64/arm64. Confirm npm trusted publishing and GHCR access are configured. Tests use fake or mocked providers; live delivery requires [provider validation](provider-setup.md).
 
 For each published component, verify its Release and artifacts: server assets and anonymous image pulls, or client installation in a clean project. Confirm registry channel tags resolve to the intended versions.
 

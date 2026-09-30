@@ -123,7 +123,7 @@ const reserve = async () => {
   if (job === undefined) throw new Error("Expected delivery job");
   const input = Schema.decodeUnknownSync(DeliveryJob)(job.data);
   expect(await harness.run(dispatchGate(harness.configuration, input))).toBeDefined();
-  await harness.queue.complete(deliveryQueue, job.id);
+  await harness.queue.complete(deliveryQueue, job);
   return input.attemptId;
 };
 

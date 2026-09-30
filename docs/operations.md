@@ -25,7 +25,7 @@ The example pins a router version, binds its application port to host loopback, 
 
 Allow startup to apply router and queue migrations; the database account needs schema/migration privileges. Never downgrade a newer schema. Readiness requires initialized local resources and PostgreSQL, not messaging-provider availability. Monitor each role independently.
 
-Keep health/metrics private. Stop traffic and new job claims before draining work. Set container shutdown time above the configured `shutdownGraceMs`. Interrupted dispatched sends remain uncertain and retain quota reservations.
+Keep health/metrics private. Stop traffic and new job claims before draining work. Set container shutdown time above the configured `shutdownGraceMs`. When the queue signals that a job has expired or lost its claim, only that handler is interrupted. Shutdown interrupts remaining work after its grace period and waits for cleanup. Interrupted dispatched sends remain uncertain and retain quota reservations.
 
 ## Configuration changes
 

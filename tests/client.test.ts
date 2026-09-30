@@ -194,7 +194,7 @@ it("integrates managed verification, external delivery, replay, auth and history
     await runtime.run(
       dispatch(runtime.configuration, Schema.decodeUnknownSync(DeliveryJob)(job.data)),
     );
-    await runtime.queue.complete(deliveryQueue, job.id);
+    await runtime.queue.complete(deliveryQueue, job);
   }
   expect(sent).toHaveLength(1);
   const received = sent[0];

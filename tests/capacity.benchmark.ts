@@ -1,6 +1,7 @@
 import { provisionHttp } from "./provision-http.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { cpus, freemem, platform, release, totalmem } from "node:os";
 import { createServer } from "node:net";
@@ -22,9 +23,6 @@ const BACKLOG_SIZE = 50;
 const CLEANUP_BACKLOG_SIZE = 250;
 const MAX_STEADY_CLEANUP_LAG_SECONDS = 90;
 const RECOVERY_ONLY = process.env["OTP_BENCHMARK_RECOVERY_ONLY"] === "1";
-
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
 interface CommandResult {
   readonly stderr: string;

@@ -1,6 +1,7 @@
 import { provisionHttp } from "./provision-http.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { connect, createServer } from "node:net";
 import { join, resolve } from "node:path";
@@ -13,9 +14,6 @@ import { startPostgres, type PostgresFixture } from "./fixture.js";
 
 const API_KEY = "process-api-key-with-at-least-thirty-two-bytes";
 const ROOT = resolve(import.meta.dirname, "..");
-
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolveDelay) => setTimeout(resolveDelay, milliseconds));
 
 interface CommandResult {
   readonly stderr: string;

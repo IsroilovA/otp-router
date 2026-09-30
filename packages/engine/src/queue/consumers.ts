@@ -19,7 +19,7 @@ type Registration = {
 
 export const makeConsumers = (boss: PgBoss, shutdownGraceMs: number) =>
   Effect.gen(function* () {
-    const controllers = new Set<AbortController>();
+    const shutdown = new AbortController();
     const running = new Set<Promise<void>>();
     let healthy = false;
     let closing = false;
@@ -27,9 +27,7 @@ export const makeConsumers = (boss: PgBoss, shutdownGraceMs: number) =>
       healthy = false;
       closing = true;
     };
-    const interrupt = () => {
-      for (const controller of controllers) controller.abort();
-    };
+    const interrupt = () => shutdown.abort();
     const stopClaims = Effect.tryPromise({
       try: async () => {
         stopped();
@@ -83,21 +81,20 @@ export const makeConsumers = (boss: PgBoss, shutdownGraceMs: number) =>
                 },
                 async (jobs) => {
                   for (const job of jobs) {
-                    // A claim already in flight can arrive after offWork. Leave it for redelivery.
-                    if (closing) throw new QueueOperationError();
-                    const controller = new AbortController();
-                    controllers.add(controller);
+                    // A claim can arrive after offWork or lose ownership before its handler starts.
+                    if (closing || shutdown.signal.aborted || job.signal.aborted) {
+                      throw new QueueOperationError();
+                    }
                     const promise = Effect.runPromiseWith(runtime)(
                       Effect.suspend(() => handler(job)),
                       {
-                        signal: controller.signal,
+                        signal: AbortSignal.any([shutdown.signal, job.signal]),
                       },
                     );
                     running.add(promise);
                     try {
                       await promise;
                     } finally {
-                      controllers.delete(controller);
                       running.delete(promise);
                     }
                   }

@@ -1,6 +1,6 @@
 # OTP Router client
 
-A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 24 or newer. ESM only. Pin the version and review [release compatibility and upgrade notes](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md) before upgrading.
+A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 26.10.0 or newer. ESM only. Pin the version and review [release compatibility and upgrade notes](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md) before upgrading.
 
 ```sh
 npm install --save-exact @otp-router/client@0.2.0

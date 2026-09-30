@@ -20,6 +20,7 @@ import { DeliveryLive } from "../packages/engine/src/delivery/service.js";
 import { Delivery } from "../packages/engine/src/delivery/contracts.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { connect } from "node:net";
 import { NodeServices } from "@effect/platform-node";
 import { SqlClient } from "effect/unstable/sql";
@@ -50,9 +51,6 @@ const command = (executable: string, args: readonly string[]): Promise<CommandRe
       resolve({ stdout, stderr });
     });
   });
-
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const removeContainer = async (name: string): Promise<void> => {
   try {
@@ -136,7 +134,7 @@ export const startPostgres = async (): Promise<PostgresFixture> => {
       "POSTGRES_PASSWORD=integration-secret",
       "--env",
       "POSTGRES_DB=otp_router_test",
-      "postgres:18",
+      "postgres:18.6",
     ]);
     await waitUntilReady(containerName);
     const port = await mappedPort(containerName);

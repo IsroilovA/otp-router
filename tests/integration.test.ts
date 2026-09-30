@@ -318,12 +318,12 @@ const deliveryFromCreated = async (result: OperationResult): Promise<string> => 
   ).id;
 };
 
-const fetchJob = async (): Promise<{ readonly id: string; readonly data: DeliveryJobType }> => {
+const fetchJob = async () => {
   const jobs = await currentRuntime().queue.fetch<unknown>(deliveryQueue, { batchSize: 1 });
   const job = jobs[0];
   if (job === undefined) throw new Error("Expected a queued delivery job");
   const data = Schema.decodeUnknownSync(DeliveryJob)(job.data);
-  return { id: job.id, data };
+  return { id: job.id, retryCount: job.retryCount, data };
 };
 
 const dispatchNext = async (
@@ -332,7 +332,7 @@ const dispatchNext = async (
   const harness = currentRuntime();
   const job = await fetchJob();
   await harness.run(dispatch(config, job.data));
-  await harness.queue.complete(deliveryQueue, job.id);
+  await harness.queue.complete(deliveryQueue, job);
   return job.data;
 };
 
@@ -941,12 +941,12 @@ describe("PostgreSQL integration", () => {
     ]);
 
     await harness.run(dispatch(harness.configuration, oldJob.data));
-    await harness.queue.complete(deliveryQueue, oldJob.id);
+    await harness.queue.complete(deliveryQueue, oldJob);
     const queued = await harness.queue.fetch<unknown>(deliveryQueue, { batchSize: 10 });
     for (const job of queued) {
       const data = Schema.decodeUnknownSync(DeliveryJob)(job.data);
       await harness.run(dispatch(harness.configuration, data));
-      await harness.queue.complete(deliveryQueue, job.id);
+      await harness.queue.complete(deliveryQueue, job);
     }
 
     expect(primary.sends).toHaveLength(0);

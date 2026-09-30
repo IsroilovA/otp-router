@@ -176,7 +176,7 @@ const runQueued = async () => {
   const jobs = await app().queue.fetch(deliveryQueue, { batchSize: 10 });
   for (const job of jobs) {
     await app().run(dispatch(app().configuration, Schema.decodeUnknownSync(DeliveryJob)(job.data)));
-    await app().queue.complete(deliveryQueue, job.id);
+    await app().queue.complete(deliveryQueue, job);
   }
 };
 beforeAll(async () => {
