@@ -1,6 +1,6 @@
 {
   "name": "@otp-router/engine",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -40,6 +40,10 @@
     "./projects": {
       "types": "./dist/projects/index.d.ts",
       "import": "./dist/projects/index.js"
+    },
+    "./runtime": {
+      "types": "./dist/runtime/contracts.d.ts",
+      "import": "./dist/runtime/contracts.js"
     }
   },
   "files": [

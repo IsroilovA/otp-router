@@ -1,4 +1,4 @@
-import { assertCatalog } from "../projects/catalog.js";
+import { assertCapabilities } from "../config/deployment.js";
 import { requireAccess } from "../projects/store.js";
 import { AttemptSnapshot } from "../delivery/history-contracts.js";
 import { IntegrationReference } from "../delivery/input.js";
@@ -119,7 +119,7 @@ export const DeliveryHistoryLive = Layer.effect(
         Effect.mapError(invalid),
         Effect.andThen(
           sql.withTransaction(
-            assertCatalog(config).pipe(
+            assertCapabilities(config).pipe(
               Effect.andThen(requireAccess(project, principalId)),
               Effect.andThen(effect),
             ),

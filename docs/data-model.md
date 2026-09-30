@@ -12,11 +12,11 @@ Public snapshots, immutable events, notification work, and mutation receipts mus
 
 Operations preserve their original binding, deadline, route, templates, and policy settings. Authorization decisions, dispatch commitments, and provider evidence remain distinct. Later configuration changes cannot rewrite historical snapshots or replay receipts.
 
-Administrative mutations atomically commit project settings or grants, their original replay response, and one allowlisted audit event per actual change. Projects and grant lifetimes are authoritative database relationships; provider attempts reference immutable send intents and saved route steps. An intent and its backend grant must belong to the same project.
+Administrative mutations atomically commit project or runtime resources and grants, their original replay response, and one allowlisted audit event per actual change. Projects and grant lifetimes are authoritative database relationships; provider attempts reference immutable send intents and saved route steps. An intent and its backend grant must belong to the same project.
 
 ## Time and concurrency
 
-Runtime admission and dispatch take shared project locks; administration takes an exclusive project lock. Lock order is catalog registration, project, request identity, sorted quota scopes, operation/challenge, then event stream. Network calls run outside these transactions and eligibility is revalidated afterward.
+Runtime admission and dispatch take shared project locks; administration takes an exclusive project lock. Lock order is deployment-capability registration, runtime authority, project, request identity, sorted quota scopes, operation/challenge, then event stream. Runtime reads and dispatch take a shared transaction advisory lock; resource administration takes it exclusively before project locks. This serializes disabling, revocation, rotation, and limit edits against dispatch commitment. Network calls run outside these transactions and eligibility is revalidated afterward.
 
 Database time governs deadlines, cooldowns, and rolling windows. Concurrent requests cannot spend the same remaining allowance or apply conflicting terminal transitions. Waiting for admission or dispatch consumes the original lifetime; it never extends expiry.
 

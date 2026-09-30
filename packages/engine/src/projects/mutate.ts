@@ -1,5 +1,5 @@
 import { transaction } from "../database/transaction.js";
-import { assertCatalog } from "./catalog.js";
+import { assertCapabilities } from "../config/deployment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -125,7 +125,7 @@ export const mutateProject = (config: RuntimeConfiguration, input: typeof AdminR
     const sql = yield* SqlClient.SqlClient;
     return yield* transaction(
       Effect.gen(function* () {
-        yield* assertCatalog(config);
+        yield* assertCapabilities(config);
         yield* lockProject(projectId, true);
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${canonical(["admin", actorId, key])},0))`;
         yield* sql`DELETE FROM otp_router.admin_request_receipts WHERE actor_id = ${actorId} AND key = ${key} AND retain_until <= clock_timestamp()`;

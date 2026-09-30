@@ -1,3 +1,4 @@
+import { resource } from "../runtime/store.js";
 import { findProject } from "../projects/store.js";
 import { SqlClient } from "effect/unstable/sql";
 import { Effect, Schema } from "effect";
@@ -5,7 +6,7 @@ import { rows } from "../database/query.js";
 import { DomainError } from "../errors.js";
 import type { Settings } from "../config/config.js";
 export interface Limit {
-  readonly scope: "recipient" | "project" | "provider" | "deployment";
+  readonly scope: "recipient" | "project" | "instance" | "account" | "shared" | "deployment";
   readonly scopeId: string;
   readonly kind: "create" | "send" | "guess" | "admission";
   readonly maximum: number;
@@ -53,21 +54,62 @@ export const commonSendLimits = (settings: Settings, token: string, projectId: s
       },
     ] satisfies readonly Limit[];
   });
-export const providerSendLimits = (settings: Settings, providerId: string): readonly Limit[] => {
-  const maximum = settings.providerSendLimits15m[providerId];
-  return maximum === undefined
-    ? []
-    : [{ scope: "provider", scopeId: providerId, kind: "send", maximum, windowMs: 900000 }];
-};
+export const providerSendLimits = (providerId: string) =>
+  Effect.gen(function* () {
+    const instance = yield* resource("instance", providerId);
+    if (instance.data.kind !== "instance") return yield* Effect.die(new Error("Invalid instance"));
+    const account = yield* resource("account", instance.data.accountId);
+    if (account.data.kind !== "account") return yield* Effect.die(new Error("Invalid account"));
+    const limits: Limit[] = [
+      {
+        scope: "instance",
+        scopeId: providerId,
+        kind: "send",
+        maximum: 2147483647,
+        windowMs: 86400000,
+      },
+      {
+        scope: "account",
+        scopeId: account.id,
+        kind: "send",
+        maximum: 2147483647,
+        windowMs: 86400000,
+      },
+    ];
+    for (const id of new Set([...instance.data.scopeIds, ...account.data.scopeIds])) {
+      const scope = yield* resource("scope", id);
+      if (scope.data.kind !== "scope") return yield* Effect.die(new Error("Invalid scope"));
+      limits.push(
+        {
+          scope: "shared",
+          scopeId: id,
+          kind: "send",
+          maximum: scope.data.limits.sendLimit15m,
+          windowMs: 900000,
+        },
+        {
+          scope: "shared",
+          scopeId: id,
+          kind: "send",
+          maximum: scope.data.limits.sendLimit24h,
+          windowMs: 86400000,
+        },
+      );
+    }
+    return limits;
+  });
 export const sendLimits = (
   settings: Settings,
   token: string,
   providerId: string,
   projectId: string,
 ) =>
-  commonSendLimits(settings, token, projectId).pipe(
-    Effect.map((limits) => [...limits, ...providerSendLimits(settings, providerId)]),
-  );
+  Effect.gen(function* () {
+    return [
+      ...(yield* commonSendLimits(settings, token, projectId)),
+      ...(yield* providerSendLimits(providerId)),
+    ];
+  });
 // Lock order: project, request idempotency, sorted quota identities, operation, then challenge.
 // Callers must acquire quotas before row locks to avoid cross-operation deadlocks.
 export const lockQuotas = (limits: readonly Limit[]) =>

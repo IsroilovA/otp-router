@@ -1,29 +1,23 @@
 # Configuration choices
 
-Start from the [fake configuration](../examples/config/router.config.ts) or [built-in providers](../examples/config/builtins.config.ts). [Engine](../packages/engine/src/config/config.ts) and [server](../apps/server/src/config/config.ts) schemas own fields, defaults, and bounds; the entries and [.env.example](../.env.example) own environment mappings.
+Start from the [fake deployment](../examples/config/router.config.ts) or [built-in adapters](../examples/config/builtins.config.ts). [Engine](../packages/engine/src/config/config.ts) and [server](../apps/server/src/config/config.ts) schemas own deployment fields and bounds. Entries are trusted executable TypeScript; install their imports with the deployment and keep secrets outside the image.
 
-Configuration is trusted executable TypeScript. Install its imports with the deployment and keep secrets outside the image. Environment variables affect only fields the entry reads. Pass `--env-file` to Node to load a local secrets file. Configuration is immutable while running. Configure backend and administrator identities, administrator permission ceilings, and an authorization floor. Provision [projects and backend grants](projects.md) through administration. Project settings are database-owned.
+Deployment configuration owns installed adapter implementations and schema support, versioned executable selectors, database connectivity, data-encryption keys, deployment identity, backend/administrator identities, permission ceilings, authorization integration, and hard safety ceilings. Environment variables affect only fields the entry reads. Configuration is immutable while a process runs.
+
+Provider accounts, credentials, instance settings, policies, project settings, assignments, and shared allowances are administered in PostgreSQL. There is no static provider/policy catalog, startup provisioning, import path, or second source of truth. A fresh database has no projects or runtime resources. Follow [runtime configuration](runtime-configuration.md) and [project administration](projects.md) before enabling callers.
 
 ## Policies
 
-- Configure ordered provider instances and the purposes allowed to use each policy. Select routes according to cost, reachability, and account restrictions.
-- Enable managed verification only where the router should generate and check codes. External delivery uses its own supplied deadline, bounded by the common policy lifetime.
-- Choose deployment and provider send caps, and administer project limits, for account budgets. They count invocations, not exact monetary charges; automatic fallback consumes sends too.
-- Enable manual provider/channel selection deliberately and restrict its choices when necessary. Selectors may narrow routes but cannot relax limits.
-- Ensure timeouts, delivery windows, code formats, and locale templates fit every enabled capability. Use [provider setup](provider-setup.md) for remote account requirements.
+Choose ordered instance IDs, purposes, managed/external capabilities, code and lifetime bounds, manual permissions, locale fallbacks, and automatic fallback mode through administration. Templates and locales belong to immutable instance revisions. Selectors may only narrow or reorder authorized steps; they cannot send or relax policy limits. Shared allowance scopes control account budgets across projects without resetting accumulated usage.
 
-API and worker roles validate a matching deployment catalog before readiness, including policies, providers, identities, permissions, capabilities, history retention, and whether webhooks are enabled. The live catalog is registered for each process lifetime; a different catalog cannot join running replicas. Startup rejects missing principals still named by active grants, an unavailable authorizer required by retained active work or project settings, and projects below the authorization floor. Follow the [configuration rollout procedure](operations.md#configuration-changes) when changing deployment settings.
-
-Startup rejects malformed provider constraints, policies whose lifetime or code length cannot fit a routed provider, and provider budget or label references without a registered instance. Validate the full deployment entry before directing traffic to it.
+API and worker roles register a matching deployment-capability fingerprint before readiness. It covers installed adapter contracts/schema versions, selector identities/versions, deployment identities/permissions and safety settings. Runtime data edits do not change it. Startup rejects unsupported retained configurations, missing principals still named by active grants, unavailable required authorization, missing encryption/fingerprint keys, and projects below the authorization floor. Follow [deployment changes](operations.md#configuration-changes) when changing executable capabilities.
 
 ## Database identity
 
-A database belongs to one deployment and its stable recipient-lookup key. Keep both unchanged across restarts, and retain keys needed by stored data. Empty business tables do not reset that identity.
-
-Use separate databases and secrets for development and production. Do not delete identity records or needed volumes to bypass compatibility failures. Follow [configuration changes and recovery](operations.md) for drains, restores, and key replacement.
+A database belongs to one deployment and stable recipient-lookup key. Keep both unchanged across restarts. Empty business tables do not reset that identity. Use separate databases and secrets for development and production; never delete identity records to bypass compatibility failures.
 
 ## Validation
 
-`--check-config` loads and validates the entry without core database access or sends. Custom configuration code can still have its own side effects.
+`--check-config` validates the deployment entry without core database access or sends. Custom executable configuration can have its own side effects. Runtime administration validates resource schemas, references, constraints, and local template coverage; it does not test provider credentials remotely.
 
-`--check-schema` applies migrations and initializes database identity and queues; it changes the database and needs migration privileges. It does not open the application listener or send messages. See [running](running.md) for commands.
+`--check-schema` applies the initial migration and initializes database identity and queues. It changes PostgreSQL and requires migration privileges, but opens no application listener and sends no messages. Old baselines are explicitly rejected; see [fresh-database installation](operations.md#database-upgrades).

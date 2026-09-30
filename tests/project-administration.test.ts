@@ -1,8 +1,8 @@
+import type { FixtureConfiguration as Configuration } from "./fixture.js";
 import { NodeServices } from "@effect/platform-node";
 import { randomUUID } from "node:crypto";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { beforeAll, beforeEach, afterAll, expect, it } from "vitest";
-import { type Configuration } from "@otp-router/engine/config";
 import { type AdminCommand } from "@otp-router/engine/projects";
 import { SendAuthorizer } from "@otp-router/engine/delivery";
 import {
@@ -62,9 +62,11 @@ const provider = (id: string) =>
     Layer.provide(
       FakeProvider.make({
         instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)(id),
-        enabled: true,
-        compatibilityRevision: "administration",
-        config: { outcome: "accepted", callbackSecret: Redacted.make("fake-callback") },
+        revision: "administration",
+        identity: { account: "fixture" },
+        secrets: {},
+        execution: { outcome: "accepted" },
+        callbackSecrets: { callbackSecret: "fake-callback" },
         templates: {},
       }),
     ),
@@ -82,13 +84,35 @@ const configuration: Configuration = {
       fingerprint: ring(3),
       recipientKey: Buffer.alloc(32, 4).toString("base64url"),
     },
-    defaultLocale: "en",
-    fallbackLocales: [],
     administration: {
       principalIds: ["backend", "alternate"],
       authorizationFloor: true,
       administrators: {
         admin: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: [
             "create",
             "read",
@@ -110,6 +134,30 @@ const configuration: Configuration = {
           mayDisableAuthorization: true,
         },
         limited: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: ["create", "read", "list", "update", "grant", "revoke", "audit"],
           projectIds: [],
           creationPrefixes: ["alpha_"],
@@ -121,6 +169,12 @@ const configuration: Configuration = {
         },
       },
     },
+    deploymentSendLimit15m: 10000,
+    deploymentSendLimit24h: 100000,
+  },
+  fixtures: {
+    defaultLocale: "en",
+    fallbackLocales: [],
     policies: {
       login: {
         providerInstanceIds: ["first", "second"],
@@ -129,10 +183,8 @@ const configuration: Configuration = {
       },
     },
     purposes: { login: ["login"] },
-    deploymentSendLimit15m: 10000,
-    deploymentSendLimit24h: 100000,
   },
-  providers: [provider("first"), provider("second")],
+  providerFixtures: [provider("first"), provider("second")],
   selectors: {
     login: () =>
       barrier("selector").pipe(
@@ -203,6 +255,22 @@ const transition = async (action: "suspend" | "reactivate" | "retire" | "grant" 
       ? { action, projectId: "alpha", expectedRevision: current.revision, principalId: "backend" }
       : { action, projectId: "alpha", expectedRevision: current.revision },
   );
+};
+const grantRuntime = async (projectId: string) => {
+  for (const [kind, id] of [
+    ["policy", "login"],
+    ["instance", "first"],
+    ["instance", "second"],
+  ] as const) {
+    const before = await Effect.runPromise(app().runtime.get("admin", kind, id));
+    await Effect.runPromise(
+      app().runtime.mutate({
+        actorId: "admin",
+        key: randomUUID(),
+        command: { action: "grant", kind, id, projectId, expectedRevision: before.revision },
+      }),
+    );
+  }
 };
 beforeAll(async () => {
   database = await startPostgres();
@@ -369,6 +437,7 @@ it("serializes conflicting revisions and makes activation and revocation visible
   const other = await startRuntime(db().databaseUrl, configuration);
   try {
     await createProject();
+    await grantRuntime("alpha_new");
     const access = await Effect.runPromise(
       other.delivery.prepare(command(preparationInput(), "alpha_new")),
     );
@@ -479,6 +548,7 @@ it("lets a committed provider call finish after suspension but blocks its late f
 
 it("inherits fallback authority, keeps preparation intent-free and admits a new intent under the attaching grant", async () => {
   await createProject();
+  await grantRuntime("alpha_new");
   const prepared = await Effect.runPromise(
     app().delivery.prepare(command(preparationInput(), "alpha_new")),
   );
@@ -544,7 +614,7 @@ it("inherits fallback authority, keeps preparation intent-free and admits a new 
   expect(sent[1]?.expiresAt).toBe(prepared.body.expiresAt);
 });
 
-it("rejects old schema baselines and incompatible live catalogs without changing persisted projects", async () => {
+it("rejects old schema baselines and incompatible live capabilities without changing persisted projects", async () => {
   const before = await Effect.runPromise(app().projects.get("admin", "alpha"));
   const sql = app().pg;
   expect(
@@ -564,7 +634,7 @@ it("rejects old schema baselines and incompatible live catalogs without changing
       sql
         .withTransaction(
           Effect.gen(function* () {
-            yield* sql`UPDATE otp_router.schema_identity SET baseline = 'project-administration-v1' WHERE singleton`;
+            yield* sql`UPDATE otp_router.schema_identity SET baseline = 'project-administration-integration-reference-v1' WHERE singleton`;
             yield* migrate.pipe(Effect.provide(NodeServices.layer));
           }),
         )
@@ -572,7 +642,6 @@ it("rejects old schema baselines and incompatible live catalogs without changing
     ),
   ).toMatchObject({ _tag: "Failure", failure: { _tag: "SchemaCompatibilityError" } });
   for (const settings of [
-    { ...configuration.settings, policies: { login: { providerInstanceIds: ["first"] } } },
     { ...configuration.settings, historyRetentionDays: 1 },
     {
       ...configuration.settings,
@@ -584,7 +653,7 @@ it("rejects old schema baselines and incompatible live catalogs without changing
   ]) {
     await expect(
       startRuntime(db().databaseUrl, { ...configuration, settings }).then((other) => other.close()),
-    ).rejects.toMatchObject({ reason: "incompatible_catalog" });
+    ).rejects.toMatchObject({ reason: "incompatible_capabilities" });
   }
   expect(await Effect.runPromise(app().projects.get("admin", "alpha"))).toEqual(before);
   await app().close();
@@ -621,7 +690,33 @@ it.each(["action", "setting"] as const)(
             admin: {
               ...permissions,
               ...(permission === "action"
-                ? { actions: ["create", "read"] as const }
+                ? {
+                    runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+                    resourceIds: [],
+                    resourcePrefixes: [
+                      "restricted",
+                      "managed",
+                      "external",
+                      "benchmark",
+                      "fault",
+                      "fake",
+                      "primary",
+                      "secondary",
+                      "first",
+                      "second",
+                      "login",
+                      "default",
+                      "demo",
+                      "process",
+                      "text",
+                      "scope",
+                      "account",
+                      "telegram",
+                      "whatsapp",
+                      "sms",
+                    ],
+                    actions: ["create", "read"] as const,
+                  }
                 : { editableSettings: ["authorizationRequired", "sendLimit24h"] as const }),
             },
           },

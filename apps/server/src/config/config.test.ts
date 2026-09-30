@@ -1,7 +1,7 @@
 import { it } from "@effect/vitest";
-import { Effect, Redacted, Schema } from "effect";
+import { Effect } from "effect";
 import { expect } from "vitest";
-import { FakeProvider, ProviderInstanceIdSchema } from "@otp-router/engine/providers";
+import { FakeProvider } from "@otp-router/engine/providers";
 import { loadConfiguration, type ConfigurationInput } from "./config.js";
 
 const ring = (byte: number) => ({
@@ -25,14 +25,29 @@ const entry: ConfigurationInput = {
         recipientKey: Buffer.alloc(32, 4).toString("base64url"),
       },
       webhook: { url: "https://example.com/events", signingSecret },
-      defaultLocale: "en",
-      fallbackLocales: [],
-      policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
-      purposes: { login: ["login"] },
       administration: {
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: [
+              "fake",
+              "primary",
+              "secondary",
+              "first",
+              "second",
+              "login",
+              "default",
+              "demo",
+              "process",
+              "text",
+              "scope",
+              "account",
+              "telegram",
+              "whatsapp",
+              "sms",
+            ],
             actions: [
               "create",
               "read",
@@ -59,15 +74,7 @@ const entry: ConfigurationInput = {
       deploymentSendLimit15m: 10,
       deploymentSendLimit24h: 100,
     },
-    providers: [
-      FakeProvider.make({
-        instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
-        enabled: true,
-        compatibilityRevision: "config-test",
-        config: { outcome: "accepted", callbackSecret: Redacted.make("callback") },
-        templates: {},
-      }),
-    ],
+    adapters: [FakeProvider],
   },
 };
 

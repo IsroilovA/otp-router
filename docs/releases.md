@@ -19,11 +19,15 @@ Versions below `1.0.0` may break compatibility. Release notes must identify supp
 
 ## Pending breaking replacement
 
-Server `0.1.0` and client `0.1.0` target each other and replace published `server-v0.0.1` / `client-v0.0.1`. Projects, settings, and backend grants move from deployment configuration to the administration API. Remove the old project catalog and principal `projectIds`; configure administrator credentials, principal identities, and administration ceilings, then provision projects through the new API. Engine calls now carry authenticated principal IDs. There are no aliases or compatibility paths.
+Server `0.2.0` and client `0.2.0` target each other and replace published `server-v0.0.1` / `client-v0.0.1`. Projects, settings, and backend grants move from deployment configuration to the administration API. Remove the old project catalog and principal `projectIds`; configure administrator credentials, principal identities, and administration ceilings, then provision projects through the new API. Engine calls now carry authenticated principal IDs. There are no aliases or compatibility paths.
 
 This release requires a separate fresh database; follow the [database procedure](operations.md#database-upgrades). Old databases are rejected by baseline identity even at the same migration number. These source changes prepare versions only; merging, publishing artifacts, and deployment remain separate actions.
 
 Optional `integrationReference` support is included in this breaking pair and initial router baseline. Earlier development databases are incompatible as well. Update server, client, and strict authorization/event consumers together: accept the optional field in authorization requests, operation/challenge and verification responses, operation/attempt history, and supported events. Preserve omission when absent and use attempt IDs for authorization reservations. Review [correlation privacy and retention](api.md#integration-correlation); pg-boss migration history is unchanged.
+
+Runtime provider accounts, instances, policies, assignments, shared allowances, and credential versions now live in PostgreSQL. Remove static providers, policy settings, and runtime routing settings from deployment configuration; register adapter definitions and versioned selectors, configure runtime administration permissions, and provision runtime resources and explicit project grants using the updated client. Provider contract version 2 separates account identity, send secrets, callback secrets, execution settings, and templates. Update custom adapters with the [plugin contract](plugins.md) and use the [runtime provisioning guide](runtime-configuration.md).
+
+The initial database baseline is `runtime-configuration-v1`. Databases from both published releases and earlier development baselines are rejected; there is no migration or backfill. Drain the old deployment and retain its database/keys for its own reconciliation and retention window, then provision a separate new database. Never resubmit uncertain sends while moving traffic.
 
 ## Changelog
 

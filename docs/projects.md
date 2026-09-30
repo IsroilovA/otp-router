@@ -20,9 +20,7 @@ Administrators use separately configured credentials. Administrator credentials 
 
 Creation sets project settings and initial backend grants atomically. Updates replace the complete settings object. Field permissions apply to changed settings; creation requires permission to set every setting. Permission to disable authorization is required when creating a disabled project or switching authorization off; changing other settings of an already disabled project does not require it. Grant additions and removals both require authority over the affected principal. Project authorization cannot be disabled below the configured floor, even by an administrator otherwise permitted to disable it. Required authorization needs a configured authorizer.
 
-The API cannot modify administrator permissions, credentials, policies, or providers. Those remain deployment configuration. See [HTTP administration](api.md#administration) for concurrency and retry rules and the [administration example](../examples/admin/run.ts) for provisioning.
-
-Every project may use any configured policy that supports its requested purpose and capability. There are no project-policy grants or allowlists. Selectors receive project identity and can only narrow the configured route. Operations capture their authorization requirement when prepared or created; later changes apply only to new operations.
+Administrator identities, backend credentials, permission ceilings, installed adapters, and executable selectors remain deployment configuration. Provider accounts, credential versions, instances, policies, and explicit assignments use [runtime administration](runtime-configuration.md). A project must have both policy access and access to each selected instance; policy grants never imply provider grants. Operations capture project authorization requirements when prepared or created; later changes apply to new operations.
 
 ## Lifecycle and sends
 

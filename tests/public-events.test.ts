@@ -3,7 +3,7 @@ import { ageAdmission } from "./fixture.js";
 import { createServer, type Server } from "node:http";
 import { randomUUID } from "node:crypto";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { Effect, Redacted, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { Webhook } from "standardwebhooks";
 import { ChallengeEvent, Snapshot } from "../packages/engine/src/challenges/contracts.js";
 import { decrypt } from "../packages/engine/src/crypto.js";
@@ -54,9 +54,11 @@ const ring = (n: number) => ({
 const provider = (id: string) =>
   FakeProvider.make({
     instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)(id),
-    enabled: true,
-    compatibilityRevision: id,
-    config: { outcome: "accepted", callbackSecret: Redacted.make("callback-secret") },
+    revision: id,
+    identity: { account: "fixture" },
+    secrets: {},
+    execution: { outcome: "accepted" },
+    callbackSecrets: { callbackSecret: "callback-secret" },
     templates: {},
   });
 let database: PostgresFixture | undefined;
@@ -171,20 +173,34 @@ beforeAll(async () => {
         recipientKey: Buffer.alloc(32, 4).toString("base64url"),
       },
       webhook: { url: `http://127.0.0.1:${address.port}`, signingSecret: secret },
-      defaultLocale: "en",
-      fallbackLocales: [],
-      policies: {
-        login: {
-          providerInstanceIds: ["primary", "secondary"],
-          managed: { maxIncorrectGuesses: 2 },
-        },
-      },
-      providerLabels: { primary: "Primary channel", secondary: "Backup channel" },
-      purposes: { login: ["login"] },
       administration: {
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: [
+              "restricted",
+              "managed",
+              "external",
+              "benchmark",
+              "fault",
+              "fake",
+              "primary",
+              "secondary",
+              "first",
+              "second",
+              "login",
+              "default",
+              "demo",
+              "process",
+              "text",
+              "scope",
+              "account",
+              "telegram",
+              "whatsapp",
+              "sms",
+            ],
             actions: [
               "create",
               "read",
@@ -211,7 +227,19 @@ beforeAll(async () => {
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
     },
-    providers: [provider("primary"), provider("secondary")],
+    fixtures: {
+      defaultLocale: "en",
+      fallbackLocales: [],
+      policies: {
+        login: {
+          providerInstanceIds: ["primary", "secondary"],
+          managed: { maxIncorrectGuesses: 2 },
+        },
+      },
+      providerLabels: { primary: "Primary channel", secondary: "Backup channel" },
+      purposes: { login: ["login"] },
+    },
+    providerFixtures: [provider("primary"), provider("secondary")],
   });
   await runtime.run(initializeReceiver);
 }, 30000);

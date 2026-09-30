@@ -1,15 +1,12 @@
+import type { FixtureConfiguration as Configuration } from "./fixture.js";
 import { randomUUID } from "node:crypto";
-import { Effect, Redacted, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, invalidateRestoredOperations } from "../packages/engine/src/maintenance.js";
 import { createChallenge } from "../packages/engine/src/challenges/create.js";
 import type { KeyRing } from "../packages/engine/src/crypto.js";
 import { quotaRetryAt, sendLimits } from "../packages/engine/src/delivery/quotas.js";
-import type {
-  Configuration,
-  RuntimeConfiguration,
-  Settings,
-} from "../packages/engine/src/config/config.js";
+import type { RuntimeConfiguration, Settings } from "../packages/engine/src/config/config.js";
 import {
   validateDeploymentIdentity,
   validateStoredKeys,
@@ -36,14 +33,34 @@ const configuration: Configuration = {
       fingerprint: keyRing("fingerprint-old", 3),
       recipientKey: key(4),
     },
-    defaultLocale: "en",
-    fallbackLocales: [],
-    policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
-    purposes: { login: ["login"] },
     administration: {
       principalIds: ["backend"],
       administrators: {
         admin: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: [
             "create",
             "read",
@@ -73,12 +90,20 @@ const configuration: Configuration = {
     recipientSendLimit15m: 10,
     recipientGuessLimit15m: 10,
   },
-  providers: [
+  fixtures: {
+    defaultLocale: "en",
+    fallbackLocales: [],
+    policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
+    purposes: { login: ["login"] },
+  },
+  providerFixtures: [
     FakeProvider.make({
       instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
-      enabled: true,
-      compatibilityRevision: "maintenance-fake-v1",
-      config: { outcome: "accepted", callbackSecret: Redacted.make("callback-secret") },
+      revision: "maintenance-fake-v1",
+      identity: { account: "fixture" },
+      secrets: {},
+      execution: { outcome: "accepted" },
+      callbackSecrets: { callbackSecret: "callback-secret" },
       templates: {},
     }),
   ],
@@ -342,13 +367,13 @@ describe("database compatibility and maintenance", () => {
           JOIN otp_router.challenges c ON c.operation_id = o.id
           WHERE c.id::text = ${sourceChallengeId}
         ), operations AS (
-          INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,recipient_token,policy_id,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,state,created_at,expires_at,initial_position,next_user_send_at)
-          SELECT gen_random_uuid(),project_id,'challenge',purpose,${contextPrefix} || value::text,recipient_token,policy_id,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,'prepared',clock_timestamp()-interval '36 days',clock_timestamp()-interval '36 days'+interval '1 minute',0,clock_timestamp()
+          INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,recipient_token,policy_id,policy_revision,policy_snapshot,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,state,created_at,expires_at,initial_position,next_user_send_at)
+          SELECT gen_random_uuid(),project_id,'challenge',purpose,${contextPrefix} || value::text,recipient_token,policy_id,policy_revision,policy_snapshot,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,'prepared',clock_timestamp()-interval '36 days',clock_timestamp()-interval '36 days'+interval '1 minute',0,clock_timestamp()
           FROM source CROSS JOIN generate_series(1,205) AS series(value)
           RETURNING id,context_id
         ), routes AS (
-          INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,compatibility_revision,manual_selection_allowed)
-          SELECT o.id,r.position,r.provider_instance_id,r.label,r.plugin_id,r.contract_version,r.channel,r.resolved_locale,r.template,r.send_timeout_ms,r.min_delivery_window_ms,r.compatibility_revision,r.manual_selection_allowed FROM operations o CROSS JOIN otp_router.operation_route_steps r WHERE r.operation_id = (SELECT id FROM source)
+          INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,instance_revision,account_id,execution_settings,min_code_length,max_code_length,manual_selection_allowed)
+          SELECT o.id,r.position,r.provider_instance_id,r.label,r.plugin_id,r.contract_version,r.channel,r.resolved_locale,r.template,r.send_timeout_ms,r.min_delivery_window_ms,r.instance_revision,r.account_id,r.execution_settings,r.min_code_length,r.max_code_length,r.manual_selection_allowed FROM operations o CROSS JOIN otp_router.operation_route_steps r WHERE r.operation_id = (SELECT id FROM source)
         ), challenges AS (
           INSERT INTO otp_router.challenges(id,operation_id,code_length,max_incorrect_guesses,verification_state)
           SELECT o.id,o.id,c.code_length,c.max_incorrect_guesses,'active'
@@ -365,7 +390,7 @@ describe("database compatibility and maintenance", () => {
           INSERT INTO otp_router.quota_events(kind,event_id,occurred_at)
           SELECT 'send',gen_random_uuid(),clock_timestamp() - interval '25 hours' FROM generate_series(1,1005)
           UNION ALL SELECT 'send',gen_random_uuid(),clock_timestamp() RETURNING event_id,kind
-        ) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'provider',${quotaIdentity},event_id,kind FROM events
+        ) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'instance',${quotaIdentity},event_id,kind FROM events
       `,
     );
 

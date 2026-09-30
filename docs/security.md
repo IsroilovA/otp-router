@@ -36,7 +36,7 @@ During encryption, verification, or fingerprint-key rotation, add a new key ID, 
 
 Keep the recipient-lookup key stable: replacing it changes quota identities. Follow the [incident replacement procedure](operations.md#recipient-key-replacement).
 
-Use independent credentials for API access, provider callbacks, and outbound event signing. [Webhook contracts](webhooks.md) own receiver authentication and event privacy requirements.
+Account send credentials and callback secrets use independently versioned authenticated encryption; see [runtime secret lifecycles](runtime-configuration.md#secrets-replay-and-retention). Their ciphertext and administrative receipt fingerprints also prevent retirement of referenced data keys. Use independent credentials for API access, provider callbacks, and outbound event signing. [Webhook contracts](webhooks.md) own receiver authentication and event privacy requirements.
 
 Follow the [API-key rotation procedure](operations.md#api-key-rotation) separately from data-key rotation.
 

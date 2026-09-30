@@ -1,6 +1,6 @@
 # Provider setup
 
-Copy the [built-in configuration](../examples/config/builtins.config.ts), remove unused providers from registration and policy order, and set send caps for your account budgets. The entry owns credential-variable names and local settings. Use a separate production database, deployment identity, and secrets; follow [configuration changes](operations.md#configuration-changes) when replacing accounts or incompatible settings.
+Register installed implementations with the [built-in deployment entry](../examples/config/builtins.config.ts), then provision accounts, rotate their secrets, create instances and policies, and grant project access through [runtime administration](runtime-configuration.md). Adapter schemas define identity, secret, execution, and template inputs. Use stable upstream identifiers for account identity and keep secrets out of non-secret execution settings. Enable resources only after validation. Use separate production data keys and database identity.
 
 | Provider | Required account setup |
 | --- | --- |

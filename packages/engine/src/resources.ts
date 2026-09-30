@@ -1,4 +1,5 @@
-import { validateCatalog, assertCatalog } from "./projects/catalog.js";
+import { RuntimeAdministrationLive } from "./runtime/service.js";
+import { validateCapabilities, assertCapabilities } from "./config/deployment.js";
 import { ProjectsLive } from "./projects/service.js";
 import { DeliveryHistoryLive } from "./notifications/history.js";
 import type { DeliveryOwner } from "./delivery/owner.js";
@@ -28,7 +29,7 @@ const makeControl = Effect.gen(function* () {
   const sql = Context.get(context, SqlClient.SqlClient);
   return {
     probe: sql`SELECT 1`.pipe(
-      Effect.andThen(assertCatalog(config)),
+      Effect.andThen(assertCapabilities(config)),
       Effect.provide(context),
       Effect.asVoid,
     ),
@@ -67,7 +68,7 @@ export const makeEngineLayer = (options: {
           options.identityMode === "adopt-recipient-key",
         ).pipe(Effect.provide(database));
       }
-      yield* validateCatalog(options.configuration).pipe(Effect.provide(database));
+      yield* validateCapabilities(options.configuration).pipe(Effect.provide(database));
       const queue = yield* Layer.build(makeQueueLayer(options.databaseUrl));
       yield* initializeQueues.pipe(Effect.provide(queue));
       const dependencies = Layer.succeedContext(
@@ -76,6 +77,7 @@ export const makeEngineLayer = (options: {
       return yield* Layer.build(
         Layer.mergeAll(
           ProjectsLive,
+          RuntimeAdministrationLive,
           RouterLive,
           DeliveryLive,
           DeliveryHistoryLive,

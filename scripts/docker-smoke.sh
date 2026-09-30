@@ -21,6 +21,7 @@ trap 'exit 143' TERM
 
 mkdir "$OTP_ROUTER_CONFIG_DIR"
 cp examples/config/router.config.ts "$OTP_ROUTER_CONFIG_DIR/router.config.ts"
+cp examples/admin/provisioning.ts "$OTP_ROUTER_CONFIG_DIR/provisioning.ts"
 chmod 755 "$smoke_dir" "$OTP_ROUTER_CONFIG_DIR"
 node --input-type=module - "$smoke_dir" <<'NODE'
 import { randomBytes } from "node:crypto";
@@ -48,6 +49,7 @@ docker image inspect "$image" >/dev/null
 docker compose --project-name "$project" -f examples/deployment/compose.yaml up -d --wait --wait-timeout 180
 docker compose --project-name "$project" -f examples/deployment/compose.yaml exec -T router node --input-type=module -e '
 import { randomUUID } from "node:crypto";
+import { demoCommands } from "/app/apps/server/config/provisioning.ts";
 
 if (process.getuid?.() === 0) throw new Error("router container runs as root");
 const provisioned = await fetch("http://127.0.0.1:3000/v1/admin/projects", {
@@ -56,6 +58,14 @@ const provisioned = await fetch("http://127.0.0.1:3000/v1/admin/projects", {
 });
 if (provisioned.status !== 201) throw new Error(`provision status ${provisioned.status}`);
 await provisioned.arrayBuffer();
+for (const [index, command] of demoCommands(process.env.OTP_ROUTER_FAKE_CALLBACK_SECRET).entries()) {
+  const response = await fetch("http://127.0.0.1:3000/v1/admin/runtime/commands", {
+    method: "POST", headers: { authorization: `Bearer ${process.env.OTP_ROUTER_ADMIN_KEY}`, "content-type": "application/json", "idempotency-key": `smoke-runtime-${index}` },
+    body: JSON.stringify({ command }),
+  });
+  if (!response.ok) throw new Error(`runtime provision status ${response.status}: ${await response.text()}`);
+  await response.arrayBuffer();
+}
 const base = "http://127.0.0.1:3000/v1/projects/demo/challenges";
 const headers = {
   authorization: `Bearer ${process.env.OTP_ROUTER_API_KEY}`,

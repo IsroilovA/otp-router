@@ -1,3 +1,4 @@
+import { revalidateRoute } from "../runtime/resolve.js";
 import { findProject } from "../projects/store.js";
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
@@ -25,6 +26,9 @@ export const admitOperation = (
   },
 ) =>
   Effect.gen(function* () {
+    yield* revalidateRoute(prepared.projectId, prepared.saved);
+    if (prepared.owner === "external" && !prepared.saved.policy.external)
+      return yield* Effect.fail(new DomainError({ code: "policy_not_allowed" }));
     const project = yield* findProject(prepared.projectId);
     const saved = { ...prepared.saved, authorizationRequired: project.authorization_required };
     const token = recipientToken(
@@ -39,12 +43,8 @@ export const admitOperation = (
     yield* lockQuotas(limits);
     const time = yield* databaseTime;
     const deadline = new Date(input.expiresAt);
-    const policy = config.settings.policies[input.policyId];
-    if (
-      policy === undefined ||
-      deadline <= time ||
-      deadline.getTime() - time.getTime() > policy.maxLifetimeSeconds * 1000
-    )
+    const policy = saved.policy;
+    if (deadline <= time || deadline.getTime() - time.getTime() > policy.maxLifetimeSeconds * 1000)
       return yield* Effect.fail(new DomainError({ code: "invalid_request" }));
     yield* checkQuotas(limits, time);
     const target = yield* resolveChoice(
@@ -63,10 +63,10 @@ export const admitOperation = (
     );
     const id = randomUUID();
     const sql = yield* PgClient.PgClient;
-    yield* sql`INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,integration_reference,recipient_token,policy_id,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.projectId},${prepared.owner},${input.purpose},${input.contextId},${input.integrationReference ?? null},${token},${input.policyId},${saved.authorizationRequired},${saved.maxSends},${saved.resendCooldownSeconds},${saved.manualSelectionEnabled},'prepared',${time},${deadline},${target.position},${time})`;
+    yield* sql`INSERT INTO otp_router.delivery_operations(id,project_id,owner,purpose,context_id,integration_reference,recipient_token,policy_id,policy_revision,policy_snapshot,authorization_required,max_sends,resend_cooldown_seconds,manual_selection_enabled,state,created_at,expires_at,initial_position,next_user_send_at) VALUES (${id},${prepared.projectId},${prepared.owner},${input.purpose},${input.contextId},${input.integrationReference ?? null},${token},${input.policyId},${saved.policyRevision},${JSON.stringify(saved)}::jsonb,${saved.authorizationRequired},${saved.maxSends},${saved.resendCooldownSeconds},${saved.manualSelectionEnabled},'prepared',${time},${deadline},${target.position},${time})`;
     for (const [position, provider] of saved.providers.entries()) {
-      yield* sql`INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,compatibility_revision,manual_selection_allowed)
-        VALUES (${id},${position},${provider.providerInstanceId},${provider.label},${provider.pluginId},${provider.contractVersion},${provider.channel},${provider.resolvedLocale},${JSON.stringify(provider.template)}::jsonb,${provider.sendTimeoutMs},${provider.minDeliveryWindowMs},${provider.compatibilityRevision},${provider.manualSelectionAllowed})`;
+      yield* sql`INSERT INTO otp_router.operation_route_steps(operation_id,position,provider_instance_id,label,plugin_id,contract_version,channel,resolved_locale,template,send_timeout_ms,min_delivery_window_ms,account_id,instance_revision,execution_settings,min_code_length,max_code_length,manual_selection_allowed)
+        VALUES (${id},${position},${provider.providerInstanceId},${provider.label},${provider.pluginId},${provider.contractVersion},${provider.channel},${provider.resolvedLocale},${JSON.stringify(provider.template)}::jsonb,${provider.sendTimeoutMs},${provider.minDeliveryWindowMs},${provider.accountId},${provider.instanceRevision},${JSON.stringify(provider.executionSettings)}::jsonb,${provider.minCodeLength},${provider.maxCodeLength},${provider.manualSelectionAllowed})`;
     }
     yield* sql`INSERT INTO otp_router.delivery_secrets(operation_id,phone) VALUES (${id},${sql.json(encrypt(config.settings.crypto, { projectId: prepared.projectId, operationId: id }, "phone", input.recipient.phoneNumber))})`;
     yield* countQuotas(limits, id, time);
@@ -105,12 +105,8 @@ export const attachCode = (
     }
     // Provider changes affect new attachments, not comparison with a saved code.
     for (const saved of operation.snapshot.providers) {
-      const provider = config.providers.get(saved.providerInstanceId);
-      if (
-        provider === undefined ||
-        code.length < provider.constraints.minCodeLength ||
-        code.length > provider.constraints.maxCodeLength
-      )
+      const provider = saved;
+      if (code.length < provider.minCodeLength || code.length > provider.maxCodeLength)
         return yield* Effect.fail(new DomainError({ code: "invalid_request" }));
     }
     const sql = yield* PgClient.PgClient;

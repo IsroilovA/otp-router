@@ -7,6 +7,8 @@ export const ErrorCode = Schema.Literals([
   "admin_forbidden",
   "revision_conflict",
   "project_conflict",
+  "resource_not_found",
+  "resource_conflict",
   "history_cursor_expired",
   "operation_not_found",
   "operation_unavailable",

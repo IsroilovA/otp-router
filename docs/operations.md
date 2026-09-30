@@ -29,23 +29,21 @@ Keep health/metrics private. Stop traffic and new job claims before draining wor
 
 ## Configuration changes
 
-Changes to the deployment catalog require stopping every API, worker, and combined process using the database before starting replacements with matching configuration. The [catalog fingerprint](../packages/engine/src/config/catalog.ts) defines which settings must match. A different catalog cannot join running replicas, even when the only change is adding a policy that uses existing providers.
+Account, instance, policy, assignment, limit, and credential changes use [runtime administration](runtime-configuration.md) without a restart. Disable an account or instance through administration for an emergency stop. Already committed sends may still complete.
 
-For a planned catalog replacement, stop creation and let active operations finish or expire under the old configuration. Keep verification, callbacks, and workers available during the drain. Then stop every old process, install the replacement configuration, and start all roles with that configuration. Confirm readiness before restoring traffic.
+The [deployment-capability fingerprint](../packages/engine/src/config/capabilities.ts) identifies executable adapters and schema support, versioned selectors, identities, permission ceilings, and safety settings. All live replicas must agree. Runtime edits do not change the fingerprint. A code upgrade must support every retained configuration and callback; incompatible upgrades require draining the old deployment.
 
-Project settings, grants, and lifecycle changes use the [administration API](projects.md) and require no restart. Rolling deployments require an unchanged catalog and compatible schemas, jobs, and plugins; follow the release's upgrade requirements. Backend and administrator credentials can rotate under their existing identities using the [API-key rotation procedure](#api-key-rotation).
+For an incompatible replacement, stop creation and let active operations finish or expire. Preserve verification, callbacks, workers, and history reconciliation for their required retention window. Then stop every old process before installing replacement capabilities. Keep the old database and keys if reconciliation must continue separately. Confirm readiness before restoring traffic. Never remove an adapter or callback key still required by retained work.
 
-Use a new provider instance ID for a different account. The instance's `compatibilityRevision` identifies delivery behavior and non-secret settings that saved routes depend on; change it when those become incompatible. Rotating credentials for the same account does not itself require a revision change. Retain callback credentials throughout the configured history reconciliation window, unless compromise requires revocation.
-
-For an emergency provider disable, skip the planned drain: stop every API, worker, and combined process, then restart all roles with matching configuration and the affected instance disabled. Already committed sends may still complete.
+A new upstream account requires a new account identity. Ordinary sender/template edits create immutable instance revisions and affect new operations only. Explicitly invalidate saved revisions that can no longer execute. Re-enabling or regranting never revives old intents. Backend and administrator credentials rotate under stable identities using the [API-key procedure](#api-key-rotation).
 
 ## Database upgrades
 
-Server `0.1.0` deliberately replaces the `0.0.1` router baseline and requires a fresh database. There is no incremental migration, import, backfill, or compatibility path. Old databases are explicitly rejected even when their migration number is also one. The router never resets a database automatically. pg-boss retains its own migration history unchanged.
+Server `0.2.0` deliberately replaces the `0.0.1` router baseline and requires a fresh database. There is no incremental migration, import, backfill, or compatibility path. Old databases are explicitly rejected even when their migration number is also one. The router never resets a database automatically. pg-boss retains its own migration history unchanged.
 
-This baseline includes immutable operation integration references. Databases initialized from earlier development baselines are also incompatible. Coordinate the server/client update with strict authorization and webhook/event consumers before enabling callers that supply references; see [release compatibility](releases.md#pending-breaking-replacement).
+This baseline includes runtime accounts, encrypted secret versions, immutable execution revisions, policy/provider assignments, shared allowance scopes, and operation integration references. Databases initialized from earlier development baselines are also incompatible. Coordinate the server/client update with strict authorization and webhook/event consumers before enabling callers that supply references; see [release compatibility](releases.md#pending-breaking-replacement).
 
-Before switching, stop creation and drain old operations, verification, callbacks, and history reconciliation using the old release. Preserve the old database and keys for the required reconciliation period. Create a separate empty database for the new release, install matching configuration, initialize it, and provision projects/grants through administration. Point updated callers at the new service only after readiness and provisioning succeed. Do not connect the new release to the old database or treat an old backup as a fresh installation. Later upgrades follow their published release instructions.
+Before switching, stop creation and drain old operations, verification, callbacks, and history reconciliation using the old release. Preserve the old database and keys for the required reconciliation period. Create a separate empty database for the new release, install matching configuration, initialize it, and provision projects, runtime providers/policies, and explicit assignments through administration. Point updated callers at the new service only after readiness and provisioning succeed. Do not connect the new release to the old database or treat an old backup as a fresh installation. Later upgrades follow their published release instructions.
 
 ## API-key rotation
 
@@ -88,11 +86,11 @@ Replay restores the notification attempt budget and requeues the original event,
 Run `docker compose ps` and `docker compose logs --tail=100 router` with the same Compose file, environment, and project used for deployment. Use `--check-config` to validate settings; use `--check-schema` only when database changes are intended.
 
 - Identity mismatch: restore the correct deployment configuration or use a separate database; never bypass the check by deleting needed data.
-- Catalog mismatch: compare configuration across roles and follow the [catalog replacement procedure](#configuration-changes).
+- Capability mismatch: compare executable contracts across roles and follow the [deployment replacement procedure](#configuration-changes).
 - Missing retained keys: restore their original IDs and bytes.
 - Database/queue startup failure: check reachability, credentials, migration privileges, and artifact/schema compatibility.
 - Persistent pending deliveries: check worker availability and configuration across roles.
 - Fake delivery remains accepted: expected; the fake provider sends no message or delivery receipt.
 - Quota or request conflicts: follow [HTTP retry rules](api.md#idempotency); fresh keys do not bypass limits.
 
-Budget PostgreSQL connections across replicas and worker concurrency. Each role holds one connection for its live catalog registration, leaving nine of the application pool’s ten connections available for request work. Measure capacity for the intended environment with `pnpm exec vitest run --config vitest.benchmark.config.ts`; local measurements are not production guarantees.
+Budget PostgreSQL connections across replicas and worker concurrency. Each role holds one connection for its live capability registration, leaving nine of the application pool’s ten connections available for request work. Measure capacity for the intended environment with `pnpm exec vitest run --config vitest.benchmark.config.ts`; local measurements are not production guarantees.

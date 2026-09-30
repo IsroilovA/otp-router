@@ -1,4 +1,12 @@
 import {
+  RuntimeCommand,
+  ResourceSnapshot,
+  ResourceKind,
+  ResourcePage,
+  Assignment,
+  RuntimeAuditPage,
+} from "@otp-router/engine/runtime";
+import {
   ProjectSnapshot,
   ProjectSettings,
   CreateProjectInput,
@@ -6,6 +14,8 @@ import {
   AuditPage,
 } from "@otp-router/engine/projects";
 import {
+  ResourceNotFoundError,
+  ResourceConflictError,
   ForbiddenError,
   ProjectConflictError,
   RevisionConflictError,
@@ -372,6 +382,57 @@ const AdminGroup = HttpApiGroup.make("administration").add(
     .middleware(RequestValidation)
     .middleware(AdminAuth),
 );
+const ResourceResponse = HttpApiSchema.WithHeaders(ResourceSnapshot, {
+  etag: Schema.String,
+  "x-request-id": Schema.String,
+  "idempotency-replayed": Schema.optionalKey(Schema.Literal("true")),
+});
+const RuntimeQuery = { after: Schema.optionalKey(Schema.String), limit: HistoryQuery.limit };
+const runtimeErrors = [
+  ...adminErrors,
+  ResourceNotFoundError.pipe(HttpApiSchema.status(404)),
+  ResourceConflictError.pipe(HttpApiSchema.status(409)),
+];
+const RuntimeGroup = HttpApiGroup.make("runtimeAdministration").add(
+  HttpApiEndpoint.post("mutate", "/v1/admin/runtime/commands", {
+    headers: MutationHeaders,
+    payload: Schema.Struct({ command: RuntimeCommand }),
+    success: ResourceResponse,
+    error: runtimeErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.get("get", "/v1/admin/runtime/:kind/:id", {
+    params: { kind: ResourceKind, id: Schema.String },
+    success: ResourceResponse,
+    error: runtimeErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.get("list", "/v1/admin/runtime/:kind", {
+    params: { kind: ResourceKind },
+    query: RuntimeQuery,
+    success: ResourcePage,
+    error: runtimeErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.get("assignments", "/v1/admin/projects/:projectId/assignments", {
+    params: { projectId: Schema.String },
+    success: Schema.Array(Assignment),
+    error: runtimeErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+  HttpApiEndpoint.get("audit", "/v1/admin/runtime/:kind/:id/audit", {
+    params: { kind: ResourceKind, id: Schema.String },
+    query: RuntimeQuery,
+    success: RuntimeAuditPage,
+    error: runtimeErrors,
+  })
+    .middleware(RequestValidation)
+    .middleware(AdminAuth),
+);
 const WebhookGroup = HttpApiGroup.make("providerCallbacks").add(
   HttpApiEndpoint.get("providerHandshake", "/webhooks/:providerInstanceId", {
     params: { providerInstanceId: Schema.String },
@@ -399,11 +460,11 @@ const WebhookGroup = HttpApiGroup.make("providerCallbacks").add(
   }),
 );
 export const OtpRouterApi = HttpApi.make("otpRouter")
-  .add(ApplicationGroup, HistoryGroup, AdminGroup, WebhookGroup)
+  .add(ApplicationGroup, HistoryGroup, AdminGroup, RuntimeGroup, WebhookGroup)
   .annotateMerge(
     OpenApi.annotations({
       title: "OTP Router API",
-      version: "0.1.0",
+      version: "0.2.0",
       description:
         "Project administration, backend delivery and verification, and provider callback ingress.",
     }),

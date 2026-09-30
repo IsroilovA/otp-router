@@ -31,11 +31,11 @@ export const createChallenge = (config: RuntimeConfiguration, request: Mutation<
       }),
     );
     if (previous !== undefined) return previous;
-    const managed = config.settings.policies[input.policyId]?.managed;
+    const route = yield* prepareRoute(config, input, request.projectId);
+    const managed = route.saved.policy.managed;
     const verification = config.settings.crypto.verification;
     if (managed === undefined || verification === undefined)
       return yield* Effect.fail(new DomainError({ code: "policy_not_allowed" }));
-    const route = yield* prepareRoute(config, input, request.projectId);
     return yield* transaction(
       config,
       Effect.gen(function* () {

@@ -1,11 +1,13 @@
+import { RuntimeAdministration } from "@otp-router/engine/runtime";
+import { demoCommands } from "../admin/provisioning.js";
 import { Projects } from "@otp-router/engine/projects";
 import { randomUUID } from "node:crypto";
 import { NodeServices } from "@effect/platform-node";
-import { Context, Data, Effect, Layer, Redacted, Schema } from "effect";
+import { Context, Data, Effect, Layer, Redacted } from "effect";
 import { EngineControl, makeEngineLayer } from "@otp-router/engine";
 import { loadConfiguration } from "@otp-router/engine/config";
 import { Delivery } from "@otp-router/engine/delivery";
-import { FakeProvider, ProviderInstanceIdSchema } from "@otp-router/engine/providers";
+import { FakeProvider } from "@otp-router/engine/providers";
 
 class DemoTimeout extends Data.TaggedError("DemoTimeout")<{}> {}
 
@@ -26,14 +28,29 @@ const program = Effect.gen(function* () {
         fingerprint: ring(2),
         recipientKey: Buffer.alloc(32, 3).toString("base64url"),
       },
-      defaultLocale: "en",
-      fallbackLocales: [],
-      policies: { login: { providerInstanceIds: ["fake"], maxLifetimeSeconds: 900 } },
-      purposes: { login: ["login"] },
       administration: {
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: [
+              "fake",
+              "primary",
+              "secondary",
+              "first",
+              "second",
+              "login",
+              "default",
+              "demo",
+              "process",
+              "text",
+              "scope",
+              "account",
+              "telegram",
+              "whatsapp",
+              "sms",
+            ],
             actions: [
               "create",
               "read",
@@ -60,15 +77,7 @@ const program = Effect.gen(function* () {
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
     },
-    providers: [
-      FakeProvider.make({
-        instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
-        enabled: true,
-        compatibilityRevision: "external-code-demo",
-        config: { outcome: "accepted", callbackSecret: Redacted.make("demo-callback") },
-        templates: {},
-      }),
-    ],
+    adapters: [FakeProvider],
   });
   const context = yield* Layer.build(
     makeEngineLayer({ databaseUrl: Redacted.make(databaseUrl), configuration }),
@@ -86,6 +95,9 @@ const program = Effect.gen(function* () {
       },
     },
   });
+  const administration = Context.get(context, RuntimeAdministration);
+  for (const [index, command] of demoCommands("demo-callback", false, "fake").entries())
+    yield* administration.mutate({ actorId: "admin", key: `external-runtime-${index}`, command });
   const delivery = Context.get(context, Delivery);
   const control = Context.get(context, EngineControl);
   yield* control.startWorkers({ concurrency: 1, shutdownGraceMs: 5000 });

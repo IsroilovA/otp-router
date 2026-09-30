@@ -1,7 +1,7 @@
 import { Context, Data, Schema } from "effect";
 import type { Effect, Layer } from "effect";
 
-export const ProviderContractVersion = 1 as const;
+export const ProviderContractVersion = 2 as const;
 
 export const ProviderInstanceIdSchema = Schema.NonEmptyString.pipe(
   Schema.check(Schema.isPattern(/^[A-Za-z0-9_-]{1,64}$/)),
@@ -152,8 +152,7 @@ export interface ReadyProvider {
   readonly version: string;
   readonly contractVersion: typeof ProviderContractVersion;
   readonly channel: string;
-  readonly enabled: boolean;
-  readonly compatibilityRevision: string;
+  readonly revision: string;
   readonly constraints: ProviderConstraints;
   readonly sendTimeoutMs: number;
   readonly defaultSendTimeoutMs: number;
@@ -170,27 +169,39 @@ export class ProviderInstance extends Context.Service<ProviderInstance, ReadyPro
   "otp-router/ProviderInstance",
 ) {}
 
-export interface ProviderMakeOptions<Configuration> {
+export interface ProviderMakeOptions {
   readonly instanceId: ProviderInstanceId;
-  readonly enabled: boolean;
-  readonly compatibilityRevision: string;
+  readonly revision: string;
   readonly sendTimeoutMs?: number;
-  readonly config: Configuration;
+  readonly identity: unknown;
+  readonly secrets: unknown;
+  readonly callbackSecrets?: unknown;
+  readonly execution: unknown;
   readonly templates: Readonly<Record<string, unknown>>;
 }
 
-export interface ProviderDefinition<Configuration, EncodedConfiguration = Configuration> {
+export interface ProviderDefinition {
   readonly id: string;
   readonly version: string;
   readonly contractVersion: typeof ProviderContractVersion;
+  readonly schemaVersion: string;
   readonly channel: string;
-  readonly configSchema: Schema.Codec<Configuration, EncodedConfiguration>;
+  readonly identitySchema: Schema.Codec<unknown, unknown>;
+  readonly secretsSchema: Schema.Codec<unknown, unknown>;
+  readonly callbackSecretsSchema: Schema.Codec<unknown, unknown>;
+  readonly executionSchema: Schema.Codec<unknown, unknown>;
   readonly templateSchema: Schema.Codec<unknown, unknown> | null;
   readonly constraints: ProviderConstraints;
   readonly defaultSendTimeoutMs: number;
   readonly diagnosticCodes: readonly string[];
   readonly idempotency: ProviderIdempotency;
+  readonly makeCallback: (
+    options: Pick<ProviderMakeOptions, "identity" | "callbackSecrets" | "execution">,
+  ) => Effect.Effect<
+    ((input: CallbackInput) => Effect.Effect<CallbackResult, CallbackError>) | undefined,
+    ProviderConfigurationError
+  >;
   readonly make: (
-    options: ProviderMakeOptions<Configuration>,
+    options: ProviderMakeOptions,
   ) => Layer.Layer<ProviderInstance, ProviderConfigurationError>;
 }

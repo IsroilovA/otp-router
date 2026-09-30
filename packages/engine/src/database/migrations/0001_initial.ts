@@ -5,7 +5,19 @@ export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   yield* sql`CREATE SCHEMA otp_router`;
   yield* sql`CREATE TABLE otp_router.schema_identity (singleton boolean PRIMARY KEY CHECK (singleton), baseline text NOT NULL)`;
-  yield* sql`INSERT INTO otp_router.schema_identity VALUES (true,'project-administration-integration-reference-v1')`;
+  yield* sql`INSERT INTO otp_router.schema_identity VALUES (true,'runtime-configuration-v1')`;
+  yield* sql`CREATE TABLE otp_router.runtime_resources (
+    kind text NOT NULL CHECK (kind IN ('account','instance','policy','scope')), id text NOT NULL,
+    revision integer NOT NULL DEFAULT 1, configuration_revision integer NOT NULL DEFAULT 1, epoch integer NOT NULL DEFAULT 1,
+    state text NOT NULL DEFAULT 'disabled' CHECK (state IN ('disabled','enabled','retired')),
+    data jsonb NOT NULL, send_version text, callback_version text,
+    PRIMARY KEY(kind,id), CHECK (data->>'kind' = kind))`;
+  yield* sql`CREATE TABLE otp_router.runtime_revisions (kind text NOT NULL, resource_id text NOT NULL, revision integer NOT NULL, data jsonb NOT NULL, invalidated boolean NOT NULL DEFAULT false, PRIMARY KEY(kind,resource_id,revision), FOREIGN KEY(kind,resource_id) REFERENCES otp_router.runtime_resources(kind,id))`;
+  yield* sql`CREATE TABLE otp_router.account_secret_versions (id text PRIMARY KEY, account_id text NOT NULL, purpose text NOT NULL CHECK (purpose IN ('send','callback')), ciphertext jsonb, revoked boolean NOT NULL DEFAULT false, created_at timestamptz NOT NULL DEFAULT clock_timestamp())`;
+  yield* sql`CREATE TABLE otp_router.runtime_events (sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY, id text UNIQUE NOT NULL, actor_id text NOT NULL, action text NOT NULL, kind text NOT NULL, resource_id text NOT NULL, revision integer NOT NULL, project_id text, occurred_at timestamptz NOT NULL DEFAULT clock_timestamp())`;
+  yield* sql`CREATE TABLE otp_router.runtime_receipts (actor_id text NOT NULL, key text NOT NULL, fingerprint jsonb NOT NULL, response jsonb NOT NULL, PRIMARY KEY(actor_id,key))`;
+  yield* sql`CREATE INDEX runtime_event_resource ON otp_router.runtime_events(kind,resource_id,sequence)`;
+  yield* sql`CREATE INDEX account_secrets_purpose ON otp_router.account_secret_versions(account_id,purpose,created_at)`;
   yield* sql`CREATE TABLE otp_router.projects (
     id text PRIMARY KEY, state text NOT NULL CHECK (state IN ('active','suspended','retired')),
     revision integer NOT NULL CHECK (revision > 0), send_epoch integer NOT NULL DEFAULT 1 CHECK (send_epoch > 0),
@@ -32,12 +44,12 @@ export default Effect.gen(function* () {
     PRIMARY KEY (actor_id,key), CHECK (retain_until IS NULL OR retain_until > created_at)
   )`;
   yield* sql`CREATE INDEX admin_receipts_expiry ON otp_router.admin_request_receipts(retain_until) WHERE retain_until IS NOT NULL`;
-  yield* sql`CREATE TABLE otp_router.configured_catalog (singleton boolean PRIMARY KEY CHECK (singleton), fingerprint text NOT NULL)`;
+  yield* sql`CREATE TABLE otp_router.deployment_capabilities (singleton boolean PRIMARY KEY CHECK (singleton), fingerprint text NOT NULL)`;
   yield* sql`CREATE TABLE otp_router.delivery_operations (
     id uuid PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), creation_sequence bigint, owner text NOT NULL CHECK (owner IN ('external','challenge')),
     purpose text NOT NULL, context_id text NOT NULL, recipient_token text NOT NULL,
     integration_reference text CHECK (length(integration_reference) BETWEEN 1 AND 128 AND integration_reference COLLATE "C" !~ '[^A-Za-z0-9._:-]'),
-    policy_id text NOT NULL,
+    policy_id text NOT NULL, policy_revision integer NOT NULL, policy_snapshot jsonb NOT NULL,
     authorization_required boolean NOT NULL,
     max_sends integer NOT NULL CHECK (max_sends BETWEEN 1 AND 10),
     resend_cooldown_seconds integer NOT NULL CHECK (resend_cooldown_seconds >= 0),
@@ -59,13 +71,17 @@ export default Effect.gen(function* () {
     operation_id uuid NOT NULL REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
     position integer NOT NULL CHECK (position >= 0),
     provider_instance_id text NOT NULL, label text NOT NULL, plugin_id text NOT NULL,
-    contract_version integer NOT NULL CHECK (contract_version = 1), channel text NOT NULL,
+    contract_version integer NOT NULL CHECK (contract_version = 2), channel text NOT NULL,
     resolved_locale text NOT NULL, template jsonb NOT NULL,
     send_timeout_ms bigint NOT NULL CHECK (send_timeout_ms BETWEEN 1 AND 9007199254740991),
     min_delivery_window_ms bigint NOT NULL CHECK (min_delivery_window_ms BETWEEN 0 AND 9007199254740991),
-    compatibility_revision text NOT NULL, manual_selection_allowed boolean NOT NULL,
+    account_id text NOT NULL, instance_revision integer NOT NULL, execution_settings jsonb NOT NULL,
+    min_code_length integer NOT NULL, max_code_length integer NOT NULL,
+    manual_selection_allowed boolean NOT NULL,
     PRIMARY KEY (operation_id,position), UNIQUE (operation_id,provider_instance_id)
   )`;
+  yield* sql`CREATE INDEX route_accounts ON otp_router.operation_route_steps(account_id)`;
+  yield* sql`CREATE INDEX route_instance_revisions ON otp_router.operation_route_steps(provider_instance_id,instance_revision)`;
   yield* sql`ALTER TABLE otp_router.delivery_operations ADD CONSTRAINT initial_route_step
     FOREIGN KEY (id,initial_position) REFERENCES otp_router.operation_route_steps(operation_id,position)
     DEFERRABLE INITIALLY DEFERRED`;
@@ -90,7 +106,7 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE otp_router.send_intents (
     id uuid PRIMARY KEY, operation_id uuid NOT NULL REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
     principal_grant_id uuid NOT NULL REFERENCES otp_router.project_principal_grants(id),
-    project_send_epoch integer NOT NULL CHECK (project_send_epoch > 0),
+    project_send_epoch integer NOT NULL CHECK (project_send_epoch > 0), authority jsonb NOT NULL,
     action text NOT NULL CHECK (action IN ('initial','resend','next','select')),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(), UNIQUE(operation_id,id)
   )`;
@@ -107,6 +123,7 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TRIGGER intent_project BEFORE INSERT OR UPDATE ON otp_router.send_intents
     FOR EACH ROW EXECUTE FUNCTION otp_router.check_intent_project()`;
   yield* sql`CREATE TABLE otp_router.delivery_attempts (
+    credential_version_id text REFERENCES otp_router.account_secret_versions(id),
     id uuid PRIMARY KEY, operation_id uuid NOT NULL REFERENCES otp_router.delivery_operations(id) ON DELETE CASCADE,
     intent_id uuid NOT NULL,
     FOREIGN KEY (operation_id,intent_id) REFERENCES otp_router.send_intents(operation_id,id),
@@ -214,7 +231,7 @@ export default Effect.gen(function* () {
   yield* sql`CREATE TABLE otp_router.callback_inbox (
     provider_instance_id text NOT NULL, deduplication_key text NOT NULL, reference text NOT NULL,
     status text NOT NULL CHECK (status IN ('accepted','delivered','failed')),
-    received_at timestamptz NOT NULL, event_at text, diagnostic_code text, processed boolean NOT NULL DEFAULT false,
+    received_at timestamptz NOT NULL, event_at text, diagnostic_code text, instance_revisions jsonb, processed boolean NOT NULL DEFAULT false,
     PRIMARY KEY (provider_instance_id,deduplication_key)
   )`;
   yield* sql`CREATE INDEX inbox_unmatched ON otp_router.callback_inbox(provider_instance_id,reference) WHERE processed = false`;
@@ -234,7 +251,7 @@ export default Effect.gen(function* () {
     occurred_at timestamptz NOT NULL, PRIMARY KEY (event_id,kind)
   )`;
   yield* sql`CREATE TABLE otp_router.quota_allocations (
-    scope text NOT NULL CHECK (scope IN ('recipient','project','provider','deployment')),
+    scope text NOT NULL CHECK (scope IN ('recipient','project','instance','account','shared','deployment')),
     scope_id text NOT NULL, event_id uuid NOT NULL, kind text NOT NULL,
     PRIMARY KEY (scope,scope_id,kind,event_id),
     FOREIGN KEY (event_id,kind) REFERENCES otp_router.quota_events(event_id,kind) ON DELETE CASCADE,
@@ -245,4 +262,6 @@ export default Effect.gen(function* () {
   yield* sql`CREATE INDEX quota_allocations_event ON otp_router.quota_allocations(event_id,kind)`;
   yield* sql`CREATE TABLE otp_router.provider_restrictions(provider_instance_id text PRIMARY KEY,retry_at timestamptz NOT NULL)`;
   yield* sql`CREATE TABLE otp_router.deployment_identity(singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),deployment_id text NOT NULL,recipient_key_fingerprint text NOT NULL)`;
+  yield* sql`CREATE TABLE otp_router.runtime_grants (id text PRIMARY KEY, project_id text NOT NULL REFERENCES otp_router.projects(id), kind text NOT NULL, resource_id text NOT NULL, revoked_at timestamptz, FOREIGN KEY(kind,resource_id) REFERENCES otp_router.runtime_resources(kind,id))`;
+  yield* sql`CREATE UNIQUE INDEX runtime_grants_active ON otp_router.runtime_grants(project_id,kind,resource_id) WHERE revoked_at IS NULL`;
 });

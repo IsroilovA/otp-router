@@ -1,3 +1,4 @@
+import { policyAuthorityEligible } from "../runtime/store.js";
 import { Effect, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
 import { rows } from "../database/query.js";
@@ -90,5 +91,5 @@ export const intentEligible = (intentId: string) =>
     WHERE i.id = ${intentId} AND p.state = 'active' AND p.send_epoch = i.project_send_epoch AND g.revoked_at IS NULL
   ) AS eligible`,
     );
-    return result[0]?.eligible === true;
+    return result[0]?.eligible === true && (yield* policyAuthorityEligible(intentId));
   });

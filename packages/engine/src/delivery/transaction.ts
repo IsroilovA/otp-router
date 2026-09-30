@@ -1,4 +1,4 @@
-import { assertCatalog } from "../projects/catalog.js";
+import { assertCapabilities } from "../config/deployment.js";
 import { SqlClient } from "effect/unstable/sql";
 import { finalizeEvents } from "../notifications/publication.js";
 import { Effect, Result } from "effect";
@@ -16,7 +16,7 @@ export const deliveryTransaction = <A, E, R>(
     if ((yield* Changes) !== undefined) return yield* body;
     return yield* databaseTransaction(
       Effect.gen(function* () {
-        yield* assertCatalog(config).pipe(
+        yield* assertCapabilities(config).pipe(
           Effect.mapError(() => new DomainError({ code: "temporarily_unavailable" })),
         );
         const result = yield* body;

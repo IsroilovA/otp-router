@@ -1,3 +1,4 @@
+import { provisionHttp } from "./provision-http.js";
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -137,7 +138,7 @@ const key = (byte: number): string => Buffer.alloc(32, byte).toString("base64url
 
 const configSource = (sinkPath: string): string => {
   return `import { appendFile } from "node:fs/promises";
-import { Effect, Layer } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { defineConfig } from "@otp-router/server/config";
 import { ProviderContractVersion, ProviderInstance } from "@otp-router/engine/providers";
 
@@ -148,8 +149,7 @@ const provider = {
   version: "1.0.0",
   contractVersion: ProviderContractVersion,
   channel: "fake",
-  enabled: true,
-  compatibilityRevision: "benchmark-fake-v1",
+  revision: "benchmark-fake-v1",
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   defaultSendTimeoutMs: 1000,
   sendTimeoutMs: 1000,
@@ -174,19 +174,14 @@ export default defineConfig({
       fingerprint: { active: "fingerprint-v1", keys: { "fingerprint-v1": ${JSON.stringify(key(13))} } },
       recipientKey: ${JSON.stringify(key(14))},
     },
-    defaultLocale: "en",
-    fallbackLocales: [],
-    policies: { benchmark: { providerInstanceIds: ["benchmark-fake"], managed: { lifetimeSeconds: 600 }, maxSends: 10, resendCooldownSeconds: 30 } },
-    purposes: { benchmark: ["benchmark"] },
-    administration: { principalIds: ["backend"], administrators: { admin: { actions: ["create"], projectIds: ["demo"], creationPrefixes: [], grantablePrincipalIds: ["backend"], editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"], sendLimit15mCeiling: 10000, sendLimit24hCeiling: 100000, mayDisableAuthorization: true } }, authorizationFloor: false },
+    administration: { principalIds: ["backend"], administrators: { admin: { runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"], resourceIds: [], resourcePrefixes: ["restricted", "managed", "external", "benchmark", "fault", "fake", "primary", "secondary", "first", "second", "login", "default", "demo", "process", "text", "scope", "account", "telegram", "whatsapp", "sms"], actions: ["create"], projectIds: ["demo"], creationPrefixes: [], grantablePrincipalIds: ["backend"], editableSettings: ["authorizationRequired", "sendLimit15m", "sendLimit24h"], sendLimit15mCeiling: 10000, sendLimit24hCeiling: 100000, mayDisableAuthorization: true } }, authorizationFloor: false },
     deploymentSendLimit15m: 1000000,
     deploymentSendLimit24h: 1000000,
     recipientCreateLimit15m: 5,
     recipientSendLimit15m: 10,
     recipientGuessLimit15m: 10,
-    providerSendLimits15m: { "benchmark-fake": 1000000 },
   },
-  providers: [Layer.succeed(ProviderInstance, provider)],
+  adapters: [{ ...provider, id: "benchmark-test-fake", schemaVersion: "1", identitySchema: Schema.Struct({}), secretsSchema: Schema.Struct({}), callbackSecretsSchema: Schema.Struct({}), executionSchema: Schema.Struct({}), templateSchema: null, makeCallback: () => Effect.succeed(undefined), make: (options) => Layer.succeed(ProviderInstance, { ...provider, instanceId: options.instanceId, revision: options.revision, sendTimeoutMs: options.sendTimeoutMs }) }],
   },
   settings: {
     databaseUrl: process.env.DATABASE_URL,
@@ -510,6 +505,7 @@ const createChallenge = async (
   });
   if (provisioned.status !== 201) throw new Error(`Provision failed: ${provisioned.status}`);
   await provisioned.arrayBuffer();
+  await provisionHttp(apiPort, "benchmark");
   const response = await fetch(`http://127.0.0.1:${String(apiPort)}/v1/projects/demo/challenges`, {
     method: "POST",
     headers: {

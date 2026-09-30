@@ -1,8 +1,9 @@
+import { RuntimeAdministration } from "@otp-router/engine/runtime";
 import { Projects } from "@otp-router/engine/projects";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { NodeHttpServer } from "@effect/platform-node";
-import { Effect, Exit, Layer, Redacted, Schema, Scope } from "effect";
+import { Effect, Exit, Layer, Schema, Scope } from "effect";
 import { HttpRouter } from "effect/unstable/http";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createClient, type OtpRouterClient } from "@otp-router/client";
@@ -47,9 +48,11 @@ const provider = Layer.effect(
   Layer.provide(
     FakeProvider.make({
       instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
-      enabled: true,
-      compatibilityRevision: "client-test",
-      config: { outcome: "accepted", callbackSecret: Redacted.make("callback-secret") },
+      revision: "client-test",
+      identity: { account: "fixture" },
+      secrets: {},
+      execution: { outcome: "accepted" },
+      callbackSecrets: { callbackSecret: "callback-secret" },
       templates: {},
     }),
   ),
@@ -71,14 +74,34 @@ beforeAll(async () => {
         fingerprint: ring(3),
         recipientKey: Buffer.alloc(32, 4).toString("base64url"),
       },
-      defaultLocale: "en",
-      fallbackLocales: [],
-      policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
-      purposes: { login: ["login"] },
       administration: {
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: [
+              "restricted",
+              "managed",
+              "external",
+              "benchmark",
+              "fault",
+              "fake",
+              "primary",
+              "secondary",
+              "first",
+              "second",
+              "login",
+              "default",
+              "demo",
+              "process",
+              "text",
+              "scope",
+              "account",
+              "telegram",
+              "whatsapp",
+              "sms",
+            ],
             actions: [
               "create",
               "read",
@@ -105,7 +128,13 @@ beforeAll(async () => {
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
     },
-    providers: [provider],
+    fixtures: {
+      defaultLocale: "en",
+      fallbackLocales: [],
+      policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
+      purposes: { login: ["login"] },
+    },
+    providerFixtures: [provider],
   });
   scope = await Effect.runPromise(Scope.make());
   const server = createServer();
@@ -116,6 +145,7 @@ beforeAll(async () => {
     HttpRouter.provideRequest(
       Layer.mergeAll(
         Layer.succeed(Projects, runtime.projects),
+        Layer.succeed(RuntimeAdministration, runtime.runtime),
         Layer.succeed(Router, runtime.router),
         Layer.succeed(Delivery, runtime.delivery),
         Layer.succeed(DeliveryHistory, runtime.history),
@@ -322,4 +352,56 @@ it("admin client preserves revision headers, lost-response replay and credential
     etag: '"3"',
   });
   expect(granted.data.grants).toEqual([]);
+});
+
+it("runtime admin client preserves redacted replay, revisions, access control and resource errors", async () => {
+  const { createAdminClient } = await import("@otp-router/client");
+  const admin = createAdminClient({
+    baseUrl,
+    bearerToken: "admin-test-credential-with-at-least-32-bytes",
+  });
+  const create = {
+    action: "create" as const,
+    id: "demo-http-scope",
+    data: { kind: "scope" as const, limits: { sendLimit15m: 10, sendLimit24h: 100 } },
+  };
+  const key = randomUUID();
+  const first = await admin.mutateRuntime(create, { idempotencyKey: key });
+  expect(first).toMatchObject({ status: 200, etag: '"1"', data: { id: create.id, revision: 1 } });
+  const listed = await admin.listRuntimeResources("scope", { limit: 1 });
+  expect(listed.data.resources).toHaveLength(1);
+  const replay = await admin.mutateRuntime(create, { idempotencyKey: key });
+  expect(replay.data).toEqual(first.data);
+  expect(replay.replayed).toBe(true);
+  await expect(admin.mutateRuntime(create, { idempotencyKey: randomUUID() })).rejects.toMatchObject(
+    { code: "resource_conflict", status: 409 },
+  );
+  await expect(admin.getRuntimeResource("scope", "demo-missing")).rejects.toMatchObject({
+    code: "resource_not_found",
+    status: 404,
+  });
+  await expect(
+    admin.mutateRuntime(
+      {
+        action: "update",
+        kind: "scope",
+        id: create.id,
+        expectedRevision: 2,
+        settings: { sendLimit15m: 20, sendLimit24h: 100 },
+      },
+      { idempotencyKey: randomUUID() },
+    ),
+  ).rejects.toMatchObject({ code: "revision_conflict", status: 412 });
+  const backend = createAdminClient({ baseUrl, bearerToken });
+  await expect(
+    backend.mutateRuntime(create, { idempotencyKey: randomUUID() }),
+  ).rejects.toMatchObject({ code: "unauthorized", status: 401 });
+  expect(
+    (await admin.listRuntimeAudit("scope", create.id)).data.events.map((event) => event.action),
+  ).toEqual(["create"]);
+  expect(
+    (await admin.listAssignments("demo")).data.some(
+      (grant) => grant.kind === "policy" && grant.resourceId === "login",
+    ),
+  ).toBe(true);
 });

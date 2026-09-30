@@ -29,15 +29,7 @@ const readOperation = (id: string, lock: boolean, project?: { readonly id: strin
       SELECT o.*,
         (SELECT count(*)::int FROM otp_router.delivery_attempts a
           WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count,
-        jsonb_build_object('authorizationRequired',o.authorization_required,
-          'maxSends',o.max_sends,'resendCooldownSeconds',o.resend_cooldown_seconds,
-          'manualSelectionEnabled',o.manual_selection_enabled,
-          'providers',(SELECT jsonb_agg(jsonb_build_object(
-            'providerInstanceId',r.provider_instance_id,'label',r.label,'pluginId',r.plugin_id,
-            'contractVersion',r.contract_version,'channel',r.channel,'resolvedLocale',r.resolved_locale,
-            'template',r.template,'sendTimeoutMs',r.send_timeout_ms,'minDeliveryWindowMs',r.min_delivery_window_ms,
-            'compatibilityRevision',r.compatibility_revision,'manualSelectionAllowed',r.manual_selection_allowed
-          ) ORDER BY r.position) FROM otp_router.operation_route_steps r WHERE r.operation_id = o.id)) AS snapshot
+        o.policy_snapshot || jsonb_build_object('authorizationRequired',o.authorization_required) AS snapshot
       FROM otp_router.delivery_operations o WHERE o.id = ${id} ${owned}`,
     );
     const operation = values[0];

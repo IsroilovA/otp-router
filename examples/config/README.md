@@ -12,4 +12,4 @@ Set `OTP_ROUTER_WEBHOOK_URL` and a separate `OTP_ROUTER_WEBHOOK_SIGNING_SECRET` 
 
 Use [authorized.config.ts](authorized.config.ts) to require an external reservation before each fake provider invocation. Supply the authority collection URL and a dedicated credential; see the [authorization contract](../../docs/authorization.md).
 
-Set a separate `OTP_ROUTER_ADMIN_KEY`. These entries configure identities and administration ceilings; they do not create projects. Run the [administration example](../admin/run.ts) after startup. With `authorized.config.ts`, set `OTP_ROUTER_PROJECT_AUTHORIZATION=required` when provisioning; its authorization floor rejects disabled authorization.
+Set a separate `OTP_ROUTER_ADMIN_KEY`. These entries configure identities and administration ceilings; they do not create projects or runtime resources. Run the [administration example](../admin/run.ts) after startup. With `authorized.config.ts`, set `OTP_ROUTER_PROJECT_AUTHORIZATION=required` when provisioning; its authorization floor rejects disabled authorization.

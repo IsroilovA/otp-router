@@ -1,8 +1,9 @@
+import type { FixtureConfiguration as Configuration } from "./fixture.js";
 import { randomUUID } from "node:crypto";
 import { NodeServices } from "@effect/platform-node";
 import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { Configuration } from "../packages/engine/src/config/config.js";
+
 import type { SqlClient } from "effect/unstable/sql/SqlClient";
 import { PgClient } from "@effect/sql-pg";
 import { makeDatabaseLayer } from "../packages/engine/src/database/client.js";
@@ -31,14 +32,34 @@ const configuration: Configuration = {
       fingerprint: keyRing(3),
       recipientKey: Buffer.alloc(32, 4).toString("base64url"),
     },
-    defaultLocale: "en",
-    fallbackLocales: [],
-    policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
-    purposes: { login: ["login"] },
     administration: {
       principalIds: ["backend"],
       administrators: {
         admin: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: [
             "create",
             "read",
@@ -65,12 +86,20 @@ const configuration: Configuration = {
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1000,
   },
-  providers: [
+  fixtures: {
+    defaultLocale: "en",
+    fallbackLocales: [],
+    policies: { login: { managed: {}, providerInstanceIds: ["fake"] } },
+    purposes: { login: ["login"] },
+  },
+  providerFixtures: [
     FakeProvider.make({
       instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
-      enabled: true,
-      compatibilityRevision: "fake",
-      config: { outcome: "accepted", callbackSecret: Redacted.make("secret") },
+      revision: "fake",
+      identity: { account: "fixture" },
+      secrets: {},
+      execution: { outcome: "accepted" },
+      callbackSecrets: { callbackSecret: "secret" },
       templates: {},
     }),
   ],

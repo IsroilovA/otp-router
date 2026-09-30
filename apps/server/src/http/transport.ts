@@ -1,3 +1,4 @@
+import { RuntimeAdministration, RuntimeCommand } from "@otp-router/engine/runtime";
 import {
   Projects,
   CreateProjectInput,
@@ -66,6 +67,7 @@ export interface HttpTransportOptions {
 }
 
 export interface HttpDependencies {
+  readonly runtime: Context.Service.Shape<typeof RuntimeAdministration>;
   readonly projects: Context.Service.Shape<typeof Projects>;
   readonly router: Context.Service.Shape<typeof Router>;
   readonly delivery: Context.Service.Shape<typeof Delivery>;
@@ -146,7 +148,9 @@ const errorMessages = {
   project_access_denied: "Project access is denied.",
   project_inactive: "The project is not active.",
   admin_forbidden: "Administration permission is denied.",
-  revision_conflict: "The project revision has changed.",
+  revision_conflict: "The resource revision has changed.",
+  resource_not_found: "The runtime resource was not found.",
+  resource_conflict: "The runtime resource identity is already reserved.",
   project_conflict: "The project state conflicts with this request.",
   invalid_request: "The request is invalid.",
   history_cursor_expired: "The history cursor is outside the reconciliation window.",
@@ -541,7 +545,7 @@ export const makeHttpApiLayer = (options: HttpTransportOptions) => {
         ),
       ),
     ),
-    makeAdminHandlers.pipe(
+    Layer.merge(makeAdminHandlers, makeRuntimeHandlers).pipe(
       Layer.provide(makeAdminAuth(options.administrators)),
       Layer.provide(
         HttpApiMiddleware.layerSchemaErrorTransform(RequestValidation, () =>
@@ -563,6 +567,7 @@ export const makeWebHandler = (options: HttpTransportOptions, dependencies: Http
     HttpRouter.provideRequest(
       Layer.mergeAll(
         Layer.succeed(Projects, dependencies.projects),
+        Layer.succeed(RuntimeAdministration, dependencies.runtime),
         Layer.succeed(Delivery, dependencies.delivery),
         Layer.succeed(DeliveryHistory, dependencies.history),
         Layer.succeed(Router, dependencies.router),
@@ -710,4 +715,64 @@ const makeAdminHandlers = HttpApiBuilder.group(OtpRouterApi, "administration", (
         return yield* adminRead(projects.audit(actorId, params.projectId, query));
       }),
     ),
+);
+
+const makeRuntimeHandlers = HttpApiBuilder.group(
+  OtpRouterApi,
+  "runtimeAdministration",
+  (handlers) =>
+    handlers
+      .handleRaw("mutate", ({ request, headers }) =>
+        Effect.gen(function* () {
+          const { actorId, requestId } = yield* AdminContext;
+          const runtime = yield* RuntimeAdministration;
+          const command = yield* readApplicationJson(
+            request,
+            Schema.Struct({ command: RuntimeCommand }),
+          ).pipe(Effect.catch((error) => transportFailure(error, requestId)));
+          if (HttpServerResponse.isHttpServerResponse(command)) return command;
+          return yield* runtime
+            .mutate({ actorId, key: headers["idempotency-key"], command: command.command })
+            .pipe(
+              Effect.map((result) =>
+                HttpServerResponse.jsonUnsafe(result.body, {
+                  headers: {
+                    etag: `"${result.body.revision}"`,
+                    "x-request-id": requestId,
+                    ...(result.replayed ? { "idempotency-replayed": "true" } : {}),
+                  },
+                }),
+              ),
+              Effect.catchTag("DomainError", (error) => errorResponse(error.code, requestId)),
+            );
+        }),
+      )
+      .handleRaw("get", ({ params }) =>
+        Effect.gen(function* () {
+          const runtime = yield* RuntimeAdministration;
+          const { actorId } = yield* AdminContext;
+          return yield* adminRead(runtime.get(actorId, params.kind, params.id));
+        }),
+      )
+      .handleRaw("list", ({ params, query }) =>
+        Effect.gen(function* () {
+          const runtime = yield* RuntimeAdministration;
+          const { actorId } = yield* AdminContext;
+          return yield* adminRead(runtime.list(actorId, params.kind, query));
+        }),
+      )
+      .handleRaw("assignments", ({ params }) =>
+        Effect.gen(function* () {
+          const runtime = yield* RuntimeAdministration;
+          const { actorId } = yield* AdminContext;
+          return yield* adminRead(runtime.assignments(actorId, params.projectId));
+        }),
+      )
+      .handleRaw("audit", ({ params, query }) =>
+        Effect.gen(function* () {
+          const runtime = yield* RuntimeAdministration;
+          const { actorId } = yield* AdminContext;
+          return yield* adminRead(runtime.audit(actorId, params.kind, params.id, query));
+        }),
+      ),
 );

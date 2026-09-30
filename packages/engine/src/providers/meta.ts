@@ -82,9 +82,11 @@ const MetaCallbackSchema = Schema.Struct({
   object: Schema.Literal("whatsapp_business_account"),
   entry: Schema.Array(
     Schema.Struct({
+      id: Schema.NonEmptyString,
       changes: Schema.Array(
         Schema.Struct({
           value: Schema.Struct({
+            metadata: Schema.Struct({ phone_number_id: Schema.NonEmptyString }),
             statuses: Schema.optionalKey(Schema.Array(MetaStatusSchema)),
             messages: Schema.optionalKey(
               Schema.Array(
@@ -122,7 +124,9 @@ const constantTimeSignatureEqual = (provided: string, expectedHex: string): bool
 
 const authenticatePost = (
   input: CallbackInput,
-  config: MetaConfiguration,
+  config: Pick<MetaConfiguration, "appSecret" | "verifyToken" | "phoneNumberId"> & {
+    readonly businessAccountId: string;
+  },
 ): Effect.Effect<void, CallbackAuthenticationError> => {
   const signature = getHeader(input.headers, "x-hub-signature-256");
   if (signature === undefined) {
@@ -156,7 +160,9 @@ const normalizeStatus = (
 
 const decodeMetaEvents = (
   input: CallbackInput,
-  config: MetaConfiguration,
+  config: Pick<MetaConfiguration, "appSecret" | "verifyToken" | "phoneNumberId"> & {
+    readonly businessAccountId: string;
+  },
 ): Effect.Effect<CallbackResult, CallbackAuthenticationError | CallbackFormatError> =>
   Effect.gen(function* () {
     if (input.body.byteLength > 256 * 1024) {
@@ -173,6 +179,16 @@ const decodeMetaEvents = (
     const callback = yield* Schema.decodeUnknownEffect(MetaCallbackSchema)(value).pipe(
       Effect.mapError(() => new CallbackFormatError({ diagnosticCode: "invalid_body" })),
     );
+    if (
+      callback.entry.some(
+        (entry) =>
+          entry.id !== config.businessAccountId ||
+          entry.changes.some(
+            (change) => change.value.metadata.phone_number_id !== config.phoneNumberId,
+          ),
+      )
+    )
+      return yield* new CallbackAuthenticationError({ diagnosticCode: "invalid_signature" });
     const statuses = callback.entry.flatMap((entry) =>
       entry.changes.flatMap((change) => change.value.statuses ?? []),
     );
@@ -203,7 +219,9 @@ const decodeMetaEvents = (
 
 const callback = (
   input: CallbackInput,
-  config: MetaConfiguration,
+  config: Pick<MetaConfiguration, "appSecret" | "verifyToken" | "phoneNumberId"> & {
+    readonly businessAccountId: string;
+  },
 ): Effect.Effect<CallbackResult, CallbackAuthenticationError | CallbackFormatError> => {
   if (input.method === "GET") {
     const mode = input.query["hub.mode"];
@@ -234,7 +252,7 @@ const callback = (
 
 const send = (
   transport: HttpTransport,
-  config: MetaConfiguration,
+  config: Pick<MetaConfiguration, "accessToken" | "phoneNumberId" | "apiVersion">,
   input: ProviderSendInput,
 ): Effect.Effect<SendAccepted, ProviderSendError> =>
   Effect.gen(function* () {
@@ -320,17 +338,31 @@ const metadata = {
   idempotency: { supported: false },
 } as const;
 
-export const makeMetaDefinition = (
-  transport: HttpTransport = fetchTransport,
-): ProviderDefinition<MetaConfiguration, typeof MetaConfigurationSchema.Encoded> =>
+export const makeMetaDefinition = (transport: HttpTransport = fetchTransport): ProviderDefinition =>
   defineProvider({
     ...metadata,
-    configSchema: MetaConfigurationSchema,
-    templateSchema: MetaTemplateSchema,
-    create: (config) => ({
-      send: (input) => send(transport, config, input),
-      callback: (input) => callback(input, config),
+    schemaVersion: "1",
+    identitySchema: Schema.Struct({ businessAccountId: Schema.NonEmptyString }),
+    secretsSchema: Schema.Struct({ accessToken: MetaConfigurationSchema.fields.accessToken }),
+    callbackSecretsSchema: Schema.Struct({
+      appSecret: MetaConfigurationSchema.fields.appSecret,
+      verifyToken: MetaConfigurationSchema.fields.verifyToken,
     }),
+    executionSchema: Schema.Struct({
+      phoneNumberId: MetaConfigurationSchema.fields.phoneNumberId,
+      apiVersion: MetaConfigurationSchema.fields.apiVersion,
+    }),
+    templateSchema: MetaTemplateSchema,
+    callback:
+      ({ identity, callbackSecrets, execution }) =>
+      (input) =>
+        callback(input, { ...identity, ...callbackSecrets, ...execution }),
+    create: ({ identity, secrets, execution }) => {
+      const config = { ...identity, ...secrets, ...execution };
+      return {
+        send: (input) => send(transport, config, input),
+      };
+    },
   });
 
 export const MetaProvider = makeMetaDefinition();

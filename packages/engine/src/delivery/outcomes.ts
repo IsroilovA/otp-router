@@ -45,9 +45,13 @@ export const mergeLockedOutcome = (
     if (decision.suppressPending === "all") yield* suppressPendingAttempts(operation.id);
     else if (decision.suppressPending === "fallback")
       yield* suppressPendingAttempts(operation.id, "fallback");
-    if (decision.advance && (yield* intentEligible(delivery.intent_id))) {
+    if (
+      decision.advance &&
+      operation.snapshot.policy.fallback === "confirmed_failure" &&
+      (yield* intentEligible(delivery.intent_id))
+    ) {
       const next = nextProvider(
-        yield* availableProviders(config, operation, time),
+        yield* availableProviders(config, operation, time, delivery.intent_id),
         delivery.route_position,
       );
       if (

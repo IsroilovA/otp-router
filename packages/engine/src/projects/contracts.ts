@@ -20,6 +20,11 @@ export const AdminAction = Schema.Literals([
   "audit",
 ]);
 export const AdminPermissions = Schema.Struct({
+  runtimeActions: Schema.Array(
+    Schema.Literals(["read", "manage", "rotate", "policy", "assign", "audit"]),
+  ),
+  resourceIds: Schema.Array(Identifier),
+  resourcePrefixes: Schema.Array(Identifier),
   actions: Schema.Array(AdminAction),
   projectIds: Schema.Array(Identifier),
   creationPrefixes: Schema.Array(Identifier),
