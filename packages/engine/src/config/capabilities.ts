@@ -7,7 +7,7 @@ export const capabilityFingerprint = (
   createHash("sha256")
     .update(
       canonical({
-        selectors: Object.entries(config.selectors)
+        selectors: [...config.selectors]
           .map(([id, selector]) => ({ id, version: selector.version }))
           .toSorted((a, b) => a.id.localeCompare(b.id)),
         historyRetentionDays: config.settings.historyRetentionDays,

@@ -70,10 +70,7 @@ export const assertCapabilities = (config: RuntimeConfiguration, exclusiveRuntim
 const validateRetainedData = (config: RuntimeConfiguration, data: typeof ResourceData.Type) =>
   Effect.gen(function* () {
     if (data.kind === "policy") {
-      if (
-        data.settings.selectorId !== undefined &&
-        config.selectors[data.settings.selectorId] === undefined
-      )
+      if (data.settings.selectorId !== undefined && !config.selectors.has(data.settings.selectorId))
         return yield* Effect.fail(incompatible());
       return;
     }

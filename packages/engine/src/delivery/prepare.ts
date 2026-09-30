@@ -102,7 +102,9 @@ const selectRoute = (
   Effect.gen(function* () {
     const { input, recipient, locale, permitted } = options;
     const selector =
-      options.selectorId === undefined ? undefined : config.selectors[options.selectorId];
+      options.selectorId === undefined ? undefined : config.selectors.get(options.selectorId);
+    if (options.selectorId !== undefined && selector === undefined)
+      return yield* Effect.fail(new DomainError({ code: "temporarily_unavailable" }));
     const started = performance.now();
     const selected =
       selector === undefined

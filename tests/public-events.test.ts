@@ -58,7 +58,6 @@ const provider = (id: string) =>
     identity: { account: "fixture" },
     secrets: {},
     execution: { outcome: "accepted" },
-    callbackSecrets: { callbackSecret: "callback-secret" },
     templates: {},
   });
 let database: PostgresFixture | undefined;

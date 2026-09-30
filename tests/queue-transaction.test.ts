@@ -99,7 +99,6 @@ const configuration: Configuration = {
       identity: { account: "fixture" },
       secrets: {},
       execution: { outcome: "accepted" },
-      callbackSecrets: { callbackSecret: "secret" },
       templates: {},
     }),
   ],

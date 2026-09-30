@@ -106,7 +106,6 @@ beforeAll(async () => {
         identity: { account: "fixture" },
         secrets: {},
         execution: { outcome: "accepted" },
-        callbackSecrets: { callbackSecret: "callback-secret" },
         templates: {},
       }),
     ),

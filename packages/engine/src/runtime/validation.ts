@@ -73,7 +73,7 @@ const validatePolicy = (config: RuntimeConfiguration, policy: Policy) =>
       policy.resendCooldownSeconds >= policy.maxLifetimeSeconds ||
       (!policy.external && policy.managed === undefined) ||
       policy.manualProviderIds.some((id) => !policy.providerInstanceIds.includes(id)) ||
-      (policy.selectorId !== undefined && config.selectors[policy.selectorId] === undefined)
+      (policy.selectorId !== undefined && !config.selectors.has(policy.selectorId))
     )
       return yield* Effect.fail(invalidRuntime());
     if (

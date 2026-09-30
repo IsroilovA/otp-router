@@ -392,6 +392,22 @@ afterAll(async () => {
   await database?.close();
 });
 
+it.each(["toString", "constructor", "hasOwnProperty"])(
+  "rejects unregistered selector %s without creating a policy",
+  async (selectorId) => {
+    await expect(
+      mutate({
+        action: "create",
+        id: "r-missing-selector",
+        data: { kind: "policy", settings: { ...policy, selectorId } },
+      }),
+    ).rejects.toMatchObject({ code: "invalid_request" });
+    await expect(read("policy", "r-missing-selector")).rejects.toMatchObject({
+      code: "resource_not_found",
+    });
+  },
+);
+
 it("filters unauthorized steps without policy access implying provider access; validates and reserves identities", async () => {
   const instanceAudit = await Effect.runPromise(
     app().runtime.audit("admin", "instance", "r-first", {}),
@@ -661,6 +677,17 @@ it("keeps committed credentials and older callback keys through rotation, retire
   await expect(
     Effect.runPromise(callbacks.ingest(callbackRequest("r-first", work.attemptId, "callback-old"))),
   ).rejects.toMatchObject({ code: "unauthorized" });
+  // Revocation makes this ciphertext unusable even though reconciliation history remains.
+  await app().run(cleanupRuntimeSecrets(app().configuration));
+  const h = app();
+  expect(
+    await h.run(
+      rows(
+        Schema.Struct({ erased: Schema.Boolean }),
+        h.pg`SELECT ciphertext IS NULL AS erased FROM otp_router.account_secret_versions WHERE id = ${old.callbackVersion}`,
+      ),
+    ),
+  ).toEqual([{ erased: true }]);
 });
 
 it.each([

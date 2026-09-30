@@ -66,7 +66,6 @@ const provider = (id: string) =>
         identity: { account: "fixture" },
         secrets: {},
         execution: { outcome: "accepted" },
-        callbackSecrets: { callbackSecret: "fake-callback" },
         templates: {},
       }),
     ),

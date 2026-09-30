@@ -162,7 +162,6 @@ export interface ReadyProvider {
     localeCandidates: readonly Locale[],
   ) => Effect.Effect<ResolvedTemplate, TemplateResolutionError>;
   readonly send: (input: ProviderSendInput) => Effect.Effect<SendAccepted, ProviderSendError>;
-  readonly callback?: (input: CallbackInput) => Effect.Effect<CallbackResult, CallbackError>;
 }
 
 export class ProviderInstance extends Context.Service<ProviderInstance, ReadyProvider>()(
@@ -175,7 +174,6 @@ export interface ProviderMakeOptions {
   readonly sendTimeoutMs?: number;
   readonly identity: unknown;
   readonly secrets: unknown;
-  readonly callbackSecrets?: unknown;
   readonly execution: unknown;
   readonly templates: Readonly<Record<string, unknown>>;
 }
@@ -195,9 +193,11 @@ export interface ProviderDefinition {
   readonly defaultSendTimeoutMs: number;
   readonly diagnosticCodes: readonly string[];
   readonly idempotency: ProviderIdempotency;
-  readonly makeCallback: (
-    options: Pick<ProviderMakeOptions, "identity" | "callbackSecrets" | "execution">,
-  ) => Effect.Effect<
+  readonly makeCallback: (options: {
+    readonly identity: unknown;
+    readonly callbackSecrets: unknown;
+    readonly execution: unknown;
+  }) => Effect.Effect<
     ((input: CallbackInput) => Effect.Effect<CallbackResult, CallbackError>) | undefined,
     ProviderConfigurationError
   >;

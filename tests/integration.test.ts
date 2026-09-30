@@ -19,7 +19,10 @@ import { createChallenge } from "../packages/engine/src/challenges/create.js";
 import { decrypt, operationIdentity } from "../packages/engine/src/crypto.js";
 import { verifyChallenge } from "../packages/engine/src/challenges/verify.js";
 import { RouterConfig } from "../packages/engine/src/config/runtime.js";
-import { type RuntimeConfiguration } from "../packages/engine/src/config/config.js";
+import {
+  type RuntimeConfiguration,
+  type RoutingSelector,
+} from "../packages/engine/src/config/config.js";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { ingestEvents } from "../packages/engine/src/delivery/callbacks.js";
 import { requestDelivery } from "../packages/engine/src/challenges/deliver.js";
@@ -2192,28 +2195,28 @@ describe("PostgreSQL integration", () => {
 
   it("preserves an adapter handshake status, content type, and raw bytes over HTTP", async () => {
     const harness = currentRuntime();
-    const provider = harness.providers.get("fake-primary");
-    if (provider === undefined) throw new Error("Missing fake provider");
+    const adapter = harness.configuration.adapters.get("fake-primary");
+    if (adapter === undefined) throw new Error("Missing fake adapter");
     const bytes = new Uint8Array([0, 255, 128, 65]);
     const configuration = {
       ...harness.configuration,
-      adapters: fixtureAdapters(
-        new Map([
-          [
-            provider.instanceId,
-            {
-              ...provider,
-              callback: () =>
+      adapters: new Map([
+        [
+          adapter.id,
+          {
+            ...adapter,
+            makeCallback: () =>
+              Effect.succeed(() =>
                 Effect.succeed({
                   _tag: "Handshake" as const,
                   status: 202,
                   contentType: "application/octet-stream",
                   body: bytes,
                 }),
-            },
-          ],
-        ]),
-      ),
+              ),
+          },
+        ],
+      ]),
     };
     const webhooks = await harness.run(
       WebhookHandler.pipe(
@@ -2546,14 +2549,14 @@ describe("PostgreSQL integration", () => {
     const base = currentRuntime().configuration;
     const runFailure = async (
       operationKey: string,
-      selector: RuntimeConfiguration["selectors"][string]["select"],
+      selector: RoutingSelector,
       expectedCode: string,
       input: CreateInput = createInput(),
     ): Promise<void> => {
       const selected: RuntimeConfiguration = {
         ...base,
         settings: { ...base.settings, selectorTimeoutMs: 5 },
-        selectors: { default: { version: "1", select: selector } },
+        selectors: new Map([["default", { version: "1", select: selector }]]),
       };
       await updatePolicy({ selectorId: "default" }, selected);
       const result = await currentRuntime().run(
@@ -2624,19 +2627,22 @@ describe("PostgreSQL integration", () => {
     const config: RuntimeConfiguration = {
       ...base,
       adapters: fixtureAdapters(providers),
-      selectors: {
-        default: {
-          version: "1",
-          select: () =>
-            Effect.sync(() => {
-              selectorRuns += 1;
-              return {
-                _tag: "Route" as const,
-                providerInstanceIds: ["fake-primary", "fake-secondary"],
-              };
-            }),
-        },
-      },
+      selectors: new Map([
+        [
+          "default",
+          {
+            version: "1",
+            select: () =>
+              Effect.sync(() => {
+                selectorRuns += 1;
+                return {
+                  _tag: "Route" as const,
+                  providerInstanceIds: ["fake-primary", "fake-secondary"],
+                };
+              }),
+          },
+        ],
+      ]),
     };
     await updatePolicy(
       { selectorId: "default", defaultLocale: "en", fallbackLocales: ["ru", "en", "ru", "en"] },

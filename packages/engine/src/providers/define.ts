@@ -1,5 +1,8 @@
 import { Effect, Layer, type Schema } from "effect";
 import {
+  type CallbackInput,
+  type CallbackResult,
+  type CallbackError,
   ProviderConfigurationError,
   ProviderInstance,
   type ProviderDefinition,
@@ -14,7 +17,7 @@ import {
   validateTimeout,
 } from "./internal.js";
 
-type ProviderBehavior = Pick<ReadyProvider, "send" | "callback"> &
+type ProviderBehavior = Pick<ReadyProvider, "send"> &
   Partial<Pick<ReadyProvider, "resolveTemplate">>;
 
 type ProviderSpecification<A, AI, S, SI, C, CI, E, EI, T extends Schema.Json, TI> = Omit<
@@ -41,7 +44,7 @@ type ProviderSpecification<A, AI, S, SI, C, CI, E, EI, T extends Schema.Json, TI
     readonly identity: A;
     readonly callbackSecrets: C;
     readonly execution: E;
-  }) => NonNullable<ReadyProvider["callback"]>;
+  }) => (input: CallbackInput) => Effect.Effect<CallbackResult, CallbackError>;
 };
 
 const validConstraint = (value: number, minimum: number): boolean =>
@@ -124,18 +127,6 @@ export const defineProvider = <
         return {
           ...readyMetadata(specification, options, sendTimeoutMs),
           ...behavior,
-          ...(options.callbackSecrets === undefined || specification.callback === undefined
-            ? {}
-            : {
-                callback: specification.callback({
-                  identity,
-                  execution,
-                  callbackSecrets: yield* validateProviderConfiguration(
-                    specification.callbackSecretsSchema,
-                    options.callbackSecrets,
-                  ),
-                }),
-              }),
           resolveTemplate:
             behavior.resolveTemplate ??
             (schema === null ? resolveNoTemplate : makeTemplateResolver(schema, options.templates)),

@@ -71,7 +71,6 @@ const fakeConfig = (outcome: FakeOutcome) => ({
   identity: { account: "fake" },
   secrets: {},
   execution: { outcome },
-  callbackSecrets: { callbackSecret: "callback-secret" },
 });
 
 it.effect("normalizes every consequential fake send outcome", () =>
@@ -105,7 +104,11 @@ it.effect("normalizes every consequential fake send outcome", () =>
 
 it.effect("authenticates fake callback batches", () =>
   Effect.gen(function* () {
-    const provider = yield* build(FakeProvider, fakeConfig("accepted"));
+    const callback = yield* FakeProvider.makeCallback({
+      identity: { account: "fake" },
+      execution: { outcome: "accepted" },
+      callbackSecrets: { callbackSecret: "callback-secret" },
+    }).pipe(Effect.orDie);
 
     const body = encoder.encode(
       JSON.stringify({
@@ -118,7 +121,6 @@ it.effect("authenticates fake callback batches", () =>
         ],
       }),
     );
-    const callback = provider.callback;
     if (callback === undefined) throw new Error("Expected provider callback");
     const authenticated = yield* callback({
       body,
@@ -204,7 +206,6 @@ it.effect("does not retry a failed provider transport", () =>
     const config = {
       identity: { account: "telegram" },
       secrets: { apiToken: "telegram-secret" },
-      callbackSecrets: { apiToken: "telegram-secret" },
       execution: {},
     };
     const provider = yield* build(definition, config);
@@ -236,7 +237,6 @@ it.effect(
       const config = {
         identity: { account: "telegram" },
         secrets: { apiToken: "telegram-secret" },
-        callbackSecrets: { apiToken: "telegram-secret" },
         execution: { callbackUrl: "https://router.example/callbacks/telegram" },
       };
       const provider = yield* build(definition, config);
@@ -308,12 +308,15 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
     });
     const config = {
       identity: { account: "telegram" },
-      secrets: { apiToken: "telegram-secret" },
-      callbackSecrets: { apiToken: "telegram-secret" },
       execution: {},
     };
-    const provider = yield* build(definition, config);
-    const callback = provider.callback;
+    const callback = yield* definition
+      .makeCallback({
+        identity: config.identity,
+        execution: config.execution,
+        callbackSecrets: { apiToken: "telegram-secret" },
+      })
+      .pipe(Effect.orDie);
     if (callback === undefined) throw new Error("Expected provider callback");
     const timestamp = String(Math.floor(Date.now() / 1_000));
     const body = encoder.encode(
@@ -393,7 +396,6 @@ it.effect("maps one Meta authentication template send and verifies both callback
     const config = {
       identity: { businessAccountId: "business" },
       secrets: { accessToken: "meta-token" },
-      callbackSecrets: { appSecret: "meta-app-secret", verifyToken: "meta-verify" },
       execution: { phoneNumberId: "1234", apiVersion: "v23.0" },
     };
     const template = { name: "login_code", languageCode: "en_US", codeButtonIndex: 0 };
@@ -415,7 +417,13 @@ it.effect("maps one Meta authentication template send and verifies both callback
         ],
       },
     });
-    const callback = provider.callback;
+    const callback = yield* definition
+      .makeCallback({
+        identity: config.identity,
+        execution: config.execution,
+        callbackSecrets: { appSecret: "meta-app-secret", verifyToken: "meta-verify" },
+      })
+      .pipe(Effect.orDie);
     if (callback === undefined) throw new Error("Expected provider callback");
     const handshake = yield* callback({
       body: new Uint8Array(),
@@ -511,7 +519,6 @@ it.effect(
       const config = {
         identity: { username: "play-user" },
         secrets: { password: "play-password" },
-        callbackSecrets: {},
         execution: { originator: "3700" },
       };
       const provider = yield* build(definition, config, { en: { text: "Code: {{code}}" } });
@@ -571,7 +578,6 @@ it.effect("caps Telegram delivery TTL by saved settings and remaining lifetime",
     const config = {
       identity: { account: "telegram" },
       secrets: { apiToken: "token" },
-      callbackSecrets: { apiToken: "token" },
       execution: { deliveryTtlSeconds: 45 },
     };
     const provider = yield* build(definition, config);
@@ -612,7 +618,6 @@ it.effect("reconciles Meta lost responses with authenticated echoed attempt refe
     const config = {
       identity: { businessAccountId: "business" },
       secrets: { accessToken: "token" },
-      callbackSecrets: { appSecret: "secret", verifyToken: "verify" },
       execution: { phoneNumberId: "123", apiVersion: "v23.0" },
     };
     const template = { name: "auth", languageCode: "en", codeButtonIndex: 0 };
@@ -626,7 +631,13 @@ it.effect("reconciles Meta lost responses with authenticated echoed attempt refe
       Schema.Struct({ biz_opaque_callback_data: AttemptIdSchema }),
     )(JSON.parse(decode(requests[0]?.body ?? new Uint8Array())) as unknown);
     expect(sent.biz_opaque_callback_data).toBe(attemptId);
-    const callback = provider.callback;
+    const callback = yield* definition
+      .makeCallback({
+        identity: config.identity,
+        execution: config.execution,
+        callbackSecrets: { appSecret: "secret", verifyToken: "verify" },
+      })
+      .pipe(Effect.orDie);
     if (callback === undefined) return yield* Effect.die("Meta callback missing");
     for (const status of ["delivered", "failed"]) {
       const body = encoder.encode(
@@ -703,7 +714,6 @@ it.effect("maps documented Meta rejections but preserves internal and unknown un
     const config = {
       identity: { businessAccountId: "business" },
       secrets: { accessToken: "token" },
-      callbackSecrets: { appSecret: "secret", verifyToken: "verify" },
       execution: { phoneNumberId: "123", apiVersion: "v23.0" },
     };
     const template = { name: "auth", languageCode: "en", codeButtonIndex: 0 };

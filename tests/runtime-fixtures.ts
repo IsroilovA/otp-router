@@ -54,7 +54,7 @@ export const fixtureAdapters = (
         callbackSecretsSchema: Schema.Struct({}),
         executionSchema: Schema.Struct({}),
         templateSchema: null,
-        makeCallback: () => Effect.succeed(provider.callback),
+        makeCallback: () => Effect.succeed(undefined),
         make: (options) =>
           Layer.succeed(ProviderInstance, {
             ...provider,

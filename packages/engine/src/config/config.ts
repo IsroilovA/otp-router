@@ -74,8 +74,9 @@ export interface RuntimeConfiguration {
   readonly authorizer?: Context.Service.Shape<typeof SendAuthorizer>;
   readonly settings: Settings;
   readonly adapters: ReadonlyMap<string, ProviderDefinition>;
-  readonly selectors: Readonly<
-    Record<string, { readonly version: string; readonly select: RoutingSelector }>
+  readonly selectors: ReadonlyMap<
+    string,
+    { readonly version: string; readonly select: RoutingSelector }
   >;
 }
 export const ConfigurationReason = Schema.Literals([
@@ -156,7 +157,7 @@ export const loadConfiguration = (configuration: Configuration) =>
     const runtime = {
       settings,
       adapters,
-      selectors: configuration.selectors ?? {},
+      selectors: new Map(Object.entries(configuration.selectors ?? {})),
       ...(authorizer === undefined ? {} : { authorizer }),
     };
     return {

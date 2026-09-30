@@ -50,7 +50,6 @@ const provider = Layer.effect(
       identity: { account: "fixture" },
       secrets: {},
       execution: { outcome: "accepted" },
-      callbackSecrets: { callbackSecret: "fake-callback" },
       templates: {},
     }),
   ),
