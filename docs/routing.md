@@ -57,6 +57,6 @@ Late delivery evidence can change active challenges but cannot alter a terminal 
 
 The same eligibility, evidence, quota, and fallback rules apply to external-code operations and managed challenges. A prepared operation cannot send until attachment. Policy settings bound external deadlines and managed lifetimes; see [configuration](configuration.md#policies). Attachment and dispatch both check the fixed deadline, and every saved provider must accept the code format and length.
 
-Within a project, new operations and accepted user sends share recipient admission: one per 30 seconds, alongside rolling creation/send budgets. Dispatch extends that recipient cooldown. Automatic confirmed-failure fallback never waits for it. Recipient/project/provider/deployment send reservations are shared across capabilities under the [configured limit scopes](projects.md#limit-scopes) and retain uncertain or failed dispatched attempts.
+Within a project, new operations and accepted user sends share recipient admission: one per 30 seconds, alongside rolling creation/send budgets. Dispatch extends that recipient cooldown. Automatic confirmed-failure fallback never waits for it. Recipient/project/provider/deployment send reservations are shared across capabilities under the [configured limit scopes](projects.md#limits-and-history) and retain uncertain or failed dispatched attempts.
 
 Routing exhaustion alone does not close an external operation. Its caller ends the flow through the [external lifecycle](engine.md#external-delivery).

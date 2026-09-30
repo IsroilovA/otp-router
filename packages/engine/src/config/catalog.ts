@@ -9,6 +9,8 @@ export const catalogFingerprint = (config: Omit<RuntimeConfiguration, "catalogFi
         selectors: Object.keys(config.selectors).toSorted(),
         defaultLocale: config.settings.defaultLocale,
         fallbackLocales: config.settings.fallbackLocales,
+        historyRetentionDays: config.settings.historyRetentionDays,
+        webhook: config.settings.webhook !== undefined,
         deploymentSendLimit15m: config.settings.deploymentSendLimit15m,
         deploymentSendLimit24h: config.settings.deploymentSendLimit24h,
         providerSendLimits15m: config.settings.providerSendLimits15m,
