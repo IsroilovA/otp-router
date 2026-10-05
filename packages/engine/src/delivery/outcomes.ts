@@ -1,4 +1,3 @@
-import { intentEligible } from "../projects/store.js";
 import { suppressPendingAttempts, transitionAttempts } from "./attempts.js";
 import { appendEvidence } from "./evidence.js";
 import { changed } from "./changes.js";
@@ -9,7 +8,7 @@ import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";
 import { expire, findOperation, findAttempt } from "./store.js";
 import type { Operation, Attempt } from "./records.js";
-import { availableProviders, nextProvider } from "./eligibility.js";
+import { availableProviders, intentEligible, nextProvider } from "./eligibility.js";
 import { schedule } from "./schedule.js";
 import { decideOutcome, type Outcome } from "./decision.js";
 
@@ -45,9 +44,13 @@ export const mergeLockedOutcome = (
     if (decision.suppressPending === "all") yield* suppressPendingAttempts(operation.id);
     else if (decision.suppressPending === "fallback")
       yield* suppressPendingAttempts(operation.id, "fallback");
-    if (decision.advance && (yield* intentEligible(delivery.intent_id))) {
+    if (
+      decision.advance &&
+      operation.snapshot.policy.fallback === "confirmed_failure" &&
+      (yield* intentEligible(delivery.intent_id))
+    ) {
       const next = nextProvider(
-        yield* availableProviders(config, operation, time),
+        yield* availableProviders(config, operation, time, delivery.intent_id),
         delivery.route_position,
       );
       if (

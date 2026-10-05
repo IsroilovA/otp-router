@@ -1,4 +1,4 @@
-import { assertCatalog } from "./catalog.js";
+import { assertCapabilities } from "../config/deployment.js";
 import { transaction } from "../database/transaction.js";
 import { Effect, Layer, Schema } from "effect";
 import { SqlClient } from "effect/unstable/sql";
@@ -25,7 +25,7 @@ export const ProjectsLive = Layer.effect(
         ),
       );
     const read = <A, E>(effect: Effect.Effect<A, E, SqlClient.SqlClient>) =>
-      run(transaction(assertCatalog(config).pipe(Effect.andThen(effect))));
+      run(transaction(assertCapabilities(config).pipe(Effect.andThen(effect))));
     const pageInput = (input: typeof PageInput.Type) =>
       Schema.decodeUnknownEffect(PageInput)(input, { onExcessProperty: "error" }).pipe(
         Effect.mapError(() => new DomainError({ code: "invalid_request" })),

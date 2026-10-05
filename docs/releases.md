@@ -19,11 +19,20 @@ Versions below `1.0.0` may break compatibility. Release notes must identify supp
 
 ## Pending breaking replacement
 
-Server `0.1.0` and client `0.1.0` target each other and replace published `server-v0.0.1` / `client-v0.0.1`. Projects, settings, and backend grants move from deployment configuration to the administration API. Remove the old project catalog and principal `projectIds`; configure administrator credentials, principal identities, and administration ceilings, then provision projects through the new API. Engine calls now carry authenticated principal IDs. There are no aliases or compatibility paths.
+Server `0.2.0` and client `0.2.0` target each other and replace published `server-v0.1.0` / `client-v0.1.0` and earlier releases. These source versions prepare the replacement; merging, artifact publication, and deployment are separate actions.
 
-This release requires a separate fresh database; follow the [database procedure](operations.md#database-upgrades). Old databases are rejected by baseline identity even at the same migration number. These source changes prepare versions only; merging, publishing artifacts, and deployment remain separate actions.
+Use a separate fresh database and follow the [database replacement procedure](operations.md#database-upgrades), including retention of the old deployment's data and keys. No migration, import, or backfill is supplied.
 
-Optional `integrationReference` support is included in this breaking pair and initial router baseline. Earlier development databases are incompatible as well. Update server, client, and strict authorization/event consumers together: accept the optional field in authorization requests, operation/challenge and verification responses, operation/attempt history, and supported events. Preserve omission when absent and use attempt IDs for authorization reservations. Review [correlation privacy and retention](api.md#integration-correlation); pg-boss migration history is unchanged.
+Update host runtimes to Node.js 26.10.0 or newer and use the pinned pnpm version. Client packaging and publication use npm 12.2.0. The container now uses Node 26 on Debian Trixie; PostgreSQL images are pinned to 18.6.
+
+Update integrations together:
+
+- Remove the deployment project catalog and principal `projectIds`. Configure administrator credentials, backend principal identities, and administration ceilings; provision projects and grants through [project administration](projects.md). Direct engine calls must supply the authenticated principal ID.
+- Remove static provider and policy catalogs. Register installed adapters and versioned selectors, configure runtime administration permissions, and provision accounts, credentials, instances, policies, and assignments through [runtime administration](runtime-configuration.md). Custom adapters must implement [provider contract version 2](plugins.md#providers), with separate account identity, send secrets, callback secrets, execution settings, and templates.
+- Update runtime command consumers to the [current schemas](../packages/engine/src/runtime/contracts.ts). Commands constrain payloads to resource kinds; account grants require `allInstances: true`, and allowance scopes support limit edits without lifecycle commands or lifecycle metadata.
+- Update strict authorization and event consumers for the optional [integration reference](api.md#integration-correlation). Preserve its presence and exact value on retries, and continue using attempt IDs for reservation identity.
+
+Workspace integrations import history services and contracts from `@otp-router/engine/history`. The former history exports from `@otp-router/engine/delivery` and authentication exports from `@otp-router/server/api` are removed without aliases. Update source imports directly. This module reorganization does not change the HTTP contract or database baseline.
 
 ## Changelog
 
@@ -58,13 +67,14 @@ Use [npm's setup guide](https://docs.npmjs.com/trusted-publishers/) or [trust co
 Before merging:
 
 ```sh
+npm install --global npm@12.2.0
 pnpm install --frozen-lockfile
 pnpm check
 pnpm test
 pnpm --filter @otp-router/client pack:check
 ```
 
-Confirm CI passes on Node 24/26 and image smoke tests pass on Linux amd64/arm64. Confirm npm trusted publishing and GHCR access are configured. Tests use fake or mocked providers; live delivery requires [provider validation](provider-setup.md).
+Confirm CI passes on Node 26.10.0 and image smoke tests pass on Linux amd64/arm64. Confirm npm trusted publishing and GHCR access are configured. Tests use fake or mocked providers; live delivery requires [provider validation](provider-setup.md).
 
 For each published component, verify its Release and artifacts: server assets and anonymous image pulls, or client installation in a clean project. Confirm registry channel tags resolve to the intended versions.
 

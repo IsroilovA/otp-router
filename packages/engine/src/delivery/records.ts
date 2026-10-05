@@ -1,3 +1,4 @@
+import { InstanceSettings, Policy } from "../runtime/contracts.js";
 import { Schema } from "effect";
 import { Ciphertext, Digest } from "../crypto.js";
 import { Snapshot } from "./contracts.js";
@@ -15,17 +16,24 @@ export const SavedProvider = Schema.Struct({
   providerInstanceId: Schema.String,
   label: Schema.String,
   pluginId: Schema.String,
-  contractVersion: Schema.Literal(1),
+  contractVersion: Schema.Literal(2),
   channel: Schema.String,
   resolvedLocale: Schema.String,
   template: Schema.Json,
   sendTimeoutMs: Schema.Number,
   minDeliveryWindowMs: Schema.Number,
-  compatibilityRevision: Schema.String,
+  accountId: Schema.String,
+  instanceRevision: Schema.Int,
+  executionSettings: InstanceSettings,
+  minCodeLength: Schema.Int,
+  maxCodeLength: Schema.Int,
   manualSelectionAllowed: Schema.Boolean,
 });
 export type SavedProvider = typeof SavedProvider.Type;
 export const PolicySnapshot = Schema.Struct({
+  policyId: Schema.String,
+  policyRevision: Schema.Int,
+  policy: Policy,
   authorizationRequired: Schema.Boolean,
   maxSends: Schema.Int,
   resendCooldownSeconds: Schema.Int,

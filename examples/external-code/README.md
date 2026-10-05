@@ -4,7 +4,7 @@ For server integration, start with the [HTTP walkthrough](../http/README.md). Th
 
 ```sh
 pnpm build
-docker run --rm -d --name otp-external-demo -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=demo postgres:18
+docker run --rm -d --name otp-external-demo -p 127.0.0.1:55432:5432 -e POSTGRES_PASSWORD=demo postgres:18.6
 DATABASE_URL=postgres://postgres:demo@127.0.0.1:55432/postgres node examples/external-code/run.ts
 docker rm -f otp-external-demo
 ```

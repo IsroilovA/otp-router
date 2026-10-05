@@ -273,22 +273,37 @@ const metadata = {
 
 export const makeTelegramDefinition = (
   transport: HttpTransport = fetchTransport,
-): ProviderDefinition<TelegramConfiguration, typeof TelegramConfigurationSchema.Encoded> =>
+): ProviderDefinition =>
   defineProvider({
     ...metadata,
-    configSchema: TelegramConfigurationSchema,
-    templateSchema: null,
-    create: (config) => ({
-      resolveTemplate: (candidates) =>
-        resolveNoTemplate(candidates).pipe(
-          Effect.map(({ locale }) => ({
-            locale,
-            template: { deliveryTtlSeconds: config.deliveryTtlSeconds },
-          })),
-        ),
-      send: (input) => send(transport, config, input),
-      callback: (input) => callbackEvent(input, config),
+    schemaVersion: "1",
+    identitySchema: Schema.Struct({ account: Schema.NonEmptyString }),
+    secretsSchema: Schema.Struct({ apiToken: TelegramConfigurationSchema.fields.apiToken }),
+    callbackSecretsSchema: Schema.Struct({ apiToken: TelegramConfigurationSchema.fields.apiToken }),
+    executionSchema: Schema.Struct({
+      deliveryTtlSeconds: TelegramConfigurationSchema.fields.deliveryTtlSeconds,
+      senderUsername: TelegramConfigurationSchema.fields.senderUsername,
+      callbackUrl: TelegramConfigurationSchema.fields.callbackUrl,
+      callbackMaxAgeSeconds: TelegramConfigurationSchema.fields.callbackMaxAgeSeconds,
     }),
+    templateSchema: null,
+    callback:
+      ({ identity, callbackSecrets, execution }) =>
+      (input) =>
+        callbackEvent(input, { ...identity, ...callbackSecrets, ...execution }),
+    create: ({ identity, secrets, execution }) => {
+      const config = { ...identity, ...secrets, ...execution };
+      return {
+        resolveTemplate: (candidates) =>
+          resolveNoTemplate(candidates).pipe(
+            Effect.map(({ locale }) => ({
+              locale,
+              template: { deliveryTtlSeconds: config.deliveryTtlSeconds },
+            })),
+          ),
+        send: (input) => send(transport, config, input),
+      };
+    },
   });
 
 export const TelegramProvider = makeTelegramDefinition();

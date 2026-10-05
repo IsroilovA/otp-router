@@ -10,20 +10,16 @@ API_KEY=$(node --env-file=.env -p 'process.env.OTP_ROUTER_API_KEY')
 new_key() { node -p 'require("node:crypto").randomUUID()'; }
 ```
 
-## Provision the project
+## Provision the project and route
 
-Use a separate administrator credential. Keep the creation key and payload unchanged on retries. The response carries the project ETag; subsequent settings, lifecycle, and grant changes require that value in `If-Match`.
+Run the [administration example](../admin/README.md) to create the demo project and backend grant, fake provider account and instance, `login` policy, and their assignments. Creating the project alone is insufficient to send.
 
 ```sh
-ADMIN_KEY=$(node --env-file=.env -p 'process.env.OTP_ROUTER_ADMIN_KEY')
-curl -fsS -D - -X POST "$BASE/v1/admin/projects" \
-  -H "Authorization: Bearer $ADMIN_KEY" -H 'Content-Type: application/json' \
-  -H 'Idempotency-Key: provision-demo-v1' \
-  --data-binary '{"id":"demo","settings":{"authorizationRequired":false,"sendLimit15m":100,"sendLimit24h":1000},"principalIds":["backend"]}'
-unset ADMIN_KEY
+pnpm build
+node --env-file=.env examples/admin/run.ts
 ```
 
-This matches the TypeScript [administration example](../admin/run.ts). Use `authorizationRequired: true` for the authorized configuration, including all retries.
+The script uses the separate `OTP_ROUTER_ADMIN_KEY` and stable request keys, so unchanged provisioning requests can be replayed. For the authorized configuration, set `OTP_ROUTER_PROJECT_AUTHORIZATION=required` before provisioning and preserve it on retries. Project mutation and ETag rules are documented in [administration contracts](../../docs/api.md#administration).
 
 ## Managed verification
 

@@ -1,8 +1,8 @@
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index c04203536be4b3cb91cac20ce8b65c66f512a11a..f749469c39e1ad9f3bb4f1d6620940beee433335 100644
+index ed848551edce4ee0629e70666b9cdffc33b0a143..b3531d82b8df105cff2cb294cf1f8904a4721767 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
-@@ -1310,3 +1310,28 @@ export type PgBossEventMap = {
+@@ -1341,3 +1341,29 @@ export type PgBossEventMap = {
      flow: [data: FlowEvent];
  };
  //# sourceMappingURL=types.d.ts.map
@@ -13,6 +13,7 @@ index c04203536be4b3cb91cac20ce8b65c66f512a11a..f749469c39e1ad9f3bb4f1d6620940be
 +  noDeferrableConstraints?: boolean;
 +  noAdvisoryLocks?: boolean;
 +  noCoveringIndexes?: boolean;
++  inlineTableIndexes?: boolean;
 +  noAddColumnBackfill?: boolean;
 +  noListenNotify?: boolean;
 +  noIndexProgressView?: boolean;

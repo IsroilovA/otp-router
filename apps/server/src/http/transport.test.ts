@@ -13,7 +13,7 @@ import {
   type VerifyInput,
 } from "@otp-router/engine/challenges";
 import { makeWebHandler } from "./transport.js";
-import { WebhookError, WebhookHandler } from "./webhooks.js";
+import { WebhookError, WebhookHandler } from "./callbacks/contracts.js";
 
 const API_KEY = "test-api-key-with-at-least-thirty-two-bytes";
 
@@ -123,6 +123,13 @@ describe("HTTP transport", () => {
       webhookBodyLimitBytes: 64,
     },
     {
+      runtime: {
+        mutate: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+        get: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+        list: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+        audit: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+        assignments: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
+      },
       projects: {
         mutate: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),
         get: () => Effect.fail(new DomainError({ code: "admin_forbidden" })),

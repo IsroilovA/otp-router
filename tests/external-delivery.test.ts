@@ -1,9 +1,10 @@
+import type { FixtureConfiguration as Configuration } from "./fixture.js";
 import { recoverDispatches } from "../packages/engine/src/delivery/recovery.js";
 import { cleanup } from "../packages/engine/src/maintenance.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
-import { WebhookError } from "../apps/server/src/http/webhooks.js";
+import { WebhookError } from "../apps/server/src/http/callbacks/contracts.js";
 import { randomUUID } from "node:crypto";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { beforeAll, afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   FakeProvider,
@@ -11,7 +12,7 @@ import {
   ProviderInstanceIdSchema,
   type ProviderSendInput,
 } from "../packages/engine/src/providers/index.js";
-import type { Configuration } from "../packages/engine/src/config/config.js";
+
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { dispatch, dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
 import { DeliveryJob, deliveryQueue } from "../packages/engine/src/queue/contracts.js";
@@ -45,9 +46,10 @@ const provider = Layer.effect(
   Layer.provide(
     FakeProvider.make({
       instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake"),
-      enabled: true,
-      compatibilityRevision: "external-tests",
-      config: { outcome: "accepted", callbackSecret: Redacted.make("fake-callback") },
+      revision: "external-tests",
+      identity: { account: "fixture" },
+      secrets: {},
+      execution: { outcome: "accepted" },
       templates: {},
     }),
   ),
@@ -60,20 +62,34 @@ const configuration: Configuration = {
       fingerprint: ring(3),
       recipientKey: Buffer.alloc(32, 4).toString("base64url"),
     },
-    defaultLocale: "en",
-    fallbackLocales: [],
-    policies: {
-      external: {
-        providerInstanceIds: ["fake"],
-        maxLifetimeSeconds: 900,
-        manualSelectionEnabled: true,
-      },
-    },
-    purposes: { login: ["external"] },
     administration: {
       principalIds: ["backend"],
       administrators: {
         admin: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: [
             "create",
             "read",
@@ -100,7 +116,19 @@ const configuration: Configuration = {
     deploymentSendLimit15m: 10,
     deploymentSendLimit24h: 20,
   },
-  providers: [provider],
+  fixtures: {
+    defaultLocale: "en",
+    fallbackLocales: [],
+    policies: {
+      external: {
+        providerInstanceIds: ["fake"],
+        maxLifetimeSeconds: 900,
+        manualSelectionEnabled: true,
+      },
+    },
+    purposes: { login: ["external"] },
+  },
+  providerFixtures: [provider],
 };
 let database: PostgresFixture | undefined;
 let runtime: IntegrationRuntime | undefined;
@@ -148,7 +176,7 @@ const runQueued = async () => {
   const jobs = await app().queue.fetch(deliveryQueue, { batchSize: 10 });
   for (const job of jobs) {
     await app().run(dispatch(app().configuration, Schema.decodeUnknownSync(DeliveryJob)(job.data)));
-    await app().queue.complete(deliveryQueue, job.id);
+    await app().queue.complete(deliveryQueue, job);
   }
 };
 beforeAll(async () => {
@@ -281,12 +309,34 @@ describe("independent durable external code delivery", () => {
       ...configuration,
       settings: {
         ...configuration.settings,
-        policies: {},
-        purposes: {},
         administration: {
           principalIds: ["backend"],
           administrators: {
             admin: {
+              runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+              resourceIds: [],
+              resourcePrefixes: [
+                "restricted",
+                "managed",
+                "external",
+                "benchmark",
+                "fault",
+                "fake",
+                "primary",
+                "secondary",
+                "first",
+                "second",
+                "login",
+                "default",
+                "demo",
+                "process",
+                "text",
+                "scope",
+                "account",
+                "telegram",
+                "whatsapp",
+                "sms",
+              ],
               actions: [
                 "create",
                 "read",
@@ -311,7 +361,7 @@ describe("independent durable external code delivery", () => {
           authorizationFloor: false,
         },
       },
-      providers: [],
+      providerFixtures: configuration.providerFixtures,
     });
     runtime = h;
     try {
@@ -435,15 +485,34 @@ describe("independent durable external code delivery", () => {
         ...configuration.settings,
         crypto: { ...configuration.settings.crypto, verification: ring(2) },
         recipientSendLimit15m: 1,
-        policies: {
-          external: { providerInstanceIds: ["fake"], maxLifetimeSeconds: 900 },
-          managed: { providerInstanceIds: ["fake"], managed: {} },
-        },
-        purposes: { login: ["external", "managed"] },
         administration: {
           principalIds: ["backend"],
           administrators: {
             admin: {
+              runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+              resourceIds: [],
+              resourcePrefixes: [
+                "restricted",
+                "managed",
+                "external",
+                "benchmark",
+                "fault",
+                "fake",
+                "primary",
+                "secondary",
+                "first",
+                "second",
+                "login",
+                "default",
+                "demo",
+                "process",
+                "text",
+                "scope",
+                "account",
+                "telegram",
+                "whatsapp",
+                "sms",
+              ],
               actions: [
                 "create",
                 "read",
@@ -467,6 +536,17 @@ describe("independent durable external code delivery", () => {
           },
           authorizationFloor: false,
         },
+      },
+      fixtures: {
+        policies: {
+          external: {
+            providerInstanceIds: ["fake"],
+            maxLifetimeSeconds: 900,
+            manualSelectionEnabled: true,
+          },
+          managed: { providerInstanceIds: ["fake"], managed: {} },
+        },
+        purposes: { login: ["external", "managed"] },
       },
     });
     runtime = h;
@@ -596,6 +676,7 @@ describe("independent durable external code delivery", () => {
       },
       {
         projects: h.projects,
+        runtime: h.runtime,
         router: h.router,
         delivery: h.delivery,
         history: h.history,

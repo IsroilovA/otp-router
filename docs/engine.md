@@ -22,3 +22,7 @@ Use the optional [integration reference](api.md#integration-correlation) to corr
 Follow the [deployment requirements](operations.md) for workers, readiness, and shutdown.
 
 Use [public events](webhooks.md) for committed changes, status reads for snapshots, and [attempt history](history.md) for complete retained evidence and feed reconciliation. Replayed results may describe an earlier state; follow [idempotency](api.md#idempotency). Operational recovery follows the [operations guide](operations.md).
+
+## Runtime administration
+
+`@otp-router/engine/runtime` exports the `RuntimeAdministration` service and validated contracts. `makeEngineLayer` supplies it alongside project administration and delivery. Follow [runtime ownership and dispatch guarantees](runtime-configuration.md).

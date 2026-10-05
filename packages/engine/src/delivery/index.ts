@@ -24,11 +24,3 @@ export {
 } from "./authorization-contracts.js";
 
 export { AttemptEvent, EvidenceEvent, AttemptSnapshot } from "./history-contracts.js";
-export {
-  DeliveryHistory,
-  HistoryEvent,
-  EventPage,
-  AttemptPage,
-  OperationPage,
-  PageInput,
-} from "../notifications/history-contracts.js";

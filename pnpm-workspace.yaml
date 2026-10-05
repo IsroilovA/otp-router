@@ -4,7 +4,49 @@ packages:
   - examples/custom-adapter
 allowBuilds:
   '@parcel/watcher': false
-  esbuild: true
   msgpackr-extract: false
+minimumReleaseAgeExclude:
+  - '@biomejs/biome@2.5.15'
+  - '@biomejs/cli-darwin-arm64@2.5.15'
+  - '@biomejs/cli-darwin-x64@2.5.15'
+  - '@biomejs/cli-linux-arm64-musl@2.5.15'
+  - '@biomejs/cli-linux-arm64@2.5.15'
+  - '@biomejs/cli-linux-x64-musl@2.5.15'
+  - '@biomejs/cli-linux-x64@2.5.15'
+  - '@biomejs/cli-win32-arm64@2.5.15'
+  - '@biomejs/cli-win32-x64@2.5.15'
+  - '@effect/tsgo-darwin-arm64@0.47.1'
+  - '@effect/tsgo-darwin-x64@0.47.1'
+  - '@effect/tsgo-linux-arm64@0.47.1'
+  - '@effect/tsgo-linux-arm@0.47.1'
+  - '@effect/tsgo-linux-x64@0.47.1'
+  - '@effect/tsgo-win32-arm64@0.47.1'
+  - '@effect/tsgo-win32-x64@0.47.1'
+  - '@effect/tsgo@0.47.1'
+  - '@rolldown/binding-android-arm-eabi@1.2.12'
+  - '@rolldown/binding-android-arm64@1.2.12'
+  - '@rolldown/binding-darwin-arm64@1.2.12'
+  - '@rolldown/binding-darwin-x64@1.2.12'
+  - '@rolldown/binding-freebsd-x64@1.2.12'
+  - '@rolldown/binding-linux-arm-gnueabihf@1.2.12'
+  - '@rolldown/binding-linux-arm64-gnu@1.2.12'
+  - '@rolldown/binding-linux-arm64-musl@1.2.12'
+  - '@rolldown/binding-linux-ppc64-gnu@1.2.12'
+  - '@rolldown/binding-linux-s390x-gnu@1.2.12'
+  - '@rolldown/binding-linux-x64-gnu@1.2.12'
+  - '@rolldown/binding-linux-x64-musl@1.2.12'
+  - '@rolldown/binding-openharmony-arm64@1.2.12'
+  - '@rolldown/binding-win32-arm64-msvc@1.2.12'
+  - '@rolldown/binding-win32-x64-msvc@1.2.12'
+  - '@vitest/mocker@5.0.3'
+  - '@vitest/spy@5.0.3'
+  - pg-boss@12.35.1
+  - pg-cloudflare@1.4.1
+  - pg-connection-string@2.14.1
+  - pg-protocol@1.16.1
+  - pg@8.23.1
+  - rolldown@1.2.12
+  - vitest@5.0.3
 patchedDependencies:
-  pg-boss@12.33.2: patches/pg-boss@12.33.2.patch
+  # Restore declarations omitted from the published package; copied from its matching source tag.
+  pg-boss@12.35.1: patches/pg-boss@12.35.1.patch

@@ -179,13 +179,22 @@ const metadata = {
 
 export const FakeProvider = defineProvider({
   ...metadata,
-  configSchema: FakeConfigurationSchema,
+  schemaVersion: "1",
+  identitySchema: Schema.Struct({ account: Schema.NonEmptyString }),
+  secretsSchema: Schema.Struct({}),
+  callbackSecretsSchema: Schema.Struct({
+    callbackSecret: FakeConfigurationSchema.fields.callbackSecret,
+  }),
+  executionSchema: Schema.Struct({ outcome: FakeConfigurationSchema.fields.outcome }),
   templateSchema: null,
-  create: (config) => ({
+  callback:
+    ({ callbackSecrets }) =>
+    (input) =>
+      decodeCallback(input, Redacted.value(callbackSecrets.callbackSecret)),
+  create: ({ execution }) => ({
     send: (input) =>
       validateSendInput(input, constraints).pipe(
-        Effect.andThen(sendForOutcome(config.outcome, `fake:${input.attemptId}`)),
+        Effect.andThen(sendForOutcome(execution.outcome, `fake:${input.attemptId}`)),
       ),
-    callback: (input) => decodeCallback(input, Redacted.value(config.callbackSecret)),
   }),
 });

@@ -26,19 +26,14 @@ const readOperation = (id: string, lock: boolean, project?: { readonly id: strin
     const values = yield* rows(
       Operation,
       sql`
-      SELECT o.*,
+      SELECT o.id,o.project_id,o.integration_reference,o.owner,o.purpose,o.context_id,o.recipient_token,o.policy_id,
+        o.state,o.created_at,o.expires_at,o.terminal_at,o.history_updated_at,o.public_revision,o.public_snapshot,
+        o.processing_started,o.routing_revision,o.automatic_stopped,o.recipient_invalid,o.current_attempt_id,
+        o.initial_position,o.next_user_send_at,
         (SELECT count(*)::int FROM otp_router.delivery_attempts a
           WHERE a.operation_id = o.id AND a.committed_at IS NOT NULL) AS send_count,
-        jsonb_build_object('authorizationRequired',o.authorization_required,
-          'maxSends',o.max_sends,'resendCooldownSeconds',o.resend_cooldown_seconds,
-          'manualSelectionEnabled',o.manual_selection_enabled,
-          'providers',(SELECT jsonb_agg(jsonb_build_object(
-            'providerInstanceId',r.provider_instance_id,'label',r.label,'pluginId',r.plugin_id,
-            'contractVersion',r.contract_version,'channel',r.channel,'resolvedLocale',r.resolved_locale,
-            'template',r.template,'sendTimeoutMs',r.send_timeout_ms,'minDeliveryWindowMs',r.min_delivery_window_ms,
-            'compatibilityRevision',r.compatibility_revision,'manualSelectionAllowed',r.manual_selection_allowed
-          ) ORDER BY r.position) FROM otp_router.operation_route_steps r WHERE r.operation_id = o.id)) AS snapshot
-      FROM otp_router.delivery_operations o WHERE o.id = ${id} ${owned}`,
+        s.snapshot
+      FROM otp_router.delivery_operations o JOIN otp_router.operation_snapshots s ON s.id = o.id WHERE o.id = ${id} ${owned}`,
     );
     const operation = values[0];
     if (operation === undefined)

@@ -6,7 +6,7 @@ import { SqlClient } from "effect/unstable/sql";
 import { canonical } from "../crypto.js";
 import { rows } from "../database/query.js";
 import { databaseTime } from "../database/transaction.js";
-import { persistEvent } from "../notifications/publication.js";
+import { persistEvent } from "../history/publication.js";
 import { AttemptSnapshot } from "./history-contracts.js";
 import { findAttempt, type PublishedAttempt } from "./read.js";
 

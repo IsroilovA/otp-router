@@ -62,6 +62,8 @@ Provider callbacks use independent authentication over bounded raw bytes. Acknow
 
 ## Administration
 
+Runtime provider/policy administration uses `/v1/admin/runtime` under the same separate administrator authentication. The generated reference and [runtime schemas](../packages/engine/src/runtime/contracts.ts) own command shapes. Commands carry an idempotency key and, for existing resources, `expectedRevision`; reads and mutation responses return that administration revision as an ETag. There is no secret-read endpoint. See [resource ownership, permissions, replay, and lifecycle](runtime-configuration.md).
+
 Use `/v1/admin` with separate administrator credentials, or `createAdminClient()`. Endpoint schemas and generated OpenAPI own request shapes, paths, and error codes. Project reads and mutation responses include a strong `ETag`. All mutations require an `Idempotency-Key`; settings, lifecycle, and grant changes also require the previously read ETag in `If-Match`. Missing or malformed headers return `invalid_request`; stale revisions return `revision_conflict` (412). Current permission failures return `admin_forbidden` (403).
 
 Persist the validated action, target, payload, key, and expected revision before sending. After a lost response, retry that exact request with the same key, including the original `If-Match`. Current authorization is checked before replay; replay is checked before a revision made stale by the original request. Matching retries return the original status, body, and ETag, with `Idempotency-Replayed: true`. Changed input under the same administrator/key identity conflicts. Read current state before making a different change.

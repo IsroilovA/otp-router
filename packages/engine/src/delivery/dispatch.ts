@@ -1,4 +1,6 @@
-import { lockProject, intentEligible } from "../projects/store.js";
+import { constructProvider, providerConfiguration } from "../runtime/providers.js";
+import { resource } from "../runtime/store.js";
+import { lockProject } from "../projects/store.js";
 import { transitionAttempts } from "./attempts.js";
 import { authorizeAttempt, projectBlock } from "./authorization.js";
 import { changed } from "./changes.js";
@@ -32,7 +34,7 @@ import {
 import { expire, findOperation, findAttempt, findSecrets } from "./store.js";
 import type { Operation, Attempt } from "./records.js";
 import type { DeliveryJob } from "../queue/contracts.js";
-import { availableProviders } from "./eligibility.js";
+import { availableProviders, intentEligible } from "./eligibility.js";
 import { recordAccepted } from "./callbacks.js";
 import { mergeLockedOutcome, recordOutcome, type Outcome } from "./outcomes.js";
 
@@ -120,7 +122,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         );
         return undefined;
       }
-      const target = (yield* availableProviders(config, operation, time)).find(
+      const target = (yield* availableProviders(config, operation, time, delivery.intent_id)).find(
         ({ provider }) => provider.providerInstanceId === delivery.provider_instance_id,
       );
       if (target === undefined || target.retryAt !== undefined) {
@@ -134,6 +136,12 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
         return undefined;
       }
       const saved = target.provider;
+      const account = yield* resource("account", saved.accountId);
+      const prepared = yield* providerConfiguration(config, account, {
+        instanceId: saved.providerInstanceId,
+        revision: saved.instanceRevision,
+        settings: saved.executionSettings,
+      });
       const secrets = yield* findSecrets(operation.id);
       const attached = yield* attachedCiphertext(secrets.code);
       const recipient = yield* Schema.decodeUnknownEffect(NormalizedPhoneSchema)(
@@ -166,7 +174,7 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
           0,
           operation.expires_at.getTime() - time.getTime() - saved.sendTimeoutMs,
         ),
-        ...(config.providers.get(saved.providerInstanceId)?.idempotency.supported === true
+        ...(prepared.definition.idempotency.supported === true
           ? { providerIdempotencyKey: delivery.id }
           : {}),
       };
@@ -174,12 +182,13 @@ export const dispatchGate = (config: RuntimeConfiguration, job: DeliveryJob) =>
       yield* extendAdmission(operation.recipient_token, delivery.id, time);
       // Allow outcome persistence time beyond the provider timeout before independent recovery.
       yield* transitionAttempts(
-        sql`UPDATE otp_router.delivery_attempts SET invocation = 'committed', committed_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, state = 'dispatching', acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
+        sql`UPDATE otp_router.delivery_attempts SET credential_version_id = ${account.send_version}, invocation = 'committed', committed_at = ${time}, recovery_at = ${new Date(time.getTime() + saved.sendTimeoutMs + 30000)}, state = 'dispatching', acceptance = 'unknown' WHERE id = ${delivery.id} AND state = 'pending' RETURNING *`,
       );
       yield* sql`UPDATE otp_router.delivery_operations SET next_user_send_at = GREATEST(next_user_send_at,${new Date(time.getTime() + operation.snapshot.resendCooldownSeconds * 1000)}) WHERE id = ${operation.id}`;
       return {
         input,
         providerId: saved.providerInstanceId,
+        prepared,
         gateMonotonicTime,
         approvalRemainingMs:
           delivery.approval_expires_at === null
@@ -223,10 +232,19 @@ export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
     yield* authorizeAttempt(config, job);
     const reserved = yield* dispatchGate(config, job);
     if (reserved === undefined) return;
-    const provider = config.providers.get(reserved.providerId);
-    if (provider === undefined) return yield* Effect.die(new Error("Reserved provider missing"));
-    // This is the only send invocation for this durable record. A failed/unknown commit never reaches here.
     yield* count("send", "reserved");
+    const provider = yield* constructProvider(reserved.prepared).pipe(
+      Effect.catchTag("DomainError", () =>
+        recordOutcome(config, job.attemptId, {
+          state: "failed",
+          acceptance: "not_accepted",
+          diagnosticCode: "provider_unavailable",
+          notInvoked: true,
+        }).pipe(Effect.as(undefined)),
+      ),
+    );
+    if (provider === undefined) return;
+    // This is the only send invocation for this durable record. A failed/unknown commit never reaches here.
     const started = performance.now();
     const remainingDeliveryMs =
       reserved.input.remainingDeliveryMs - (started - reserved.gateMonotonicTime);
@@ -274,7 +292,7 @@ export const dispatch = (config: RuntimeConfiguration, job: DeliveryJob) =>
     yield* recordOutcome(config, job.attemptId, outcome);
     if (Cause.hasDies(exit.cause) || Cause.hasInterrupts(exit.cause))
       return yield* Effect.failCause(exit.cause);
-  });
+  }).pipe(Effect.scoped);
 
 const attachedCiphertext = (code: Ciphertext | null) =>
   code === null ? Effect.die(new Error("Active operation has no code")) : Effect.succeed(code);

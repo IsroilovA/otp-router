@@ -5,7 +5,7 @@ import { rows } from "../database/query.js";
 import { DomainError } from "../errors.js";
 import type { Settings } from "../config/config.js";
 export interface Limit {
-  readonly scope: "recipient" | "project" | "provider" | "deployment";
+  readonly scope: "recipient" | "project" | "instance" | "account" | "shared" | "deployment";
   readonly scopeId: string;
   readonly kind: "create" | "send" | "guess" | "admission";
   readonly maximum: number;
@@ -53,21 +53,70 @@ export const commonSendLimits = (settings: Settings, token: string, projectId: s
       },
     ] satisfies readonly Limit[];
   });
-export const providerSendLimits = (settings: Settings, providerId: string): readonly Limit[] => {
-  const maximum = settings.providerSendLimits15m[providerId];
-  return maximum === undefined
-    ? []
-    : [{ scope: "provider", scopeId: providerId, kind: "send", maximum, windowMs: 900000 }];
-};
+export const providerSendLimits = (providerId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const instance = (yield* rows(
+      Schema.Struct({ account_id: Schema.String }),
+      sql`SELECT account_id FROM otp_router.provider_instances WHERE id = ${providerId}`,
+    ))[0];
+    if (instance === undefined)
+      return yield* Effect.fail(new DomainError({ code: "resource_not_found" }));
+    const scopes = yield* rows(
+      Schema.Struct({ id: Schema.String, send_limit_15m: Schema.Int, send_limit_24h: Schema.Int }),
+      sql`SELECT id,send_limit_15m,send_limit_24h FROM otp_router.allowance_scopes WHERE id IN (
+        SELECT scope_id FROM otp_router.instance_allowances WHERE instance_id = ${providerId}
+        UNION SELECT scope_id FROM otp_router.account_allowances WHERE account_id = ${instance.account_id}
+      )`,
+    );
+    const limits: Limit[] = [
+      {
+        scope: "instance",
+        scopeId: providerId,
+        kind: "send",
+        maximum: 2147483647,
+        windowMs: 86400000,
+      },
+      {
+        scope: "account",
+        scopeId: instance.account_id,
+        kind: "send",
+        maximum: 2147483647,
+        windowMs: 86400000,
+      },
+    ];
+    for (const scope of scopes) {
+      limits.push(
+        {
+          scope: "shared",
+          scopeId: scope.id,
+          kind: "send",
+          maximum: scope.send_limit_15m,
+          windowMs: 900000,
+        },
+        {
+          scope: "shared",
+          scopeId: scope.id,
+          kind: "send",
+          maximum: scope.send_limit_24h,
+          windowMs: 86400000,
+        },
+      );
+    }
+    return limits;
+  });
 export const sendLimits = (
   settings: Settings,
   token: string,
   providerId: string,
   projectId: string,
 ) =>
-  commonSendLimits(settings, token, projectId).pipe(
-    Effect.map((limits) => [...limits, ...providerSendLimits(settings, providerId)]),
-  );
+  Effect.gen(function* () {
+    return [
+      ...(yield* commonSendLimits(settings, token, projectId)),
+      ...(yield* providerSendLimits(providerId)),
+    ];
+  });
 // Lock order: project, request idempotency, sorted quota identities, operation, then challenge.
 // Callers must acquire quotas before row locks to avoid cross-operation deadlocks.
 export const lockQuotas = (limits: readonly Limit[]) =>

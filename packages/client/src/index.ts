@@ -257,3 +257,10 @@ export const createClient = (options: ClientOptions) => {
 };
 
 export type OtpRouterClient = ReturnType<typeof createClient>;
+
+export type {
+  RuntimeCommandDto,
+  RuntimeResourceKind,
+  RuntimePageQuery,
+  RuntimeResourceDto,
+} from "./contracts.js";

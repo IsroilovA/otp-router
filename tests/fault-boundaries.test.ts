@@ -1,9 +1,10 @@
+import type { FixtureConfiguration as Configuration } from "./fixture.js";
 import { ageAdmission } from "./fixture.js";
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Layer, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { OperationResult } from "../packages/engine/src/challenges/contracts.js";
-import type { Configuration } from "../packages/engine/src/config/config.js";
+
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { transaction } from "../packages/engine/src/database/transaction.js";
 import { dispatch } from "../packages/engine/src/delivery/dispatch.js";
@@ -31,8 +32,7 @@ const provider: ReadyProvider = {
   version: "1.0.0",
   contractVersion: ProviderContractVersion,
   channel: "fake",
-  enabled: true,
-  compatibilityRevision: "fault-test-provider-v1",
+  revision: "fault-test-provider-v1",
   constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
   sendTimeoutMs: 1_000,
   defaultSendTimeoutMs: 1_000,
@@ -62,14 +62,34 @@ const configuration: Configuration = {
       fingerprint: { active: "a", keys: { a: key(3) } },
       recipientKey: key(4),
     },
-    defaultLocale: "en",
-    fallbackLocales: [],
-    policies: { login: { managed: {}, providerInstanceIds: [providerId] } },
-    purposes: { login: ["login"] },
     administration: {
       principalIds: ["backend"],
       administrators: {
         admin: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: [
             "create",
             "read",
@@ -96,7 +116,13 @@ const configuration: Configuration = {
     deploymentSendLimit15m: 100,
     deploymentSendLimit24h: 1_000,
   },
-  providers: [Layer.succeed(ProviderInstance, provider)],
+  fixtures: {
+    defaultLocale: "en",
+    fallbackLocales: [],
+    policies: { login: { managed: {}, providerInstanceIds: [providerId] } },
+    purposes: { login: ["login"] },
+  },
+  providerFixtures: [Layer.succeed(ProviderInstance, provider)],
 };
 
 const createInput = {
@@ -199,7 +225,7 @@ describe("PostgreSQL fault boundaries", () => {
   }> => {
     const database = app();
     const release = Promise.withResolvers<void>();
-    // One connection holds the live catalog registration; exhaust the nine request connections.
+    // One connection holds the live capability registration; exhaust the nine request connections.
     const entered = Array.from({ length: 9 }, () => Promise.withResolvers<void>());
     const holders = entered.map((barrier) =>
       database.run(

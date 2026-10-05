@@ -1,14 +1,26 @@
+import { RuntimeAdministration } from "../packages/engine/src/runtime/contracts.js";
+import { RuntimeAdministrationLive } from "../packages/engine/src/runtime/service.js";
+import {
+  fixtureProviders,
+  fixturePolicies,
+  loadFixtureConfiguration,
+  provisionFixtures,
+  type FixtureConfiguration,
+} from "./runtime-fixtures.js";
+export { loadFixtureConfiguration, fixtureAdapters } from "./runtime-fixtures.js";
+export type { FixtureConfiguration } from "./runtime-fixtures.js";
 import { Projects } from "../packages/engine/src/projects/contracts.js";
 import { ProjectsLive } from "../packages/engine/src/projects/service.js";
-import { validateCatalog } from "../packages/engine/src/projects/catalog.js";
-import { DeliveryHistory } from "../packages/engine/src/notifications/history-contracts.js";
-import { DeliveryHistoryLive } from "../packages/engine/src/notifications/history.js";
+import { validateCapabilities } from "../packages/engine/src/config/deployment.js";
+import { DeliveryHistory } from "../packages/engine/src/history/contracts.js";
+import { DeliveryHistoryLive } from "../packages/engine/src/history/service.js";
 import { DeliveryOwner } from "../packages/engine/src/delivery/owner.js";
 import { DeliveryOwnerLive } from "../packages/engine/src/challenges/delivery-owner.js";
 import { DeliveryLive } from "../packages/engine/src/delivery/service.js";
 import { Delivery } from "../packages/engine/src/delivery/contracts.js";
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { connect } from "node:net";
 import { NodeServices } from "@effect/platform-node";
 import { SqlClient } from "effect/unstable/sql";
@@ -18,11 +30,7 @@ import { PgBoss } from "pg-boss";
 import { Router, type OperationResult } from "../packages/engine/src/challenges/contracts.js";
 import { RouterLive } from "../packages/engine/src/challenges/service.js";
 import { RouterConfig } from "../packages/engine/src/config/runtime.js";
-import {
-  loadConfiguration,
-  type Configuration,
-  type RuntimeConfiguration,
-} from "../packages/engine/src/config/config.js";
+import { type RuntimeConfiguration } from "../packages/engine/src/config/config.js";
 import { makeDatabaseLayer } from "../packages/engine/src/database/client.js";
 import { DatabaseMigrationsLive } from "../packages/engine/src/database/migrations.js";
 import { Queue, makeQueueLayer } from "../packages/engine/src/queue/client.js";
@@ -43,9 +51,6 @@ const command = (executable: string, args: readonly string[]): Promise<CommandRe
       resolve({ stdout, stderr });
     });
   });
-
-const delay = (milliseconds: number): Promise<void> =>
-  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const removeContainer = async (name: string): Promise<void> => {
   try {
@@ -129,7 +134,7 @@ export const startPostgres = async (): Promise<PostgresFixture> => {
       "POSTGRES_PASSWORD=integration-secret",
       "--env",
       "POSTGRES_DB=otp_router_test",
-      "postgres:18",
+      "postgres:18.6",
     ]);
     await waitUntilReady(containerName);
     const port = await mappedPort(containerName);
@@ -150,6 +155,9 @@ export interface IntegrationRuntime {
   readonly pg: Context.Service.Shape<typeof PgClient.PgClient>;
   readonly queue: PgBoss;
   readonly router: Context.Service.Shape<typeof Router>;
+  readonly providers: Effect.Success<ReturnType<typeof fixtureProviders>>;
+  readonly policies: ReturnType<typeof fixturePolicies>;
+  readonly runtime: Context.Service.Shape<typeof RuntimeAdministration>;
   readonly projects: Context.Service.Shape<typeof Projects>;
   readonly history: Context.Service.Shape<typeof DeliveryHistory>;
   readonly delivery: Context.Service.Shape<typeof Delivery>;
@@ -168,7 +176,7 @@ const buildInScope = <A, E, R>(
 
 export const startRuntime = async (
   databaseUrl: string,
-  configuration: Configuration,
+  configuration: FixtureConfiguration,
 ): Promise<IntegrationRuntime> => {
   const scope = await Effect.runPromise(Scope.make());
   try {
@@ -203,10 +211,10 @@ export const startRuntime = async (
     await Effect.runPromise(Effect.promise(() => queue.start()).pipe(Effect.uninterruptible));
     await Effect.runPromise(initializeQueues.pipe(Effect.provideService(Queue, queueService)));
     const runtimeConfiguration = await Effect.runPromise(
-      loadConfiguration(configuration).pipe(Effect.provideService(Scope.Scope, scope)),
+      loadFixtureConfiguration(configuration).pipe(Effect.provideService(Scope.Scope, scope)),
     );
     await Effect.runPromise(
-      validateCatalog(runtimeConfiguration).pipe(
+      validateCapabilities(runtimeConfiguration).pipe(
         Effect.provide(databaseContext),
         Effect.provideService(Scope.Scope, scope),
       ),
@@ -220,7 +228,13 @@ export const startRuntime = async (
     const owner = Context.get(ownerContext, DeliveryOwner);
     const routerContext = await Effect.runPromise(
       buildInScope(
-        Layer.mergeAll(RouterLive, DeliveryLive, DeliveryHistoryLive, ProjectsLive).pipe(
+        Layer.mergeAll(
+          RouterLive,
+          DeliveryLive,
+          DeliveryHistoryLive,
+          ProjectsLive,
+          RuntimeAdministrationLive,
+        ).pipe(
           Layer.provide(
             Layer.mergeAll(
               Layer.succeed(RouterConfig, runtimeConfiguration),
@@ -247,6 +261,11 @@ export const startRuntime = async (
         ),
       );
     const projects = Context.get(routerContext, Projects);
+    const providers = await Effect.runPromise(
+      fixtureProviders(configuration).pipe(Effect.provideService(Scope.Scope, scope)),
+    );
+    const policies = fixturePolicies(configuration);
+    const administration = Context.get(routerContext, RuntimeAdministration);
     const seed = async () => {
       for (const id of ["demo", "alpha", "beta"]) {
         const existing = await Effect.runPromise(projects.get("admin", id).pipe(Effect.result));
@@ -272,16 +291,25 @@ export const startRuntime = async (
       }
     };
     await seed();
+    await Effect.runPromise(
+      provisionFixtures(administration, providers, policies, configuration.fixtures),
+    );
     const reset = async (): Promise<void> => {
       await queue.deleteAllJobs();
       await run(
         sql.unsafe(
-          "TRUNCATE TABLE otp_router.projects, otp_router.project_principal_grants, otp_router.admin_request_receipts, otp_router.project_admin_events, otp_router.project_send_blocks, otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.request_receipts, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_operations CASCADE",
+          "TRUNCATE TABLE otp_router.provider_accounts, otp_router.provider_instances, otp_router.routing_policies, otp_router.allowance_scopes, otp_router.account_secret_versions, otp_router.runtime_receipts, otp_router.runtime_events, otp_router.projects, otp_router.project_principal_grants, otp_router.admin_request_receipts, otp_router.project_admin_events, otp_router.project_send_blocks, otp_router.notifications, otp_router.events, otp_router.callback_inbox, otp_router.provider_correlations, otp_router.provider_restrictions, otp_router.delivery_attempts, otp_router.challenge_secrets, otp_router.request_receipts, otp_router.quota_events, otp_router.challenges, otp_router.delivery_secrets, otp_router.delivery_operations CASCADE",
         ),
       );
       await seed();
+      await Effect.runPromise(
+        provisionFixtures(administration, providers, policies, configuration.fixtures),
+      );
     };
     return {
+      providers,
+      policies,
+      runtime: administration,
       configuration: runtimeConfiguration,
       pg,
       queue,

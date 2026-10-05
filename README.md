@@ -13,7 +13,7 @@ Start with [local setup](docs/running.md). The examples use fake providers and s
 - [HTTP integration](docs/api.md), [projects](docs/projects.md), and [outbound webhooks](docs/webhooks.md)
 - [TypeScript client](docs/client.md), [releases](docs/releases.md), and [changelog](CHANGELOG.md)
 - [Attempt history](docs/history.md) and [send authorization](docs/authorization.md)
-- [Configuration choices](docs/configuration.md) and [provider extensions](docs/plugins.md)
+- [Deployment configuration](docs/configuration.md), [runtime configuration](docs/runtime-configuration.md), and [provider extensions](docs/plugins.md)
 - [Deployment and recovery](docs/operations.md)
 
 Schemas define supported shapes; see [HTTP integration](docs/api.md) to generate the API reference.

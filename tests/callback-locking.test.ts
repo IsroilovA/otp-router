@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
-import { Effect, Redacted, Schema } from "effect";
+import { Effect, Schema } from "effect";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { ingestEvents, recordAccepted } from "../packages/engine/src/delivery/callbacks.js";
 import { dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
@@ -39,14 +39,34 @@ beforeAll(async () => {
         fingerprint: ring(3),
         recipientKey: Buffer.alloc(32, 4).toString("base64url"),
       },
-      defaultLocale: "en",
-      fallbackLocales: [],
-      policies: { login: { providerInstanceIds: ["primary", "secondary"], managed: {} } },
-      purposes: { login: ["login"] },
       administration: {
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: [
+              "restricted",
+              "managed",
+              "external",
+              "benchmark",
+              "fault",
+              "fake",
+              "primary",
+              "secondary",
+              "first",
+              "second",
+              "login",
+              "default",
+              "demo",
+              "process",
+              "text",
+              "scope",
+              "account",
+              "telegram",
+              "whatsapp",
+              "sms",
+            ],
             actions: [
               "create",
               "read",
@@ -73,12 +93,19 @@ beforeAll(async () => {
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1000,
     },
-    providers: ["primary", "secondary"].map((id) =>
+    fixtures: {
+      defaultLocale: "en",
+      fallbackLocales: [],
+      policies: { login: { providerInstanceIds: ["primary", "secondary"], managed: {} } },
+      purposes: { login: ["login"] },
+    },
+    providerFixtures: ["primary", "secondary"].map((id) =>
       FakeProvider.make({
         instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)(id),
-        enabled: true,
-        compatibilityRevision: id,
-        config: { outcome: "accepted", callbackSecret: Redacted.make("callback-secret") },
+        revision: id,
+        identity: { account: "fixture" },
+        secrets: {},
+        execution: { outcome: "accepted" },
         templates: {},
       }),
     ),
@@ -96,7 +123,7 @@ const reserve = async () => {
   if (job === undefined) throw new Error("Expected delivery job");
   const input = Schema.decodeUnknownSync(DeliveryJob)(job.data);
   expect(await harness.run(dispatchGate(harness.configuration, input))).toBeDefined();
-  await harness.queue.complete(deliveryQueue, job.id);
+  await harness.queue.complete(deliveryQueue, job);
   return input.attemptId;
 };
 

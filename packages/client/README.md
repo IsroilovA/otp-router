@@ -1,9 +1,9 @@
 # OTP Router client
 
-A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 24 or newer. ESM only. Pin the version and review [release compatibility and upgrade notes](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md) before upgrading.
+A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 26.10.0 or newer. ESM only. Pin the version and review [release compatibility and upgrade notes](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md) before upgrading.
 
 ```sh
-npm install --save-exact @otp-router/client@0.1.0
+npm install --save-exact @otp-router/client@0.2.0
 ```
 
 ```ts
@@ -33,7 +33,7 @@ const current = await client.getChallenge(result.data.challengeId);
 
 Run this only on a trusted backend. Keep credentials and codes out of client applications and logs. Creation acknowledges durable work; provider acceptance does not verify a person.
 
-The client supports managed challenges, external-code delivery, history, and project administration through `createAdminClient()`. Version `0.1.0` pairs with server `0.1.0` and requires its fresh database baseline. Exported TypeScript declarations define methods and DTO fields.
+Use `createClient()` for managed challenges, external-code delivery, and history; use `createAdminClient()` for project and runtime administration. Version `0.2.0` pairs with server `0.2.0`; follow the [server database replacement procedure](https://github.com/IsroilovA/otp-router/blob/main/docs/operations.md#database-upgrades) when upgrading. Exported TypeScript declarations define methods and DTO fields.
 
 The optional `integrationReference` correlates upstream flows within a project. Supply opaque identifiers, never personal data or secrets; authorization services and webhook consumers receive it. Creation/preparation save it immutably, and retries must preserve its original presence and exact value. See the [correlation contract](https://github.com/IsroilovA/otp-router/blob/main/docs/api.md#integration-correlation) and coordinate updates for strict authorization/event validators.
 

@@ -1,3 +1,4 @@
+import { demoCommands } from "./provisioning.js";
 import { createAdminClient } from "@otp-router/client";
 
 const bearerToken = process.env["OTP_ROUTER_ADMIN_KEY"];
@@ -26,3 +27,10 @@ process.stdout.write(
 // Retrying such a change requires its original key, payload and original ETag.
 const audit = await administrator.listAudit(input.id);
 process.stdout.write(`Retained administrative events: ${audit.data.events.length}\n`);
+
+const callbackSecret = process.env["OTP_ROUTER_FAKE_CALLBACK_SECRET"];
+if (callbackSecret === undefined) throw new Error("Set OTP_ROUTER_FAKE_CALLBACK_SECRET");
+for (const [index, command] of demoCommands(callbackSecret).entries()) {
+  await administrator.mutateRuntime(command, { idempotencyKey: `provision-runtime-v1-${index}` });
+}
+process.stdout.write("Fake account, instance, policy, and project assignments provisioned.\n");

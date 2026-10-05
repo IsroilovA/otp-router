@@ -117,9 +117,11 @@ export const statusForError = (code: ErrorCode): number => {
       return 403;
     case "revision_conflict":
       return 412;
+    case "resource_conflict":
     case "project_conflict":
     case "project_inactive":
       return 409;
+    case "resource_not_found":
     case "project_not_found":
       return 404;
     case "invalid_request":
@@ -188,4 +190,13 @@ export const RevisionConflictError = errorEnvelope(
 export const ProjectNotFoundError = errorEnvelope(
   "ProjectNotFoundError",
   Schema.Literal("project_not_found"),
+);
+
+export const ResourceNotFoundError = errorEnvelope(
+  "ResourceNotFoundError",
+  Schema.Literal("resource_not_found"),
+);
+export const ResourceConflictError = errorEnvelope(
+  "ResourceConflictError",
+  Schema.Literal("resource_conflict"),
 );

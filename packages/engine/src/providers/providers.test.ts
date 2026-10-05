@@ -1,6 +1,6 @@
 import { createHash, createHmac } from "node:crypto";
 import { expect, it } from "@effect/vitest";
-import { Context, Effect, Exit, Layer, Redacted, Schema } from "effect";
+import { Context, Effect, Exit, Layer, Schema } from "effect";
 import {
   OperationIdSchema,
   AttemptIdSchema,
@@ -11,6 +11,7 @@ import {
   ProviderInstance,
   ProviderInstanceIdSchema,
   type ProviderDefinition,
+  type ProviderMakeOptions,
   type ProviderSendInput,
   type ReadyProvider,
 } from "./contract.js";
@@ -48,17 +49,16 @@ const sendInput = (template: Schema.Json = null): ProviderSendInput => ({
   template,
 });
 
-const build = <Configuration, Encoded>(
-  definition: ProviderDefinition<Configuration, Encoded>,
-  config: Configuration,
+const build = (
+  definition: ProviderDefinition,
+  config: Omit<ProviderMakeOptions, "instanceId" | "revision" | "templates">,
   templates: Readonly<Record<string, unknown>> = {},
 ): Effect.Effect<ReadyProvider, never> =>
   definition
     .make({
       instanceId,
-      enabled: true,
-      compatibilityRevision: "settings-v1",
-      config,
+      revision: "settings-v1",
+      ...config,
       templates,
     })
     .pipe(
@@ -68,8 +68,9 @@ const build = <Configuration, Encoded>(
     );
 
 const fakeConfig = (outcome: FakeOutcome) => ({
-  outcome,
-  callbackSecret: Redacted.make("callback-secret"),
+  identity: { account: "fake" },
+  secrets: {},
+  execution: { outcome },
 });
 
 it.effect("normalizes every consequential fake send outcome", () =>
@@ -103,7 +104,11 @@ it.effect("normalizes every consequential fake send outcome", () =>
 
 it.effect("authenticates fake callback batches", () =>
   Effect.gen(function* () {
-    const provider = yield* build(FakeProvider, fakeConfig("accepted"));
+    const callback = yield* FakeProvider.makeCallback({
+      identity: { account: "fake" },
+      execution: { outcome: "accepted" },
+      callbackSecrets: { callbackSecret: "callback-secret" },
+    }).pipe(Effect.orDie);
 
     const body = encoder.encode(
       JSON.stringify({
@@ -116,7 +121,6 @@ it.effect("authenticates fake callback batches", () =>
         ],
       }),
     );
-    const callback = provider.callback;
     if (callback === undefined) throw new Error("Expected provider callback");
     const authenticated = yield* callback({
       body,
@@ -152,7 +156,9 @@ it("rejects invalid provider and template configuration before use", () => {
     ),
   ).toBe(true);
   expect(
-    Exit.isFailure(Schema.decodeUnknownExit(FakeProvider.configSchema)({ outcome: "accepted" })),
+    Exit.isFailure(
+      Schema.decodeUnknownExit(FakeProvider.callbackSecretsSchema)({ outcome: "accepted" }),
+    ),
   ).toBe(true);
   expect(
     Exit.isFailure(
@@ -163,12 +169,12 @@ it("rejects invalid provider and template configuration before use", () => {
   ).toBe(true);
   expect(
     Exit.isFailure(
-      Schema.decodeUnknownExit(makeTelegramDefinition().configSchema)({ apiToken: "" }),
+      Schema.decodeUnknownExit(makeTelegramDefinition().secretsSchema)({ apiToken: "" }),
     ),
   ).toBe(true);
   expect(
     Exit.isFailure(
-      Schema.decodeUnknownExit(makeMetaDefinition().configSchema)({
+      Schema.decodeUnknownExit(makeMetaDefinition().executionSchema)({
         accessToken: "token",
         appSecret: "secret",
         verifyToken: "verify",
@@ -179,7 +185,7 @@ it("rejects invalid provider and template configuration before use", () => {
   ).toBe(true);
   expect(
     Exit.isFailure(
-      Schema.decodeUnknownExit(makePlayMobileDefinition().configSchema)({
+      Schema.decodeUnknownExit(makePlayMobileDefinition().executionSchema)({
         username: "user",
         password: "password",
         originator: "sender-name-too-long",
@@ -197,9 +203,11 @@ it.effect("does not retry a failed provider transport", () =>
         return Effect.fail(new HttpTransportError({ reason: "request_failed" }));
       },
     });
-    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-      apiToken: "telegram-secret",
-    });
+    const config = {
+      identity: { account: "telegram" },
+      secrets: { apiToken: "telegram-secret" },
+      execution: {},
+    };
     const provider = yield* build(definition, config);
     const result = yield* Effect.result(
       provider.send(sendInput((yield* provider.resolveTemplate([locale])).template)),
@@ -226,10 +234,11 @@ it.effect(
           }),
       };
       const definition = makeTelegramDefinition(transport);
-      const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-        apiToken: "telegram-secret",
-        callbackUrl: "https://router.example/callbacks/telegram",
-      });
+      const config = {
+        identity: { account: "telegram" },
+        secrets: { apiToken: "telegram-secret" },
+        execution: { callbackUrl: "https://router.example/callbacks/telegram" },
+      };
       const provider = yield* build(definition, config);
       expect(
         yield* provider.send(sendInput((yield* provider.resolveTemplate([locale])).template)),
@@ -297,11 +306,17 @@ it.effect("authenticates and normalizes Telegram delivery reports", () =>
     const definition = makeTelegramDefinition({
       execute: () => Effect.fail(new HttpTransportError({ reason: "request_failed" })),
     });
-    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-      apiToken: "telegram-secret",
-    });
-    const provider = yield* build(definition, config);
-    const callback = provider.callback;
+    const config = {
+      identity: { account: "telegram" },
+      execution: {},
+    };
+    const callback = yield* definition
+      .makeCallback({
+        identity: config.identity,
+        execution: config.execution,
+        callbackSecrets: { apiToken: "telegram-secret" },
+      })
+      .pipe(Effect.orDie);
     if (callback === undefined) throw new Error("Expected provider callback");
     const timestamp = String(Math.floor(Date.now() / 1_000));
     const body = encoder.encode(
@@ -378,13 +393,11 @@ it.effect("maps one Meta authentication template send and verifies both callback
         }),
     };
     const definition = makeMetaDefinition(transport);
-    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-      accessToken: "meta-token",
-      appSecret: "meta-app-secret",
-      verifyToken: "meta-verify",
-      phoneNumberId: "1234",
-      apiVersion: "v23.0",
-    });
+    const config = {
+      identity: { businessAccountId: "business" },
+      secrets: { accessToken: "meta-token" },
+      execution: { phoneNumberId: "1234", apiVersion: "v23.0" },
+    };
     const template = { name: "login_code", languageCode: "en_US", codeButtonIndex: 0 };
     const provider = yield* build(definition, config, { en: template });
     const resolved = yield* provider.resolveTemplate([locale]);
@@ -404,7 +417,13 @@ it.effect("maps one Meta authentication template send and verifies both callback
         ],
       },
     });
-    const callback = provider.callback;
+    const callback = yield* definition
+      .makeCallback({
+        identity: config.identity,
+        execution: config.execution,
+        callbackSecrets: { appSecret: "meta-app-secret", verifyToken: "meta-verify" },
+      })
+      .pipe(Effect.orDie);
     if (callback === undefined) throw new Error("Expected provider callback");
     const handshake = yield* callback({
       body: new Uint8Array(),
@@ -418,15 +437,25 @@ it.effect("maps one Meta authentication template send and verifies both callback
       headers: {},
     });
     expect(handshake).toMatchObject({ _tag: "Handshake", status: 200 });
-    const inbound = { messages: [{ id: "wamid.inbound", type: "text", text: { body: "hello" } }] };
+    const inbound = {
+      metadata: { phone_number_id: "1234" },
+      messages: [{ id: "wamid.inbound", type: "text", text: { body: "hello" } }],
+    };
     const delivered = {
+      metadata: { phone_number_id: "1234" },
       statuses: [{ id: "wamid.1", status: "delivered", timestamp: "1710000000" }],
     };
-    const notification = (values: readonly unknown[], authenticated = true) => {
+    const notification = (
+      values: readonly unknown[],
+      authenticated = true,
+      businessId = "business",
+    ) => {
       const body = encoder.encode(
         JSON.stringify({
           object: "whatsapp_business_account",
-          entry: [{ changes: values.map((value) => ({ field: "messages", value })) }],
+          entry: [
+            { id: businessId, changes: values.map((value) => ({ field: "messages", value })) },
+          ],
         }),
       );
       const signature = createHmac("sha256", "meta-app-secret").update(body).digest("hex");
@@ -447,6 +476,14 @@ it.effect("maps one Meta authentication template send and verifies both callback
         },
       ],
     });
+    expect(
+      yield* notification([delivered], true, "different-account").pipe(Effect.result),
+    ).toMatchObject({ _tag: "Failure", failure: { _tag: "CallbackAuthenticationError" } });
+    expect(
+      yield* notification([
+        { ...delivered, metadata: { phone_number_id: "different-sender" } },
+      ]).pipe(Effect.result),
+    ).toMatchObject({ _tag: "Failure", failure: { _tag: "CallbackAuthenticationError" } });
     expect(yield* notification([inbound])).toEqual({ _tag: "Events", events: [] });
     expect(yield* notification([inbound], false).pipe(Effect.result)).toMatchObject({
       _tag: "Failure",
@@ -479,11 +516,11 @@ it.effect(
           }),
       };
       const definition = makePlayMobileDefinition(transport);
-      const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-        username: "play-user",
-        password: "play-password",
-        originator: "3700",
-      });
+      const config = {
+        identity: { username: "play-user" },
+        secrets: { password: "play-password" },
+        execution: { originator: "3700" },
+      };
       const provider = yield* build(definition, config, { en: { text: "Code: {{code}}" } });
       const resolved = yield* provider.resolveTemplate([locale]);
       const accepted = yield* provider.send(sendInput(resolved.template));
@@ -538,13 +575,14 @@ it.effect("caps Telegram delivery TTL by saved settings and remaining lifetime",
           return jsonResponse(200, { ok: true, result: { request_id: "bounded-ttl" } });
         }),
     });
-    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-      apiToken: "token",
-      deliveryTtlSeconds: 45,
-    });
+    const config = {
+      identity: { account: "telegram" },
+      secrets: { apiToken: "token" },
+      execution: { deliveryTtlSeconds: 45 },
+    };
     const provider = yield* build(definition, config);
     const saved = yield* provider.resolveTemplate([locale]);
-    const changed = yield* build(definition, { ...config, deliveryTtlSeconds: 90 });
+    const changed = yield* build(definition, { ...config, execution: { deliveryTtlSeconds: 90 } });
     yield* changed.send({ ...sendInput(saved.template), remainingDeliveryMs: 300_000 });
     yield* changed.send({ ...sendInput(saved.template), remainingDeliveryMs: 34_900 });
     const expired = yield* Effect.result(
@@ -558,7 +596,7 @@ it.effect("caps Telegram delivery TTL by saved settings and remaining lifetime",
     for (const ttl of [29, 3_601, Number.NaN]) {
       expect(
         Exit.isFailure(
-          Schema.decodeUnknownExit(definition.configSchema)({
+          Schema.decodeUnknownExit(definition.executionSchema)({
             apiToken: "token",
             deliveryTtlSeconds: ttl,
           }),
@@ -577,13 +615,11 @@ it.effect("reconciles Meta lost responses with authenticated echoed attempt refe
         return Effect.fail(new HttpTransportError({ reason: "request_failed" }));
       },
     });
-    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-      accessToken: "token",
-      appSecret: "secret",
-      verifyToken: "verify",
-      phoneNumberId: "123",
-      apiVersion: "v23.0",
-    });
+    const config = {
+      identity: { businessAccountId: "business" },
+      secrets: { accessToken: "token" },
+      execution: { phoneNumberId: "123", apiVersion: "v23.0" },
+    };
     const template = { name: "auth", languageCode: "en", codeButtonIndex: 0 };
     const provider = yield* build(definition, config, { en: template });
     expect(yield* Effect.result(provider.send(sendInput(template)))).toMatchObject({
@@ -595,7 +631,13 @@ it.effect("reconciles Meta lost responses with authenticated echoed attempt refe
       Schema.Struct({ biz_opaque_callback_data: AttemptIdSchema }),
     )(JSON.parse(decode(requests[0]?.body ?? new Uint8Array())) as unknown);
     expect(sent.biz_opaque_callback_data).toBe(attemptId);
-    const callback = provider.callback;
+    const callback = yield* definition
+      .makeCallback({
+        identity: config.identity,
+        execution: config.execution,
+        callbackSecrets: { appSecret: "secret", verifyToken: "verify" },
+      })
+      .pipe(Effect.orDie);
     if (callback === undefined) return yield* Effect.die("Meta callback missing");
     for (const status of ["delivered", "failed"]) {
       const body = encoder.encode(
@@ -603,10 +645,12 @@ it.effect("reconciles Meta lost responses with authenticated echoed attempt refe
           object: "whatsapp_business_account",
           entry: [
             {
+              id: "business",
               changes: [
                 {
                   field: "messages",
                   value: {
+                    metadata: { phone_number_id: "123" },
                     statuses: [
                       {
                         id: "wamid.lost",
@@ -667,13 +711,11 @@ it.effect("maps documented Meta rejections but preserves internal and unknown un
           return jsonResponse(400, { error: { code, message: "sensitive provider details" } });
         }),
     });
-    const config = yield* Schema.decodeUnknownEffect(definition.configSchema)({
-      accessToken: "token",
-      appSecret: "secret",
-      verifyToken: "verify",
-      phoneNumberId: "123",
-      apiVersion: "v23.0",
-    });
+    const config = {
+      identity: { businessAccountId: "business" },
+      secrets: { accessToken: "token" },
+      execution: { phoneNumberId: "123", apiVersion: "v23.0" },
+    };
     const template = { name: "auth", languageCode: "en", codeButtonIndex: 0 };
     const provider = yield* build(definition, config, { en: template });
     for (const [errorCode, reason] of [
@@ -715,9 +757,8 @@ it.effect("validates custom adapter construction through the shared definition h
         Layer.build(
           invalid.make({
             instanceId,
-            enabled: true,
-            compatibilityRevision: "v1",
-            config: fakeConfig("accepted"),
+            revision: "v1",
+            ...fakeConfig("accepted"),
             templates: {},
           }),
         ),

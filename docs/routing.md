@@ -4,11 +4,11 @@ A policy defines an ordered list of provider instances. A creation-time selector
 
 ## Automatic progression
 
-Confirmed rejection or final delivery failure advances to the next eligible provider. Automatic routing never wraps around. Invalid recipient input common to all providers stops delivery.
+When the saved policy enables confirmed-failure fallback, confirmed rejection or final delivery failure advances to the next eligible provider. Disabled fallback never automatically advances. Automatic routing never wraps around. Invalid recipient input common to all providers stops delivery.
 
 Unknown acceptance, timeouts, programming defects, and interruption do not authorize fallback or another send. There are no timed fallbacks, automatic provider-send retries, or status polling. Disable retries in transports and provider SDKs as well.
 
-Provider eligibility includes the saved configuration identity, emergency disables, provider restrictions, remaining lifetime, and send budgets. Creation, next, and automatic fallback skip providers whose individual budgets or restrictions block sending; shared budget exhaustion blocks every provider. A generic HTTP error does not establish whether the provider accepted a request.
+Provider eligibility includes saved revision validity, current account/instance lifecycle, policy/provider grant lifetimes, provider restrictions, remaining lifetime, and send budgets. Ordinary configuration edits preserve existing snapshots. Creation, next, and automatic fallback skip providers whose individual budgets or restrictions block sending; shared budget exhaustion blocks every provider. A generic HTTP error does not establish whether the provider accepted a request.
 
 ## User actions
 

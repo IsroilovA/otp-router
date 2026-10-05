@@ -1,4 +1,4 @@
-import { assertCatalog } from "../projects/catalog.js";
+import { assertCapabilities } from "../config/deployment.js";
 import { requireAccess } from "../projects/store.js";
 import { AttemptSnapshot } from "../delivery/history-contracts.js";
 import { IntegrationReference } from "../delivery/input.js";
@@ -9,7 +9,7 @@ import { RouterConfig } from "../config/runtime.js";
 import { DomainError } from "../errors.js";
 import { digest, equalDigest, type CryptoConfig } from "../crypto.js";
 import { findProjectOperation } from "../delivery/store.js";
-import { DeliveryHistory, HistoryEvent, PageInput } from "./history-contracts.js";
+import { DeliveryHistory, HistoryEvent, PageInput } from "./contracts.js";
 
 const Cursor = Schema.Struct({
   project: Schema.String,
@@ -119,7 +119,7 @@ export const DeliveryHistoryLive = Layer.effect(
         Effect.mapError(invalid),
         Effect.andThen(
           sql.withTransaction(
-            assertCatalog(config).pipe(
+            assertCapabilities(config).pipe(
               Effect.andThen(requireAccess(project, principalId)),
               Effect.andThen(effect),
             ),

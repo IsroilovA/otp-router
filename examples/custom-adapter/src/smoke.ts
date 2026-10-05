@@ -36,9 +36,10 @@ const run = Effect.scoped(
     const context = yield* Layer.build(
       TextProvider.make({
         instanceId: providerId,
-        enabled: true,
-        compatibilityRevision: "smoke",
-        config: { prefix: "OTP " },
+        revision: "smoke",
+        identity: { account: "demo" },
+        secrets: {},
+        execution: { prefix: "OTP " },
         templates: {},
       }),
     );

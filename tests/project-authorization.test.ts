@@ -1,10 +1,10 @@
+import type { FixtureConfiguration as Configuration } from "./fixture.js";
 import type { SqlError } from "effect/unstable/sql/SqlError";
 import { deliveryTransaction } from "../packages/engine/src/delivery/transaction.js";
 import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
 import { randomUUID } from "node:crypto";
-import { Effect, Layer, Redacted, Schema } from "effect";
+import { Effect, Layer, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { Configuration } from "@otp-router/engine/config";
 import {
   SendAuthorizer,
   AuthorizationUnavailable,
@@ -26,7 +26,7 @@ import { recoverDispatches } from "../packages/engine/src/delivery/recovery.js";
 import { DeliveryJob, deliveryQueue } from "../packages/engine/src/queue/contracts.js";
 import { rows } from "../packages/engine/src/database/query.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
-import { WebhookError } from "../apps/server/src/http/webhooks.js";
+import { WebhookError } from "../apps/server/src/http/callbacks/contracts.js";
 import {
   startPostgres,
   startRuntime,
@@ -102,9 +102,10 @@ const provider = (id: string) =>
     Layer.provide(
       FakeProvider.make({
         instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)(id),
-        enabled: true,
-        compatibilityRevision: "tests",
-        config: { outcome: "accepted", callbackSecret: Redacted.make("test-callback") },
+        revision: "tests",
+        identity: { account: "fixture" },
+        secrets: {},
+        execution: { outcome: "accepted" },
         templates: {},
       }),
     ),
@@ -126,6 +127,30 @@ const configuration: Configuration = {
       principalIds: ["backend"],
       administrators: {
         admin: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: [
             "create",
             "read",
@@ -149,6 +174,10 @@ const configuration: Configuration = {
       },
       authorizationFloor: false,
     },
+    deploymentSendLimit15m: 100,
+    deploymentSendLimit24h: 200,
+  },
+  fixtures: {
     defaultLocale: "en",
     fallbackLocales: [],
     policies: {
@@ -160,10 +189,8 @@ const configuration: Configuration = {
       restricted: { providerInstanceIds: ["primary"] },
     },
     purposes: { login: ["login", "restricted"] },
-    deploymentSendLimit15m: 100,
-    deploymentSendLimit24h: 200,
   },
-  providers: [provider("primary"), provider("secondary")],
+  providerFixtures: [provider("primary"), provider("secondary")],
   authorizer,
 };
 let database: PostgresFixture | undefined;
@@ -478,6 +505,7 @@ describe("project isolation and authorization", () => {
       },
       {
         projects: app().projects,
+        runtime: app().runtime,
         router: app().router,
         delivery: app().delivery,
         history: app().history,
@@ -857,6 +885,30 @@ it("atomically enforces a project's final send allowance while another project r
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: [
+              "restricted",
+              "managed",
+              "external",
+              "benchmark",
+              "fault",
+              "fake",
+              "primary",
+              "secondary",
+              "first",
+              "second",
+              "login",
+              "default",
+              "demo",
+              "process",
+              "text",
+              "scope",
+              "account",
+              "telegram",
+              "whatsapp",
+              "sms",
+            ],
             actions: [
               "create",
               "read",
@@ -1261,6 +1313,30 @@ it("retains scoped send usage after history deletion and releases it only after 
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: [
+              "restricted",
+              "managed",
+              "external",
+              "benchmark",
+              "fault",
+              "fake",
+              "primary",
+              "secondary",
+              "first",
+              "second",
+              "login",
+              "default",
+              "demo",
+              "process",
+              "text",
+              "scope",
+              "account",
+              "telegram",
+              "whatsapp",
+              "sms",
+            ],
             actions: [
               "create",
               "read",
@@ -1324,7 +1400,7 @@ it("retains scoped send usage after history deletion and releases it only after 
         (SELECT count(*)::int FROM otp_router.quota_allocations WHERE event_id = ${work.attemptId} AND kind = 'send') AS allocations`,
         ),
       ),
-    ).toEqual([{ facts: 1, allocations: 3 }]);
+    ).toEqual([{ facts: 1, allocations: 6 }]);
     await Effect.runPromise(h.delivery.create(request("alpha", input("+998901234568"))));
     const blocked = await job();
     await h.run(dispatch(h.configuration, blocked));

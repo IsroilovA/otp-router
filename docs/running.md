@@ -51,7 +51,13 @@ node --env-file=.env apps/server/dist/main.js --config "$PWD/examples/config/rou
 
 `--check-schema` changes the database; neither check sends messages. See [validation](configuration.md#validation) for their scope.
 
-Stop the host process before `pnpm db:down`; the latter preserves its development volume. Provision the demo project with `node --env-file=.env examples/admin/run.ts`, then follow the [HTTP walkthrough](../examples/http/README.md) to exercise both server flows. The fake provider never exposes a usable OTP.
+Stop the host process before `pnpm db:down`; the latter preserves its development volume.
+
+## Provision the demo
+
+After either Compose or host startup, follow the [HTTP walkthrough](../examples/http/README.md#provision-the-project-and-route) to provision the project, fake provider, policy, and assignments before sending requests. Startup does not create these resources. The walkthrough exercises managed and external delivery; the fake provider never exposes a usable OTP.
+
+## Custom images
 
 Build custom adapters into the image using the [adapter example](../examples/custom-adapter/README.md).
 

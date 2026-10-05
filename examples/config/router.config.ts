@@ -1,6 +1,5 @@
-import { Redacted, Schema } from "effect";
 import { defineConfig } from "@otp-router/server/config";
-import { FakeProvider, ProviderInstanceIdSchema } from "@otp-router/engine/providers";
+import { FakeProvider } from "@otp-router/engine/providers";
 
 const required = (name: string): string => {
   const value = process.env[name];
@@ -9,14 +8,12 @@ const required = (name: string): string => {
 };
 
 const apiKey = required("OTP_ROUTER_API_KEY");
-const callbackSecret = required("OTP_ROUTER_FAKE_CALLBACK_SECRET");
 const encryptionKey = required("OTP_ROUTER_ENCRYPTION_KEY");
 const verificationKey = required("OTP_ROUTER_VERIFICATION_KEY");
 const fingerprintKey = required("OTP_ROUTER_FINGERPRINT_KEY");
 const recipientKey = required("OTP_ROUTER_RECIPIENT_KEY");
 
 const keyRing = (value: string) => ({ active: "v1", keys: { v1: value } });
-const fakeProviderId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-primary");
 
 const webhookUrl = process.env["OTP_ROUTER_WEBHOOK_URL"];
 
@@ -38,19 +35,13 @@ export default defineConfig({
         fingerprint: keyRing(fingerprintKey),
         recipientKey,
       },
-      defaultLocale: "en",
-      fallbackLocales: [],
-      policies: {
-        login: {
-          managed: {},
-          providerInstanceIds: [fakeProviderId],
-        },
-      },
-      purposes: { login: ["login"] },
       administration: {
         principalIds: ["backend"],
         administrators: {
           admin: {
+            runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+            resourceIds: [],
+            resourcePrefixes: ["demo", "fake", "login"],
             actions: [
               "create",
               "read",
@@ -77,18 +68,7 @@ export default defineConfig({
       deploymentSendLimit15m: 100,
       deploymentSendLimit24h: 1_000,
     },
-    providers: [
-      FakeProvider.make({
-        instanceId: fakeProviderId,
-        enabled: true,
-        compatibilityRevision: "local-demo-fake-v1",
-        config: {
-          outcome: "accepted",
-          callbackSecret: Redacted.make(callbackSecret),
-        },
-        templates: {},
-      }),
-    ],
+    adapters: [FakeProvider],
   },
   settings: {
     databaseUrl: required("DATABASE_URL"),

@@ -2,6 +2,9 @@ import { Effect } from "effect";
 import type { HttpApiSchema } from "effect/unstable/httpapi";
 import type { HttpClientResponse } from "effect/unstable/http";
 import type {
+  RuntimeCommandDto,
+  RuntimeResourceKind,
+  RuntimePageQuery,
   AdminClientOptions,
   AdminMutationOptions,
   MutationOptions,
@@ -63,6 +66,64 @@ export const createAdminClient = (options: AdminClientOptions) => {
       request,
     );
   return {
+    mutateRuntime: (command: RuntimeCommandDto, request: MutationOptions) =>
+      execute(
+        (client) =>
+          client.runtimeAdministration
+            .mutate({
+              payload: { command },
+              headers: { "idempotency-key": request.idempotencyKey },
+              responseMode: "decoded-and-response",
+            })
+            .pipe(projectBody),
+        request,
+      ),
+    getRuntimeResource: (kind: RuntimeResourceKind, id: string, request: RequestOptions = {}) =>
+      execute(
+        (client) =>
+          client.runtimeAdministration
+            .get({ params: { kind, id }, responseMode: "decoded-and-response" })
+            .pipe(projectBody),
+        request,
+      ),
+    listRuntimeResources: (
+      kind: RuntimeResourceKind,
+      query: RuntimePageQuery = {},
+      request: RequestOptions = {},
+    ) =>
+      execute(
+        (client) =>
+          client.runtimeAdministration.list({
+            params: { kind },
+            query,
+            responseMode: "decoded-and-response",
+          }),
+        request,
+      ),
+    listAssignments: (projectId: string, request: RequestOptions = {}) =>
+      execute(
+        (client) =>
+          client.runtimeAdministration.assignments({
+            params: { projectId },
+            responseMode: "decoded-and-response",
+          }),
+        request,
+      ),
+    listRuntimeAudit: (
+      kind: RuntimeResourceKind,
+      id: string,
+      query: RuntimePageQuery = {},
+      request: RequestOptions = {},
+    ) =>
+      execute(
+        (client) =>
+          client.runtimeAdministration.audit({
+            params: { kind, id },
+            query,
+            responseMode: "decoded-and-response",
+          }),
+        request,
+      ),
     createProject: (input: CreateProjectTransferDto, request: MutationOptions) =>
       execute(
         (client) =>

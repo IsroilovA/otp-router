@@ -20,7 +20,7 @@ import {
 import { fetchTransport, type HttpTransport } from "./transport.js";
 
 const PlayMobileConfigurationSchema = Schema.Struct({
-  username: Schema.RedactedFromValue(Schema.NonEmptyString),
+  username: Schema.NonEmptyString,
   password: Schema.RedactedFromValue(Schema.NonEmptyString),
   originator: Schema.NonEmptyString.pipe(Schema.check(Schema.isMaxLength(11))),
   endpoint: Schema.String.pipe(Schema.check(Schema.isPattern(/^https:\/\//))).pipe(
@@ -139,7 +139,7 @@ const send = (
       ],
     };
     const credentials = Buffer.from(
-      `${Redacted.value(config.username)}:${Redacted.value(config.password)}`,
+      `${config.username}:${Redacted.value(config.password)}`,
       "utf8",
     ).toString("base64");
     const response = yield* transport
@@ -208,14 +208,24 @@ const metadata = {
 
 export const makePlayMobileDefinition = (
   transport: HttpTransport = fetchTransport,
-): ProviderDefinition<PlayMobileConfiguration, typeof PlayMobileConfigurationSchema.Encoded> =>
+): ProviderDefinition =>
   defineProvider({
     ...metadata,
-    configSchema: PlayMobileConfigurationSchema,
-    templateSchema: PlayMobileTemplateSchema,
-    create: (config) => ({
-      send: (input) => send(transport, config, input),
+    schemaVersion: "1",
+    identitySchema: Schema.Struct({ username: Schema.NonEmptyString }),
+    secretsSchema: Schema.Struct({ password: PlayMobileConfigurationSchema.fields.password }),
+    callbackSecretsSchema: Schema.Struct({}),
+    executionSchema: Schema.Struct({
+      originator: PlayMobileConfigurationSchema.fields.originator,
+      endpoint: PlayMobileConfigurationSchema.fields.endpoint,
     }),
+    templateSchema: PlayMobileTemplateSchema,
+    create: ({ identity, secrets, execution }) => {
+      const config = { ...identity, ...secrets, ...execution };
+      return {
+        send: (input) => send(transport, config, input),
+      };
+    },
   });
 
 export const PlayMobileProvider = makePlayMobileDefinition();

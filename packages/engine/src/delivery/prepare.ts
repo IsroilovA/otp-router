@@ -1,3 +1,5 @@
+import { constructProvider } from "../runtime/providers.js";
+import { resolvePolicy, type PreparedRoute } from "../runtime/resolve.js";
 import { Effect, Schema } from "effect";
 import { parsePhoneNumberFromString } from "libphonenumber-js/max";
 import { duration } from "../diagnostics/metrics.js";
@@ -5,7 +7,6 @@ import { SelectorResult, type RuntimeConfiguration } from "../config/config.js";
 import { LocaleSchema, NormalizedPhoneSchema } from "../providers/contract.js";
 import { DomainError } from "../errors.js";
 import type { PrepareInput } from "./contracts.js";
-import type { PolicySnapshot } from "./records.js";
 export const normalizePhone = (phone: string) =>
   Effect.gen(function* () {
     if (!phone.startsWith("+"))
@@ -23,59 +24,70 @@ export const prepareRoute = (
   projectId: string,
 ) =>
   Effect.gen(function* () {
-    const policy = config.settings.policies[input.policyId];
-    if (
-      policy === undefined ||
-      config.settings.purposes[input.purpose]?.includes(input.policyId) !== true
-    )
-      return yield* Effect.fail(new DomainError({ code: "policy_not_allowed" }));
+    const resolved = yield* resolvePolicy(config, projectId, input.policyId, input.purpose);
+    const { policy } = resolved;
     const recipient = yield* Schema.decodeUnknownEffect(NormalizedPhoneSchema)(
       input.recipient.phoneNumber,
     );
-    const locale = input.locale ?? config.settings.defaultLocale;
+    const locale = input.locale ?? policy.defaultLocale;
     const route = yield* selectRoute(config, {
       input,
       projectId,
       recipient,
       locale,
-      permitted: policy.providerInstanceIds,
+      permitted: resolved.providers.map(({ instance }) => instance.id),
+      selectorId: policy.selectorId,
     });
     const locales = yield* Schema.decodeUnknownEffect(Schema.Array(LocaleSchema))([
-      ...new Set([locale, ...config.settings.fallbackLocales]),
+      ...new Set([locale, ...policy.fallbackLocales]),
     ]);
     const providers = yield* Effect.forEach(route.providerInstanceIds, (id) =>
       Effect.gen(function* () {
-        const provider = config.providers.get(id);
-        if (provider === undefined)
+        const entry = resolved.providers.find(({ instance }) => instance.id === id);
+        if (entry === undefined)
           return yield* Effect.fail(new DomainError({ code: "delivery_unavailable" }));
-        const resolved = yield* provider
+        const { instance } = entry;
+        if (instance.data.kind !== "instance")
+          return yield* Effect.die(new Error("Invalid instance"));
+        const provider = yield* constructProvider(entry.prepared);
+        const template = yield* provider
           .resolveTemplate(locales)
           .pipe(Effect.mapError(() => new DomainError({ code: "delivery_unavailable" })));
         return {
           providerInstanceId: id,
-          label: config.settings.providerLabels[id] ?? provider.channel,
+          label: instance.data.settings.label,
           pluginId: provider.pluginId,
           contractVersion: provider.contractVersion,
           channel: provider.channel,
-          resolvedLocale: resolved.locale,
-          template: resolved.template,
+          resolvedLocale: template.locale,
+          template: template.template,
           sendTimeoutMs: provider.sendTimeoutMs,
           minDeliveryWindowMs: provider.constraints.minDeliveryWindowMs,
-          compatibilityRevision: provider.compatibilityRevision,
-          manualSelectionAllowed: (policy.manualProviderIds ?? policy.providerInstanceIds).includes(
-            id,
-          ),
+          accountId: instance.data.accountId,
+          instanceRevision: instance.configuration_revision,
+          executionSettings: instance.data.settings,
+          minCodeLength: provider.constraints.minCodeLength,
+          maxCodeLength: provider.constraints.maxCodeLength,
+          grantId: entry.grantId,
+          accountEpoch: entry.accountEpoch,
+          instanceEpoch: instance.epoch,
+          manualSelectionAllowed: policy.manualProviderIds.includes(id),
         };
       }),
     );
-    const saved: Omit<PolicySnapshot, "authorizationRequired"> = {
+    const saved: PreparedRoute = {
+      policyId: input.policyId,
+      policyRevision: resolved.revision,
+      policyEpoch: resolved.epoch,
+      policyGrantId: resolved.grantId,
+      policy,
       maxSends: policy.maxSends,
       resendCooldownSeconds: policy.resendCooldownSeconds,
       manualSelectionEnabled: policy.manualSelectionEnabled,
       providers,
     };
     return { saved };
-  });
+  }).pipe(Effect.scoped);
 const selectRoute = (
   config: RuntimeConfiguration,
   options: {
@@ -84,31 +96,37 @@ const selectRoute = (
     readonly recipient: typeof NormalizedPhoneSchema.Type;
     readonly locale: string;
     readonly permitted: readonly string[];
+    readonly selectorId: string | undefined;
   },
 ) =>
   Effect.gen(function* () {
     const { input, recipient, locale, permitted } = options;
-    const selector = config.selectors[input.policyId];
+    const selector =
+      options.selectorId === undefined ? undefined : config.selectors.get(options.selectorId);
+    if (options.selectorId !== undefined && selector === undefined)
+      return yield* Effect.fail(new DomainError({ code: "temporarily_unavailable" }));
     const started = performance.now();
     const selected =
       selector === undefined
         ? { _tag: "Route" as const, providerInstanceIds: permitted }
-        : yield* selector({
-            projectId: options.projectId,
-            recipient,
-            purpose: input.purpose,
-            locale,
-            routingContext: input.routingContext ?? {},
-          }).pipe(
-            Effect.timeoutOrElse({
-              duration: config.settings.selectorTimeoutMs,
-              orElse: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
-            }),
-            Effect.mapError(() => new DomainError({ code: "temporarily_unavailable" })),
-            Effect.ensuring(
-              Effect.suspend(() => duration("selector", performance.now() - started)),
-            ),
-          );
+        : yield* selector
+            .select({
+              projectId: options.projectId,
+              recipient,
+              purpose: input.purpose,
+              locale,
+              routingContext: input.routingContext ?? {},
+            })
+            .pipe(
+              Effect.timeoutOrElse({
+                duration: config.settings.selectorTimeoutMs,
+                orElse: () => Effect.fail(new DomainError({ code: "temporarily_unavailable" })),
+              }),
+              Effect.mapError(() => new DomainError({ code: "temporarily_unavailable" })),
+              Effect.ensuring(
+                Effect.suspend(() => duration("selector", performance.now() - started)),
+              ),
+            );
     const route = yield* Schema.decodeUnknownEffect(SelectorResult)(selected, {
       onExcessProperty: "error",
     }).pipe(Effect.mapError(() => new DomainError({ code: "temporarily_unavailable" })));

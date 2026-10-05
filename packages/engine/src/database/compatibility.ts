@@ -14,6 +14,8 @@ export const validateStoredKeys = (settings: Settings) =>
       sql`
     SELECT DISTINCT 'encryption' AS purpose, phone->>'keyId' AS key_id FROM otp_router.delivery_secrets
     UNION SELECT DISTINCT 'encryption', code->>'keyId' FROM otp_router.delivery_secrets WHERE code IS NOT NULL
+    UNION SELECT DISTINCT 'encryption', ciphertext->>'keyId' FROM otp_router.account_secret_versions WHERE ciphertext IS NOT NULL
+    UNION SELECT DISTINCT 'fingerprint', fingerprint->>'keyId' FROM otp_router.runtime_receipts
     UNION SELECT DISTINCT 'verification', verifier->>'keyId' FROM otp_router.challenge_secrets
     UNION SELECT DISTINCT 'fingerprint', code_fingerprint->>'keyId' FROM otp_router.delivery_secrets WHERE code_fingerprint IS NOT NULL
     UNION SELECT DISTINCT 'fingerprint', fingerprint->>'keyId' FROM otp_router.request_receipts

@@ -114,8 +114,8 @@ export const validateTemplate = <Template extends Schema.Json, Encoded>(
     ),
   );
 
-export const validateProviderConfiguration = <A, I>(schema: Schema.Codec<A, I>, value: A) =>
-  Schema.decodeUnknownEffect(Schema.toType(schema))(value, { onExcessProperty: "error" }).pipe(
+export const validateProviderConfiguration = <A, I>(schema: Schema.Codec<A, I>, value: unknown) =>
+  Schema.decodeUnknownEffect(schema)(value, { onExcessProperty: "error" }).pipe(
     Effect.mapError(
       () => new ProviderConfigurationError({ diagnosticCode: "invalid_configuration" }),
     ),
@@ -135,9 +135,9 @@ export const validateAllTemplates = <A, I>(
     { discard: true },
   );
 
-export const readyMetadata = <C, I>(
-  definition: Omit<ProviderDefinition<C, I>, "make" | "configSchema" | "templateSchema">,
-  options: Pick<ProviderMakeOptions<C>, "instanceId" | "enabled" | "compatibilityRevision">,
+export const readyMetadata = (
+  definition: Omit<ProviderDefinition, "make" | "makeCallback" | "templateSchema">,
+  options: Pick<ProviderMakeOptions, "instanceId" | "revision">,
   sendTimeoutMs: number,
 ) => ({
   instanceId: options.instanceId,
@@ -145,8 +145,7 @@ export const readyMetadata = <C, I>(
   version: definition.version,
   contractVersion: definition.contractVersion,
   channel: definition.channel,
-  enabled: options.enabled,
-  compatibilityRevision: options.compatibilityRevision,
+  revision: options.revision,
   constraints: definition.constraints,
   defaultSendTimeoutMs: definition.defaultSendTimeoutMs,
   sendTimeoutMs,

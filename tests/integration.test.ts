@@ -1,3 +1,6 @@
+import { fixtureAdapters } from "./fixture.js";
+import { mutateRuntime } from "../packages/engine/src/runtime/mutate.js";
+import type { Policy, InstanceSettings } from "../packages/engine/src/runtime/contracts.js";
 import { callbackIdentity } from "../packages/engine/src/delivery/correlation.js";
 import { makeTelegramDefinition } from "../packages/engine/src/providers/telegram.js";
 import type { HttpRequest } from "../packages/engine/src/providers/transport.js";
@@ -16,15 +19,18 @@ import { createChallenge } from "../packages/engine/src/challenges/create.js";
 import { decrypt, operationIdentity } from "../packages/engine/src/crypto.js";
 import { verifyChallenge } from "../packages/engine/src/challenges/verify.js";
 import { RouterConfig } from "../packages/engine/src/config/runtime.js";
-import { type RuntimeConfiguration } from "../packages/engine/src/config/config.js";
+import {
+  type RuntimeConfiguration,
+  type RoutingSelector,
+} from "../packages/engine/src/config/config.js";
 import { rows, single } from "../packages/engine/src/database/query.js";
 import { ingestEvents } from "../packages/engine/src/delivery/callbacks.js";
 import { requestDelivery } from "../packages/engine/src/challenges/deliver.js";
 import { dispatch, dispatchGate } from "../packages/engine/src/delivery/dispatch.js";
 import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
 import { makeWebHandler } from "../apps/server/src/http/transport.js";
-import { WebhookError, WebhookHandler } from "../apps/server/src/http/webhooks.js";
-import { WebhooksLive } from "../apps/server/src/http/webhook-service.js";
+import { WebhookError, WebhookHandler } from "../apps/server/src/http/callbacks/contracts.js";
+import { WebhooksLive } from "../apps/server/src/http/callbacks/service.js";
 import {
   ProviderContractVersion,
   ProviderInstance,
@@ -145,8 +151,7 @@ const providerLayer = (id: string, channel: string, control: ProviderControl) =>
     version: "1.0.0",
     contractVersion: ProviderContractVersion,
     channel,
-    enabled: true,
-    compatibilityRevision: `${id}-settings-v1`,
+    revision: `${id}-settings-v1`,
     constraints: { minCodeLength: 6, maxCodeLength: 8, minDeliveryWindowMs: 0 },
     defaultSendTimeoutMs: 5_000,
     sendTimeoutMs: 5_000,
@@ -190,22 +195,34 @@ const configuration = {
       fingerprint: { active: "fingerprint-v1", keys: { "fingerprint-v1": key(3) } },
       recipientKey: key(4),
     },
-    defaultLocale: "en",
-    fallbackLocales: [],
-    policies: {
-      default: {
-        providerInstanceIds: ["fake-primary", "fake-secondary"],
-        managed: { codeLength: 6, lifetimeSeconds: 300, maxIncorrectGuesses: 3 },
-        maxSends: 6,
-        resendCooldownSeconds: 30,
-        manualSelectionEnabled: true,
-      },
-    },
-    purposes: { login: ["default"] },
     administration: {
       principalIds: ["backend"],
       administrators: {
         admin: {
+          runtimeActions: ["read", "manage", "rotate", "policy", "assign", "audit"],
+          resourceIds: [],
+          resourcePrefixes: [
+            "restricted",
+            "managed",
+            "external",
+            "benchmark",
+            "fault",
+            "fake",
+            "primary",
+            "secondary",
+            "first",
+            "second",
+            "login",
+            "default",
+            "demo",
+            "process",
+            "text",
+            "scope",
+            "account",
+            "telegram",
+            "whatsapp",
+            "sms",
+          ],
           actions: [
             "create",
             "read",
@@ -235,9 +252,24 @@ const configuration = {
     recipientSendLimit15m: 10,
     recipientGuessLimit15m: 10,
   },
-  providers: [
+  fixtures: {
+    defaultLocale: "en",
+    fallbackLocales: [],
+    policies: {
+      default: {
+        providerInstanceIds: ["fake-primary", "fake-secondary"],
+        managed: { codeLength: 6, lifetimeSeconds: 300, maxIncorrectGuesses: 3 },
+        maxSends: 6,
+        resendCooldownSeconds: 30,
+        manualSelectionEnabled: true,
+      },
+    },
+    purposes: { login: ["default"] },
+  },
+  providerFixtures: [
     providerLayer("fake-primary", "fake", primary),
     providerLayer("fake-secondary", "sms", secondary),
+    providerLayer("fake-tertiary", "sms", tertiary),
   ],
 } as const;
 
@@ -286,12 +318,12 @@ const deliveryFromCreated = async (result: OperationResult): Promise<string> => 
   ).id;
 };
 
-const fetchJob = async (): Promise<{ readonly id: string; readonly data: DeliveryJobType }> => {
+const fetchJob = async () => {
   const jobs = await currentRuntime().queue.fetch<unknown>(deliveryQueue, { batchSize: 1 });
   const job = jobs[0];
   if (job === undefined) throw new Error("Expected a queued delivery job");
   const data = Schema.decodeUnknownSync(DeliveryJob)(job.data);
-  return { id: job.id, data };
+  return { id: job.id, retryCount: job.retryCount, data };
 };
 
 const dispatchNext = async (
@@ -300,7 +332,7 @@ const dispatchNext = async (
   const harness = currentRuntime();
   const job = await fetchJob();
   await harness.run(dispatch(config, job.data));
-  await harness.queue.complete(deliveryQueue, job.id);
+  await harness.queue.complete(deliveryQueue, job);
   return job.data;
 };
 
@@ -333,7 +365,7 @@ const withProviderIdempotency = (
   config: RuntimeConfiguration,
   providerInstanceId: string,
 ): RuntimeConfiguration => {
-  const providers = new Map(config.providers);
+  const providers = new Map(currentRuntime().providers);
   const provider = providers.get(providerInstanceId);
   if (provider === undefined) throw new Error(`Expected provider ${providerInstanceId}`);
   providers.set(providerInstanceId, {
@@ -342,7 +374,7 @@ const withProviderIdempotency = (
       supported: true,
     },
   });
-  return { ...config, providers };
+  return { ...config, adapters: fixtureAdapters(providers) };
 };
 
 const createDirect = (
@@ -360,38 +392,64 @@ const createDirect = (
     }),
   );
 
-const withThreeProviders = (): RuntimeConfiguration => {
-  const harness = currentRuntime();
-  const providers = new Map(harness.configuration.providers);
-  const second = providers.get("fake-secondary");
-  const policy = harness.configuration.settings.policies["default"];
-  if (second === undefined || policy === undefined)
-    throw new Error("Expected the secondary provider and default policy");
-  const tertiaryId = Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-tertiary");
-  providers.set("fake-tertiary", {
-    ...second,
-    instanceId: tertiaryId,
-    compatibilityRevision: "fake-tertiary-settings-v1",
-    send: (input) =>
-      Effect.sync(() => {
-        tertiary.sends.push(input);
-        return tertiary.outcome;
-      }).pipe(Effect.flatMap((outcome) => sendOutcome("fake-tertiary", input, tertiary, outcome))),
-  });
-  return {
-    ...harness.configuration,
-    providers,
-    settings: {
-      ...harness.configuration.settings,
-      policies: {
-        ...harness.configuration.settings.policies,
-        default: {
-          ...policy,
-          providerInstanceIds: ["fake-primary", "fake-secondary", "fake-tertiary"],
-        },
+const updatePolicy = async (settings: Partial<Policy>, config = currentRuntime().configuration) => {
+  const h = currentRuntime();
+  const before = await Effect.runPromise(h.runtime.get("admin", "policy", "default"));
+  if (before.data.kind !== "policy") throw new Error("Missing policy");
+  await h.run(
+    mutateRuntime(config, {
+      actorId: "admin",
+      key: randomUUID(),
+      command: {
+        action: "update",
+        kind: "policy",
+        id: "default",
+        expectedRevision: before.revision,
+        settings: { ...before.data.settings, ...settings },
       },
-    },
-  };
+    }),
+  );
+};
+const updateInstance = async (id: string, settings: Partial<typeof InstanceSettings.Type>) => {
+  const h = currentRuntime();
+  const before = await Effect.runPromise(h.runtime.get("admin", "instance", id));
+  if (before.data.kind !== "instance") throw new Error("Missing instance");
+  await Effect.runPromise(
+    h.runtime.mutate({
+      actorId: "admin",
+      key: randomUUID(),
+      command: {
+        action: "update",
+        kind: "instance",
+        id,
+        expectedRevision: before.revision,
+        settings: { ...before.data.settings, ...settings },
+      },
+    }),
+  );
+};
+const limitProviders = async (limits: Readonly<Record<string, number>>) => {
+  const h = currentRuntime();
+  for (const [id, sendLimit15m] of Object.entries(limits)) {
+    const before = await Effect.runPromise(h.runtime.get("admin", "scope", id));
+    await Effect.runPromise(
+      h.runtime.mutate({
+        actorId: "admin",
+        key: randomUUID(),
+        command: {
+          action: "update",
+          kind: "scope",
+          id,
+          expectedRevision: before.revision,
+          settings: { sendLimit15m, sendLimit24h: 1000000 },
+        },
+      }),
+    );
+  }
+};
+const withThreeProviders = async (): Promise<RuntimeConfiguration> => {
+  await updatePolicy({ providerInstanceIds: ["fake-primary", "fake-secondary", "fake-tertiary"] });
+  return currentRuntime().configuration;
 };
 
 const Counts = Schema.Struct({ count: Schema.Int });
@@ -462,6 +520,7 @@ beforeAll(async () => {
       },
       {
         projects: runtime.projects,
+        runtime: runtime.runtime,
         router: runtime.router,
         delivery: runtime.delivery,
         history: runtime.history,
@@ -535,6 +594,7 @@ describe("PostgreSQL integration", () => {
     const nextApiKey = "integration-next-api-key-that-is-at-least-32-bytes";
     const dependencies = {
       projects: currentRuntime().projects,
+      runtime: currentRuntime().runtime,
       router: currentRuntime().router,
       delivery: currentRuntime().delivery,
       history: currentRuntime().history,
@@ -881,12 +941,12 @@ describe("PostgreSQL integration", () => {
     ]);
 
     await harness.run(dispatch(harness.configuration, oldJob.data));
-    await harness.queue.complete(deliveryQueue, oldJob.id);
+    await harness.queue.complete(deliveryQueue, oldJob);
     const queued = await harness.queue.fetch<unknown>(deliveryQueue, { batchSize: 10 });
     for (const job of queued) {
       const data = Schema.decodeUnknownSync(DeliveryJob)(job.data);
       await harness.run(dispatch(harness.configuration, data));
-      await harness.queue.complete(deliveryQueue, job.id);
+      await harness.queue.complete(deliveryQueue, job);
     }
 
     expect(primary.sends).toHaveLength(0);
@@ -1074,12 +1134,13 @@ describe("PostgreSQL integration", () => {
 
   it("does not complete a quota-rejected operation key and accepts it after the window", async () => {
     const harness = currentRuntime();
-    const config = withSettings({ providerSendLimits15m: { "fake-primary": 1 } });
+    await limitProviders({ "fake-primary": 1 });
+    const config = currentRuntime().configuration;
     const created = await createDirect(config, "quota-retry-create");
     const challengeId = challengeIdFrom(created);
     const eventId = randomUUID();
     await harness.run(
-      harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${eventId},clock_timestamp()) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'provider','fake-primary',event_id,kind FROM event`,
+      harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${eventId},clock_timestamp()) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'shared','fake-primary',event_id,kind FROM event`,
     );
     await harness.run(
       harness.pg`UPDATE otp_router.delivery_operations SET next_user_send_at = clock_timestamp() - interval '1 second' WHERE id IN (SELECT operation_id FROM otp_router.challenges WHERE id::text = ${challengeId})`,
@@ -1239,7 +1300,7 @@ describe("PostgreSQL integration", () => {
     "keeps a rejection combined with a finalizer %s uncertain",
     async (failureKind) => {
       const harness = currentRuntime();
-      const providers = new Map(harness.configuration.providers);
+      const providers = new Map(harness.providers);
       const original = providers.get("fake-primary");
       if (original === undefined) throw new Error("Expected the primary provider");
       let invocations = 0;
@@ -1264,7 +1325,10 @@ describe("PostgreSQL integration", () => {
             ),
           ),
       });
-      const config: RuntimeConfiguration = { ...harness.configuration, providers };
+      const config: RuntimeConfiguration = {
+        ...harness.configuration,
+        adapters: fixtureAdapters(providers),
+      };
       await createDirect(config, "mixed-provider-failure");
       const job = await fetchJob();
       const exit = await harness.run(dispatch(config, job.data).pipe(Effect.exit));
@@ -1296,7 +1360,7 @@ describe("PostgreSQL integration", () => {
 
   it("enforces an instance timeout and keeps a never-completing send uncertain", async () => {
     const harness = currentRuntime();
-    const providers = new Map(harness.configuration.providers);
+    const providers = new Map(harness.providers);
     const original = providers.get("fake-primary");
     const secondaryProvider = providers.get("fake-secondary");
     if (original === undefined || secondaryProvider === undefined)
@@ -1311,7 +1375,11 @@ describe("PostgreSQL integration", () => {
           primary.sends.push(input);
         }).pipe(Effect.andThen(Effect.never)),
     });
-    const config: RuntimeConfiguration = { ...harness.configuration, providers };
+    const config: RuntimeConfiguration = {
+      ...harness.configuration,
+      adapters: fixtureAdapters(providers),
+    };
+    await updateInstance("fake-primary", { sendTimeoutMs: 20 });
     const created = await createDirect(config, "provider-timeout-create");
     const job = await fetchJob();
     expect(
@@ -1450,25 +1518,23 @@ describe("PostgreSQL integration", () => {
           };
         }),
     });
-    const providerConfig = Schema.decodeUnknownSync(telegram.configSchema)({
-      apiToken: "test-token",
-    });
     const context = await Effect.runPromise(
       Effect.scoped(
         Layer.build(
           telegram.make({
             instanceId: Schema.decodeUnknownSync(ProviderInstanceIdSchema)("fake-primary"),
-            enabled: true,
-            compatibilityRevision: "telegram-test-v1",
-            config: providerConfig,
+            revision: "telegram-test-v1",
+            identity: { account: "test" },
+            secrets: { apiToken: "test-token" },
+            execution: {},
             templates: {},
           }),
         ),
       ),
     );
-    const providers = new Map(harness.configuration.providers);
+    const providers = new Map(harness.providers);
     providers.set("fake-primary", Context.get(context, ProviderInstance));
-    const config = { ...harness.configuration, providers };
+    const config = { ...harness.configuration, adapters: fixtureAdapters(providers) };
     const created = await createDirect(config, "telegram-rejection-fallback");
     const code = await readCode(created.body.challengeId);
     await dispatchNext(config);
@@ -1587,7 +1653,7 @@ describe("PostgreSQL integration", () => {
   });
 
   it("falls forward from an initially selected middle provider without route wraparound", async () => {
-    const config = withThreeProviders();
+    const config = await withThreeProviders();
     secondary.outcome = "rejected";
     await createDirect(config, "middle-provider-create", {
       ...createInput(),
@@ -1703,11 +1769,23 @@ describe("PostgreSQL integration", () => {
   it("skips an emergency-disabled provider without reserving a send", async () => {
     const harness = currentRuntime();
     const created = await create("disabled-current-provider");
-    const providers = new Map(harness.configuration.providers);
-    const current = providers.get("fake-primary");
-    if (current === undefined) throw new Error("Expected the primary provider");
-    providers.set("fake-primary", { ...current, enabled: false });
-    const config: RuntimeConfiguration = { ...harness.configuration, providers };
+    const current = await Effect.runPromise(
+      harness.runtime.get("admin", "instance", "fake-primary"),
+    );
+    await Effect.runPromise(
+      harness.runtime.mutate({
+        actorId: "admin",
+        key: randomUUID(),
+        command: {
+          action: "lifecycle",
+          kind: "instance",
+          id: "fake-primary",
+          expectedRevision: current.revision,
+          state: "disabled",
+        },
+      }),
+    );
+    const config = harness.configuration;
 
     await dispatchNext(config);
     expect(primary.sends).toHaveLength(0);
@@ -1945,21 +2023,10 @@ describe("PostgreSQL integration", () => {
 
   it("preserves a fifteen-minute deadline and code on resend and erases terminal secrets", async () => {
     const harness = currentRuntime();
-    const policy = harness.configuration.settings.policies["default"];
+    const policy = harness.policies["default"];
     if (policy?.managed === undefined) throw new Error("Expected the managed default policy");
-    const config = withProviderIdempotency(
-      {
-        ...harness.configuration,
-        settings: {
-          ...harness.configuration.settings,
-          policies: {
-            ...harness.configuration.settings.policies,
-            default: { ...policy, managed: { ...policy.managed, lifetimeSeconds: 900 } },
-          },
-        },
-      },
-      "fake-primary",
-    );
+    await updatePolicy({ managed: { ...policy.managed, lifetimeSeconds: 900 } });
+    const config = withProviderIdempotency(harness.configuration, "fake-primary");
     const created = await createDirect(config, "idempotent-provider-create");
     const challengeId = challengeIdFrom(created);
     const initialSnapshot = Schema.decodeUnknownSync(Snapshot)(created.body);
@@ -2051,18 +2118,10 @@ describe("PostgreSQL integration", () => {
 
   it("keeps verification available after the send budget is exhausted", async () => {
     const harness = currentRuntime();
-    const policy = harness.configuration.settings.policies["default"];
+    const policy = harness.policies["default"];
     if (policy === undefined) throw new Error("Expected the default policy");
-    const config: RuntimeConfiguration = {
-      ...harness.configuration,
-      settings: {
-        ...harness.configuration.settings,
-        policies: {
-          ...harness.configuration.settings.policies,
-          default: { ...policy, maxSends: 1 },
-        },
-      },
-    };
+    await updatePolicy({ maxSends: 1 });
+    const config = harness.configuration;
     const created = await createDirect(config, "send-budget-verification");
     const challengeId = challengeIdFrom(created);
     const code = await readCode(challengeId);
@@ -2136,23 +2195,25 @@ describe("PostgreSQL integration", () => {
 
   it("preserves an adapter handshake status, content type, and raw bytes over HTTP", async () => {
     const harness = currentRuntime();
-    const provider = harness.configuration.providers.get("fake-primary");
-    if (provider === undefined) throw new Error("Missing fake provider");
+    const adapter = harness.configuration.adapters.get("fake-primary");
+    if (adapter === undefined) throw new Error("Missing fake adapter");
     const bytes = new Uint8Array([0, 255, 128, 65]);
     const configuration = {
       ...harness.configuration,
-      providers: new Map([
+      adapters: new Map([
         [
-          provider.instanceId,
+          adapter.id,
           {
-            ...provider,
-            callback: () =>
-              Effect.succeed({
-                _tag: "Handshake" as const,
-                status: 202,
-                contentType: "application/octet-stream",
-                body: bytes,
-              }),
+            ...adapter,
+            makeCallback: () =>
+              Effect.succeed(() =>
+                Effect.succeed({
+                  _tag: "Handshake" as const,
+                  status: 202,
+                  contentType: "application/octet-stream",
+                  body: bytes,
+                }),
+              ),
           },
         ],
       ]),
@@ -2171,6 +2232,7 @@ describe("PostgreSQL integration", () => {
       },
       {
         projects: harness.projects,
+        runtime: harness.runtime,
         router: harness.router,
         delivery: harness.delivery,
         history: harness.history,
@@ -2341,18 +2403,17 @@ describe("PostgreSQL integration", () => {
 
   it("selects an available same-channel provider while preserving explicit provider quotas", async () => {
     const harness = currentRuntime();
-    const providers = new Map(harness.configuration.providers);
+    const providers = new Map(harness.providers);
     const first = providers.get("fake-primary");
     if (first === undefined) throw new Error("Expected the primary provider");
     providers.set("fake-primary", { ...first, channel: "sms" });
+    await limitProviders({ "fake-primary": 1, "fake-secondary": 1 });
     const config: RuntimeConfiguration = {
-      ...withSettings({
-        providerSendLimits15m: { "fake-primary": 1, "fake-secondary": 1 },
-      }),
-      providers,
+      ...harness.configuration,
+      adapters: fixtureAdapters(providers),
     };
     await harness.run(
-      harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${randomUUID()},clock_timestamp()) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'provider','fake-primary',event_id,kind FROM event`,
+      harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${randomUUID()},clock_timestamp()) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'shared','fake-primary',event_id,kind FROM event`,
     );
     const created = await createDirect(config, "same-channel-create", {
       ...createInput(),
@@ -2488,15 +2549,16 @@ describe("PostgreSQL integration", () => {
     const base = currentRuntime().configuration;
     const runFailure = async (
       operationKey: string,
-      selector: RuntimeConfiguration["selectors"][string],
+      selector: RoutingSelector,
       expectedCode: string,
       input: CreateInput = createInput(),
     ): Promise<void> => {
       const selected: RuntimeConfiguration = {
         ...base,
         settings: { ...base.settings, selectorTimeoutMs: 5 },
-        selectors: { default: selector },
+        selectors: new Map([["default", { version: "1", select: selector }]]),
       };
+      await updatePolicy({ selectorId: "default" }, selected);
       const result = await currentRuntime().run(
         Effect.result(
           createChallenge(selected, {
@@ -2535,8 +2597,8 @@ describe("PostgreSQL integration", () => {
 
   it("persists per-provider locale templates and reuses them without rerunning selection", async () => {
     const base = currentRuntime().configuration;
-    const originalPrimary = base.providers.get("fake-primary");
-    const originalSecondary = base.providers.get("fake-secondary");
+    const originalPrimary = currentRuntime().providers.get("fake-primary");
+    const originalSecondary = currentRuntime().providers.get("fake-secondary");
     if (originalPrimary === undefined || originalSecondary === undefined)
       throw new Error("Expected both integration providers");
     const seenPrimary: string[][] = [];
@@ -2558,29 +2620,34 @@ describe("PostgreSQL integration", () => {
         });
       },
     };
-    const providers = new Map(base.providers);
+    const providers = new Map(currentRuntime().providers);
     providers.set("fake-primary", localizedPrimary);
     providers.set("fake-secondary", localizedSecondary);
     let selectorRuns = 0;
     const config: RuntimeConfiguration = {
       ...base,
-      providers,
-      selectors: {
-        default: () =>
-          Effect.sync(() => {
-            selectorRuns += 1;
-            return {
-              _tag: "Route" as const,
-              providerInstanceIds: ["fake-primary", "fake-secondary"],
-            };
-          }),
-      },
-      settings: {
-        ...base.settings,
-        defaultLocale: "en",
-        fallbackLocales: ["ru", "en", "ru", "en"],
-      },
+      adapters: fixtureAdapters(providers),
+      selectors: new Map([
+        [
+          "default",
+          {
+            version: "1",
+            select: () =>
+              Effect.sync(() => {
+                selectorRuns += 1;
+                return {
+                  _tag: "Route" as const,
+                  providerInstanceIds: ["fake-primary", "fake-secondary"],
+                };
+              }),
+          },
+        ],
+      ]),
     };
+    await updatePolicy(
+      { selectorId: "default", defaultLocale: "en", fallbackLocales: ["ru", "en", "ru", "en"] },
+      config,
+    );
     const created = await createDirect(config, "locale-fallback", {
       ...createInput(),
       locale: "uz",
@@ -2795,14 +2862,12 @@ it.each([
   "skips a provider-specific quota exhausted before $phase",
   async ({ phase, blockedId, blocked, delivered, sends }) => {
     const harness = currentRuntime();
-    const base = withThreeProviders();
-    const config: RuntimeConfiguration = {
-      ...base,
-      settings: { ...base.settings, providerSendLimits15m: { [blockedId]: 1 } },
-    };
+    const base = await withThreeProviders();
+    await limitProviders({ [blockedId]: 1 });
+    const config = base;
     const exhaust = () =>
       harness.run(
-        harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${randomUUID()},clock_timestamp()) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'provider',${blockedId},event_id,kind FROM event`,
+        harness.pg`WITH event AS (INSERT INTO otp_router.quota_events(kind,event_id,occurred_at) VALUES ('send',${randomUUID()},clock_timestamp()) RETURNING event_id,kind) INSERT INTO otp_router.quota_allocations(scope,scope_id,event_id,kind) SELECT 'shared',${blockedId},event_id,kind FROM event`,
       );
     if (phase === "creation") await exhaust();
     const created = await createDirect(config, `skip-quota-${phase}`);

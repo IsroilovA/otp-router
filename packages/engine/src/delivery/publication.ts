@@ -4,7 +4,7 @@ import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
 import { single } from "../database/query.js";
 import type { RuntimeConfiguration } from "../config/config.js";
-import { persistEvent } from "../notifications/publication.js";
+import { persistEvent } from "../history/publication.js";
 import { databaseTime } from "../database/transaction.js";
 import { type DeliveryEvent, Snapshot } from "./contracts.js";
 import { canonical } from "../crypto.js";

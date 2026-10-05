@@ -2,17 +2,20 @@
   "name": "otp-router-custom-adapter-example",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.5.1",
+  "packageManager": "pnpm@12.8.1",
   "dependencies": {
     "effect": "4.0.0-rc.116",
     "@otp-router/engine": "workspace:*"
   },
   "devDependencies": {
-    "@types/node": "24.13.6",
+    "@types/node": "26.6.3",
     "typescript": "7.0.2"
   },
   "scripts": {
     "build": "tsc -p tsconfig.fixture.json",
     "test": "node dist/smoke.js"
+  },
+  "engines": {
+    "node": ">=26.10.0"
   }
 }

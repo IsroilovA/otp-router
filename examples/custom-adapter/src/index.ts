@@ -31,9 +31,13 @@ const send = (config: TextConfiguration, input: ProviderSendInput): Effect.Effec
 
 export const TextProvider = defineProvider({
   ...metadata,
-  configSchema: TextConfigurationSchema,
+  schemaVersion: "1",
+  identitySchema: Schema.Struct({ account: Schema.NonEmptyString }),
+  secretsSchema: Schema.Struct({}),
+  callbackSecretsSchema: Schema.Struct({}),
+  executionSchema: TextConfigurationSchema,
   templateSchema: null,
-  create: (config) => ({ send: (input) => send(config, input) }),
+  create: ({ execution }) => ({ send: (input) => send(execution, input) }),
 });
 
 export const textSelector: RoutingSelector = ({ recipient }) =>

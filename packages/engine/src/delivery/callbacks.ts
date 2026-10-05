@@ -1,3 +1,4 @@
+import { resource } from "../runtime/store.js";
 import { lockProject } from "../projects/store.js";
 import { deliveryTransaction as transaction } from "./transaction.js";
 import { SqlClient } from "effect/unstable/sql";
@@ -16,6 +17,10 @@ import {
   providerReference,
   registerCorrelation,
 } from "./correlation.js";
+
+export interface CallbackEvidence extends NormalizedDeliveryEvent {
+  readonly instanceRevisions?: readonly number[];
+}
 
 const Inbox = Schema.Struct({
   provider_instance_id: Schema.String,
@@ -70,9 +75,12 @@ const reconcile = (config: RuntimeConfiguration, providerId: string, reference: 
     const initial = yield* findAttempt(attemptId);
     const locked = yield* findOperation(initial.operation_id);
     const operation = yield* expire(locked, yield* databaseTime);
+    const revision = operation.snapshot.providers[initial.route_position]?.instanceRevision;
+    if (revision === undefined)
+      return yield* Effect.die(new Error("Missing callback route revision"));
     const events = yield* rows(
       Inbox,
-      sql`SELECT * FROM otp_router.callback_inbox WHERE provider_instance_id = ${providerId} AND reference = ${reference} AND processed = false ORDER BY received_at,deduplication_key FOR UPDATE`,
+      sql`SELECT * FROM otp_router.callback_inbox WHERE provider_instance_id = ${providerId} AND reference = ${reference} AND processed = false AND (instance_revisions IS NULL OR instance_revisions @> ${JSON.stringify([revision])}::jsonb) ORDER BY received_at,deduplication_key FOR UPDATE`,
     );
     for (const event of events) {
       const delivery = yield* findAttempt(attemptId);
@@ -85,28 +93,52 @@ const reconcile = (config: RuntimeConfiguration, providerId: string, reference: 
       yield* sql`UPDATE otp_router.callback_inbox SET processed = true WHERE provider_instance_id = ${providerId} AND deduplication_key = ${event.deduplication_key}`;
     }
   });
+const registerEventAlias = (
+  config: RuntimeConfiguration,
+  providerId: string,
+  event: NormalizedDeliveryEvent,
+  revisions: readonly number[] | undefined,
+) =>
+  Effect.gen(function* () {
+    if (event.providerRequestId === undefined || event.correlationReference._tag !== "Attempt")
+      return;
+    const attemptId = yield* findCorrelation(
+      providerId,
+      correlationKey(config.settings.crypto, event.correlationReference),
+    );
+    if (attemptId === undefined) return;
+    const attempt = yield* findAttempt(attemptId);
+    const operation = yield* findOperation(attempt.operation_id);
+    const revision = operation.snapshot.providers[attempt.route_position]?.instanceRevision;
+    if (revisions !== undefined && (revision === undefined || !revisions.includes(revision)))
+      return;
+    const alias = providerReference(config.settings.crypto, event.providerRequestId);
+    yield* registerCorrelation(providerId, alias, attemptId);
+    return alias;
+  });
+
 const ingestLockedEvents = (
   config: RuntimeConfiguration,
   providerId: string,
-  events: readonly NormalizedDeliveryEvent[],
+  events: readonly CallbackEvidence[],
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
+    const instance = yield* resource("instance", providerId);
+    if (instance.data.kind !== "instance") return yield* Effect.die(new Error("Invalid instance"));
+    const account = yield* resource("account", instance.data.accountId);
+    const adapter =
+      account.data.kind === "account" ? config.adapters.get(account.data.adapterId) : undefined;
+
     const references = new Set<string>();
     for (const event of events) {
       const reference = correlationKey(config.settings.crypto, event.correlationReference);
       references.add(reference);
-      if (event.providerRequestId !== undefined && event.correlationReference._tag === "Attempt") {
-        const attemptId = yield* findCorrelation(providerId, reference);
-        if (attemptId !== undefined) {
-          const alias = providerReference(config.settings.crypto, event.providerRequestId);
-          yield* registerCorrelation(providerId, alias, attemptId);
-          references.add(alias);
-        }
-      }
+      const alias = yield* registerEventAlias(config, providerId, event, event.instanceRevisions);
+      if (alias !== undefined) references.add(alias);
       // A provider cancellation report is final failure evidence, never local cancellation or verification.
       const status = event.status === "cancelled" ? "failed" : event.status;
-      yield* sql`INSERT INTO otp_router.callback_inbox(provider_instance_id,deduplication_key,reference,status,received_at,event_at,diagnostic_code) VALUES (${providerId},${callbackIdentity(config.settings.crypto, event.deduplicationKey)},${reference},${status},clock_timestamp(),${event.providerEventTime ?? null},${event.diagnosticCode === undefined ? null : providerDiagnostic(config.providers.get(providerId), event.diagnosticCode)}) ON CONFLICT DO NOTHING`;
+      yield* sql`INSERT INTO otp_router.callback_inbox(provider_instance_id,deduplication_key,reference,status,received_at,event_at,diagnostic_code,instance_revisions) VALUES (${providerId},${callbackIdentity(config.settings.crypto, event.deduplicationKey)},${reference},${status},clock_timestamp(),${event.providerEventTime ?? null},${event.diagnosticCode === undefined ? null : providerDiagnostic(adapter, event.diagnosticCode)},${event.instanceRevisions === undefined ? null : JSON.stringify(event.instanceRevisions)}::jsonb) ON CONFLICT DO NOTHING`;
     }
     for (const reference of [...references].sort()) yield* reconcile(config, providerId, reference);
   });
@@ -114,7 +146,7 @@ const ingestLockedEvents = (
 export const ingestEvents = (
   config: RuntimeConfiguration,
   providerId: string,
-  events: readonly NormalizedDeliveryEvent[],
+  events: readonly CallbackEvidence[],
 ) =>
   transaction(
     config,

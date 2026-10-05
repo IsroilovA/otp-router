@@ -3,7 +3,7 @@
 ## Boundaries
 
 - `challenges/` owns generation, binding, guesses, and verification. `delivery/` owns routing, attempts, quotas, and callbacks; it must not depend on managed verification.
-- `notifications/` owns public events and outbound webhooks. Features must not import workers or application startup.
+- `history/` owns reconciliation reads, public event publication, and event retention. `notifications/` owns outbound webhook scheduling, sending, and retries. Publication schedules notifications inside the domain transaction. Features must not import workers or application startup.
 - `providers/` owns contracts and adapters. Normalize external outcomes; never choose fallback providers or verify challenges.
 - `queue/` owns pg-boss and must not import feature orchestration. `database/` owns connections, migrations, and transactions. `worker/` processes durable jobs.
 - `config/` validates supplied settings; never read environment variables, process arguments, API keys, or listener settings. Importing the engine must not start resources.

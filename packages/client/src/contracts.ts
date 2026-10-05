@@ -64,3 +64,9 @@ export type AdminClientOptions = Omit<ClientOptions, "projectId">;
 export interface AdminMutationOptions extends MutationOptions {
   readonly etag: string;
 }
+
+type Runtime = typeof OtpRouterApi.groups.runtimeAdministration.endpoints;
+export type RuntimeCommandDto = Runtime["mutate"]["~Payload"]["Type"]["command"];
+export type RuntimeResourceKind = Runtime["get"]["~Params"]["Type"]["kind"];
+export type RuntimePageQuery = Runtime["list"]["~Query"]["Type"];
+export type RuntimeResourceDto = Runtime["get"]["~Success"]["Type"]["body"];

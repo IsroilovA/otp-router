@@ -1,3 +1,10 @@
+import {
+  activeGrant,
+  instanceAuthority,
+  intentRuntimeAuthority,
+  resource,
+  revisionValid,
+} from "../runtime/store.js";
 import { commonSendLimits, providerSendLimits, quotaBlocks } from "../delivery/quotas.js";
 import { deliveryWindowFits } from "../providers/timing.js";
 import { SqlClient } from "effect/unstable/sql";
@@ -8,15 +15,27 @@ import { type Choice } from "./input.js";
 import { DomainError } from "../errors.js";
 import type { Operation, SavedProvider } from "./records.js";
 
-const providerCompatible = (config: RuntimeConfiguration, saved: SavedProvider) => {
-  const provider = config.providers.get(saved.providerInstanceId);
-  return (
-    provider !== undefined &&
-    provider.enabled &&
-    provider.compatibilityRevision === saved.compatibilityRevision &&
-    provider.pluginId === saved.pluginId
-  );
-};
+export const intentEligible = (intentId: string) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const result = yield* rows(
+      Schema.Struct({ eligible: Schema.Boolean }),
+      sql`SELECT EXISTS (
+        SELECT 1 FROM otp_router.send_intents i
+        JOIN otp_router.delivery_operations o ON o.id = i.operation_id
+        JOIN otp_router.projects p ON p.id = i.project_id
+        JOIN otp_router.project_principal_grants g ON g.id = i.principal_grant_id
+        JOIN otp_router.routing_policies policy ON policy.id = o.policy_id
+        JOIN otp_router.runtime_grants assignment ON assignment.id = i.authority->>'policyGrantId'
+          AND assignment.project_id = i.project_id AND assignment.kind = 'policy' AND assignment.resource_id = policy.id
+        WHERE i.id = ${intentId} AND p.state = 'active' AND p.send_epoch = i.project_send_epoch
+          AND g.revoked_at IS NULL AND assignment.revoked_at IS NULL
+          AND policy.state = 'enabled' AND policy.epoch = (i.authority->>'policyEpoch')::integer
+      ) AS eligible`,
+    );
+    return result[0]?.eligible === true;
+  });
+
 export interface ProviderAvailability {
   readonly provider: SavedProvider;
   readonly position: number;
@@ -26,6 +45,7 @@ export const availableProviders = (
   config: RuntimeConfiguration,
   operation: Pick<Operation, "snapshot" | "expires_at" | "recipient_token" | "project_id">,
   time: Date,
+  intentId?: string,
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -33,45 +53,69 @@ export const availableProviders = (
       Schema.Struct({ provider_instance_id: Schema.String, retry_at: Schema.Date }),
       sql`SELECT provider_instance_id,retry_at FROM otp_router.provider_restrictions WHERE retry_at > ${time}`,
     );
-    const candidates = operation.snapshot.providers.flatMap((provider, position) =>
-      providerCompatible(config, provider) &&
-      deliveryWindowFits(provider, operation.expires_at.getTime() - time.getTime())
-        ? [{ provider, position }]
-        : [],
-    );
-    const blocks = yield* quotaBlocks(
-      [
-        ...(yield* commonSendLimits(
-          config.settings,
-          operation.recipient_token,
-          operation.project_id,
-        )),
-        ...candidates.flatMap(({ provider }) =>
-          providerSendLimits(config.settings, provider.providerInstanceId),
-        ),
-      ],
-      time,
-    );
-    const commonRetry = blocks
-      .filter((block) => block.scope !== "provider")
-      .map((block) => block.retry_at.toISOString())
-      .sort()
-      .at(-1);
-    return candidates.map(({ provider, position }) => {
-      const providerRetry = blocks
-        .find(
-          (block) => block.scope === "provider" && block.scope_id === provider.providerInstanceId,
-        )
-        ?.retry_at.toISOString();
+    const policy = yield* resource("policy", operation.snapshot.policyId);
+    if (
+      policy.state !== "enabled" ||
+      (yield* activeGrant(operation.project_id, "policy", policy.id)) === undefined ||
+      !(yield* revisionValid("policy", policy.id, operation.snapshot.policyRevision))
+    )
+      return [];
+    const authority = intentId === undefined ? undefined : yield* intentRuntimeAuthority(intentId);
+    const candidates = [];
+    for (const [position, provider] of operation.snapshot.providers.entries()) {
+      const savedAuthority = authority?.steps.find(
+        (step) => step.instanceId === provider.providerInstanceId,
+      );
+      const current = yield* instanceAuthority(
+        operation.project_id,
+        provider.providerInstanceId,
+        savedAuthority?.grantId,
+      );
+      if (
+        current === undefined ||
+        !(yield* revisionValid(
+          "instance",
+          provider.providerInstanceId,
+          provider.instanceRevision,
+        )) ||
+        !deliveryWindowFits(provider, operation.expires_at.getTime() - time.getTime())
+      )
+        continue;
+      if (
+        intentId !== undefined &&
+        authority?.steps.some(
+          (step) =>
+            step.instanceId === provider.providerInstanceId &&
+            step.instanceEpoch === current.instance.epoch &&
+            step.accountEpoch === current.account.epoch &&
+            step.grantId === current.grantId,
+        ) !== true
+      )
+        continue;
+      const blocks = yield* quotaBlocks(
+        [
+          ...(yield* commonSendLimits(
+            config.settings,
+            operation.recipient_token,
+            operation.project_id,
+          )),
+          ...(yield* providerSendLimits(provider.providerInstanceId)),
+        ],
+        time,
+      );
       const restriction = restrictions.find(
         (row) => row.provider_instance_id === provider.providerInstanceId,
       );
-      const retryAt = [commonRetry, providerRetry, restriction?.retry_at.toISOString()]
+      const retryAt = [
+        ...blocks.map((block) => block.retry_at.toISOString()),
+        restriction?.retry_at.toISOString(),
+      ]
         .filter((value) => value !== undefined)
         .sort()
         .at(-1);
-      return { provider, position, retryAt };
-    });
+      candidates.push({ provider, position, retryAt });
+    }
+    return candidates;
   });
 
 export const chooseAvailable = (available: readonly ProviderAvailability[]) =>
