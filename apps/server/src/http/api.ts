@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { HttpApi, OpenApi } from "effect/unstable/httpapi";
+import { HttpApi, OpenApi } from "effect/http-api";
 import { ChallengeEvent } from "@otp-router/engine/challenges";
 import { DeliveryEvent, AttemptEvent, EvidenceEvent } from "@otp-router/engine/delivery";
 import { ApplicationGroup } from "./application/api.js";
@@ -13,7 +13,7 @@ export const OtpRouterApi = HttpApi.make("otpRouter")
   .annotateMerge(
     OpenApi.annotations({
       title: "OTP Router API",
-      version: "0.2.0",
+      version: "0.3.0",
       description:
         "Project administration, backend delivery and verification, and provider callback ingress.",
     }),

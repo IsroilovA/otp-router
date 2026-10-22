@@ -1,5 +1,5 @@
 import { runtimeSchema, runtimeProjectSchema } from "../../runtime/schema.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect } from "effect";
 
 export default Effect.gen(function* () {

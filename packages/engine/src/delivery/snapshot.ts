@@ -1,5 +1,5 @@
 import { admissionLimit, quotaRetryAt } from "./quotas.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { rows } from "../database/query.js";
 import { Effect, Schema } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";

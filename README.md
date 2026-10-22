@@ -30,6 +30,8 @@ pnpm test
 
 `pnpm check` includes the build. See [AGENTS.md](AGENTS.md) for conventions.
 
+Stable Effect packages include integration APIs marked unstable. Adopted integrations are explicitly allowed in [the compiler configuration](tsconfig.base.json); review them when upgrading the exact package pins. Other unstable API use remains checked.
+
 The server is distributed as a container image and the backend TypeScript client as `@otp-router/client`. Publishing setup and the release process are described in the [release guide](docs/releases.md). Engine and server workspace packages remain private npm packages.
 
 Licensed under [MIT](LICENSE). Copyright 2026 Alisher Isorilov.

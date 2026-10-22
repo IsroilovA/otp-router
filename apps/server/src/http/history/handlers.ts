@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { HttpServerResponse } from "effect/http";
 import { DeliveryHistory } from "@otp-router/engine/history";
 import type { DomainError } from "@otp-router/engine/delivery";
 import { OtpRouterApi } from "../api.js";

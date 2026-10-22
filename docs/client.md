@@ -1,6 +1,6 @@
 # TypeScript client
 
-Use `@otp-router/client` from a trusted Node.js backend. Client `0.2.0` targets server `0.2.0` and its `/v1` API. Check the [release notes](releases.md) for supported pairings before upgrading.
+Use `@otp-router/client` from a trusted Node.js backend. Client `0.3.0` targets server `0.3.0` and its `/v1` API. Check the [release notes](releases.md) for supported pairings before upgrading.
 
 The [package README](../packages/client/README.md) covers installation, configuration, errors, and timeouts; exported declarations define signatures and DTO fields. The [runnable example](../examples/client/README.md) exercises both capabilities with fake providers.
 

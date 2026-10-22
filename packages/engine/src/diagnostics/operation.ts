@@ -1,5 +1,5 @@
 import { Effect, type Schema, type Cause } from "effect";
-import type { SqlError } from "effect/unstable/sql";
+import type { SqlError } from "effect/sql";
 import type { QueueOperationError } from "../queue/contracts.js";
 import { DomainError } from "../errors.js";
 import { logEvent, type ApplicationOperation, type FailureCategory } from "./log.js";

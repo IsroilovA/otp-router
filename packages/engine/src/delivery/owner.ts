@@ -2,7 +2,7 @@ import type { Operation } from "./records.js";
 import type { Snapshot } from "./contracts.js";
 import { Context, type Effect, type Schema, type Cause } from "effect";
 import type { PgClient } from "@effect/sql-pg";
-import type { SqlClient, SqlError } from "effect/unstable/sql";
+import type { SqlClient, SqlError } from "effect/sql";
 import type { Queue } from "../queue/client.js";
 import type { QueueOperationError } from "../queue/contracts.js";
 import type { DomainError } from "../errors.js";

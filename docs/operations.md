@@ -4,11 +4,11 @@ Use a dedicated PostgreSQL database and compatible configuration across all role
 
 The [deployment Compose example](../examples/deployment/compose.yaml) runs a combined router with PostgreSQL. Supply these absolute paths:
 
-| Variable | Contents |
-| --- | --- |
-| `OTP_ROUTER_ENV_FILE` | Router environment file with `DATABASE_URL` using hostname `postgres`, plus the secrets your configuration reads |
-| `OTP_ROUTER_POSTGRES_ENV_FILE` | Separate environment file with `POSTGRES_PASSWORD`, matching `DATABASE_URL` |
-| `OTP_ROUTER_CONFIG_DIR` | Directory containing `router.config.ts`, or the entry selected by `OTP_ROUTER_CONFIG_FILE` |
+| Variable                       | Contents                                                                                                         |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------------- |
+| `OTP_ROUTER_ENV_FILE`          | Router environment file with `DATABASE_URL` using hostname `postgres`, plus the secrets your configuration reads |
+| `OTP_ROUTER_POSTGRES_ENV_FILE` | Separate environment file with `POSTGRES_PASSWORD`, matching `DATABASE_URL`                                      |
+| `OTP_ROUTER_CONFIG_DIR`        | Directory containing `router.config.ts`, or the entry selected by `OTP_ROUTER_CONFIG_FILE`                       |
 
 Keep secrets outside the repository with restricted permissions. Make configuration readable by the container's `node` user. Set a production deployment identity and [real providers](provider-setup.md) before enabling traffic; the local fake provider sends no messages.
 
@@ -39,11 +39,15 @@ A new upstream account requires a new account identity. Ordinary sender/template
 
 ## Database upgrades
 
-Server `0.2.0` requires a fresh database using the [initial router baseline](../packages/engine/src/database/migrations/0001_initial.ts), `runtime-model-v3`. Databases from published `0.1.0` and earlier releases or superseded development baselines are rejected, even when their migration number is also one. There is no incremental migration, import, or backfill, and the router never resets a database automatically. pg-boss manages its own schema initialization and migration history.
+Server `0.3.0` retains the published `0.2.0` [router baseline](../packages/engine/src/database/migrations/0001_initial.ts), `runtime-model-v3`. An existing `0.2.0` database can be upgraded in place; no fresh router database or backfill is required. pg-boss manages its own schema initialization and migration history, and upgrades its schema to version 46 automatically on startup.
 
-Coordinate the server, client, deployment configuration, and strict authorization/event consumers using the [replacement release notes](releases.md#pending-breaking-replacement).
+Back up the database and preserve its cryptographic keys. Stop traffic and every old API/worker process before installing the new release, let startup complete queue migrations, and confirm readiness before restoring traffic. Do not downgrade the migrated queue schema. Coordinate runtime and extension updates using the [0.3.0 release notes](releases.md#pending-030).
 
-Before switching, stop creation and drain old operations, verification, callbacks, and history reconciliation using the old release. Preserve the old database and keys for the required reconciliation period. Create a separate empty database for the new release, install matching configuration, initialize it, and provision projects, runtime providers/policies, and explicit assignments through administration. Point updated callers at the new service only after readiness and provisioning succeed. Never resubmit uncertain sends while moving traffic. Do not connect the new release to the old database or treat an old backup as a fresh installation. Later upgrades follow their published release instructions.
+### Replacing 0.1.0 and earlier
+
+Published `0.1.0` and earlier databases or superseded development baselines are rejected, even when their migration number is also one. Installing `0.2.0` or later from those releases requires a fresh database. There is no incremental migration, import, or backfill, and the router never resets a database automatically. Follow the [0.2.0 replacement requirements](releases.md#published-020-replacement).
+
+Before switching, stop creation and drain old operations, verification, callbacks, and history reconciliation using the old release. Preserve the old database and keys for the required reconciliation period. Create a separate empty database for the new release, install matching configuration, initialize it, and provision projects, runtime providers/policies, and explicit assignments through administration. Point updated callers at the new service only after readiness and provisioning succeed. Never resubmit uncertain sends while moving traffic. Do not connect the new release to the old database or treat an old backup as a fresh installation.
 
 ## API-key rotation
 
@@ -84,7 +88,6 @@ Replay restores the notification attempt budget and requeues the original event,
 ## Troubleshooting
 
 Run `docker compose ps` and `docker compose logs --tail=100 router` with the same Compose file, environment, and project used for deployment. Use `--check-config` to validate settings; use `--check-schema` only when database changes are intended.
-
 - Identity mismatch: restore the correct deployment configuration or use a separate database; never bypass the check by deleting needed data.
 - Capability mismatch: compare executable contracts across roles and follow the [deployment replacement procedure](#configuration-changes).
 - Missing retained keys: restore their original IDs and bytes.

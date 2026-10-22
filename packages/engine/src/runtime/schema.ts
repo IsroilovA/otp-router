@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 
 // Installed once by the fresh-database baseline. Views only assemble read models;
 // ownership, memberships, revision references and credentials live in typed tables.

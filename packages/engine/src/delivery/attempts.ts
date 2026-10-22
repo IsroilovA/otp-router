@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Schema } from "effect";
-import type { SqlError } from "effect/unstable/sql/SqlError";
-import { SqlClient } from "effect/unstable/sql";
+import type { SqlError } from "effect/sql/SqlError";
+import { SqlClient } from "effect/sql";
 import { canonical } from "../crypto.js";
 import { rows } from "../database/query.js";
 import { databaseTime } from "../database/transaction.js";

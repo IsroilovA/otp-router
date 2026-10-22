@@ -1,4 +1,4 @@
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect, Layer } from "effect";
 import { RouterConfig } from "../config/runtime.js";
 import { DeliveryOwner } from "../delivery/owner.js";

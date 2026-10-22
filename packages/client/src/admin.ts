@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import type { HttpApiSchema } from "effect/unstable/httpapi";
-import type { HttpClientResponse } from "effect/unstable/http";
+import type { HttpApiSchema } from "effect/http-api";
+import type { HttpClientResponse } from "effect/http";
 import type {
   RuntimeCommandDto,
   RuntimeResourceKind,

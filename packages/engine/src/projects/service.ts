@@ -1,7 +1,7 @@
 import { assertCapabilities } from "../config/deployment.js";
 import { transaction } from "../database/transaction.js";
 import { Effect, Layer, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { RouterConfig } from "../config/runtime.js";
 import { rows } from "../database/query.js";
 import { DomainError } from "../errors.js";

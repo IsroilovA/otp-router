@@ -7,7 +7,7 @@ import { DeliveryOwnerLive } from "./challenges/delivery-owner.js";
 import { DeliveryLive } from "./delivery/service.js";
 import type { PgClient } from "@effect/sql-pg";
 import { Context, Effect, Layer, type Redacted } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { RouterLive } from "./challenges/service.js";
 import { invalidateRestoredOperations } from "./maintenance.js";
 import { RouterConfig } from "./config/runtime.js";

@@ -23,7 +23,7 @@ import { randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { connect } from "node:net";
 import { NodeServices } from "@effect/platform-node";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { PgClient } from "@effect/sql-pg";
 import { Redacted, Context, Effect, Exit, Layer, Scope } from "effect";
 import { PgBoss } from "pg-boss";

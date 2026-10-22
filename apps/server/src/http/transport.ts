@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { type Context, Effect, Layer, Schema } from "effect";
-import { HttpApiBuilder, HttpApiMiddleware } from "effect/unstable/httpapi";
-import { HttpRouter, HttpServer, HttpServerResponse } from "effect/unstable/http";
+import { HttpApiBuilder, HttpApiMiddleware } from "effect/http-api";
+import { HttpRouter, HttpServer, HttpServerResponse } from "effect/http";
 import { RuntimeAdministration } from "@otp-router/engine/runtime";
 import { Projects } from "@otp-router/engine/projects";
 import { Delivery } from "@otp-router/engine/delivery";

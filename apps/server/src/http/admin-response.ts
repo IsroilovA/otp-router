@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpServerResponse } from "effect/http";
 import type { DomainError } from "@otp-router/engine/challenges";
 import { AdminContext } from "./contracts.js";
 import { errorResponse } from "./errors.js";

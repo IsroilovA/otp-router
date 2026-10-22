@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/unstable/httpapi";
+import { HttpApiEndpoint, HttpApiGroup, HttpApiSchema } from "effect/http-api";
 import { EventPage, AttemptPage, OperationPage } from "@otp-router/engine/history";
 import { AttemptSnapshot } from "@otp-router/engine/delivery";
 import {

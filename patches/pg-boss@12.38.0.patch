@@ -1,11 +1,9 @@
 diff --git a/dist/types.d.ts b/dist/types.d.ts
-index ed848551edce4ee0629e70666b9cdffc33b0a143..b3531d82b8df105cff2cb294cf1f8904a4721767 100644
 --- a/dist/types.d.ts
 +++ b/dist/types.d.ts
-@@ -1341,3 +1341,29 @@ export type PgBossEventMap = {
+@@ -1588,3 +1588,31 @@ export type PgBossEventMap = {
      flow: [data: FlowEvent];
  };
- //# sourceMappingURL=types.d.ts.map
 +export interface CompatibilityFlags {
 +  noSkipLocked?: boolean;
 +  noMultiMutationCte?: boolean;
@@ -31,4 +29,8 @@ index ed848551edce4ee0629e70666b9cdffc33b0a143..b3531d82b8df105cff2cb294cf1f8904
 +  bamIntervalSeconds: number;
 +  flowIntervalSeconds: number;
 +  reindexIntervalSeconds: number;
++  registerInstance: boolean;
++  instanceHeartbeatSeconds: number;
 +}
+ //# sourceMappingURL=types.d.ts.map
+\ No newline at end of file

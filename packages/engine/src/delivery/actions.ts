@@ -1,6 +1,6 @@
 import { suppressPendingAttempts } from "./attempts.js";
 import { admissionLimit, quotaRetryAt, countQuotas } from "./quotas.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { DomainError } from "../errors.js";

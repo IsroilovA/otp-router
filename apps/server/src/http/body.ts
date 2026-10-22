@@ -1,5 +1,5 @@
 import { Data, Effect, type Schema, Stream } from "effect";
-import type { HttpServerRequest } from "effect/unstable/http";
+import type { HttpServerRequest } from "effect/http";
 import { decodeJson } from "./json.js";
 import { errorResponse } from "./errors.js";
 

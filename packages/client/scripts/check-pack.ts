@@ -38,7 +38,7 @@ execFileSync(
     "--no-fund",
     join(temporary, packed.filename),
     "typescript@7.0.2",
-    "@types/node@26.6.3",
+    "@types/node@26.6.5",
   ],
   { cwd: temporary, stdio: "inherit" },
 );
@@ -84,7 +84,7 @@ execFileSync(
     "--types",
     "node",
     "--target",
-    "ES2024",
+    "ES2025",
     "--module",
     "NodeNext",
     "--moduleResolution",

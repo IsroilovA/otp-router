@@ -5,7 +5,7 @@ import { transitionAttempts } from "./attempts.js";
 import { authorizeAttempt, projectBlock } from "./authorization.js";
 import { changed } from "./changes.js";
 import { deliveryTransaction as transaction } from "./transaction.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Cause, Effect, Exit, Schema } from "effect";
 import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";

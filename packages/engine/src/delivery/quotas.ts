@@ -1,5 +1,5 @@
 import { findProject } from "../projects/store.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
 import { DomainError } from "../errors.js";

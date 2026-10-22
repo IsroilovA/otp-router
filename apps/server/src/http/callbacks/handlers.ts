@@ -1,6 +1,6 @@
 import { Effect } from "effect";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { type HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { type HttpServerRequest, HttpServerResponse } from "effect/http";
 import { OtpRouterApi } from "../api.js";
 import { BodyTooLarge, readBody } from "../body.js";
 import {

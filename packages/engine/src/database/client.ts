@@ -1,6 +1,6 @@
 import * as PgClient from "@effect/sql-pg/PgClient";
 import { Effect, type Redacted } from "effect";
-import { SqlClient, SqlError } from "effect/unstable/sql";
+import { SqlClient, SqlError } from "effect/sql";
 
 export const makeDatabaseLayer = (url: Redacted.Redacted<string>) =>
   PgClient.layerFrom(

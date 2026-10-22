@@ -2,7 +2,7 @@ import { HistoryEvent } from "@otp-router/engine/history";
 import type { Snapshot as DeliverySnapshot } from "@otp-router/engine/delivery";
 import { Webhook } from "standardwebhooks";
 import { PgClient } from "@effect/sql-pg";
-import { SqlClient, SqlSchema } from "effect/unstable/sql";
+import { SqlClient, SqlSchema } from "effect/sql";
 import { Data, Effect, Schema } from "effect";
 import { type Snapshot } from "@otp-router/engine/challenges";
 

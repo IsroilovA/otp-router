@@ -3,7 +3,7 @@ import { requireAccess } from "../projects/store.js";
 import { transitionAttempts } from "./attempts.js";
 import { changed } from "./changes.js";
 import { randomUUID } from "node:crypto";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect } from "effect";
 import { enqueueDelivery } from "../queue/jobs.js";
 import type { Operation, Attempt } from "./records.js";

@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import type { AttemptEvent } from "../delivery/history-contracts.js";
 import type { ChallengeEvent } from "../challenges/contracts.js";
 import type { DeliveryEvent } from "../delivery/contracts.js";

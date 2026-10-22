@@ -2,7 +2,7 @@ import { suppressPendingAttempts, transitionAttempts } from "./attempts.js";
 import { appendEvidence } from "./evidence.js";
 import { changed } from "./changes.js";
 import { deliveryTransaction as transaction } from "./transaction.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";

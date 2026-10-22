@@ -1,5 +1,5 @@
 import { Effect } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { enqueueNotification } from "../queue/jobs.js";
 // The event, notification and queue job commit in the same transaction.
 export const scheduleNotification = (eventId: string, time: Date) =>

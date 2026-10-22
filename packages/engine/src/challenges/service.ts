@@ -2,7 +2,7 @@ import { requireAccess } from "../projects/store.js";
 import { domainTransaction } from "../delivery/transaction.js";
 import { observeOperation } from "../diagnostics/operation.js";
 import { DeliveryOwner } from "../delivery/owner.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { PgClient } from "@effect/sql-pg";
 import { Effect, Layer, Schema } from "effect";
 import { RouterConfig } from "../config/runtime.js";

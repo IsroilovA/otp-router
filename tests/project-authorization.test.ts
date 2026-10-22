@@ -1,5 +1,5 @@
 import type { FixtureConfiguration as Configuration } from "./fixture.js";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import type { SqlError } from "effect/sql/SqlError";
 import { deliveryTransaction } from "../packages/engine/src/delivery/transaction.js";
 import { recordOutcome } from "../packages/engine/src/delivery/outcomes.js";
 import { randomUUID } from "node:crypto";

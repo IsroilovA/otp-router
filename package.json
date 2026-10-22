@@ -4,9 +4,9 @@
   "license": "MIT",
   "private": true,
   "type": "module",
-  "packageManager": "pnpm@12.8.1",
+  "packageManager": "pnpm@12.15.0",
   "engines": {
-    "node": ">=26.10.0"
+    "node": ">=26.12.1"
   },
   "scripts": {
     "build": "pnpm --filter @otp-router/engine build && pnpm --filter @otp-router/server build && pnpm --filter @otp-router/client build",
@@ -22,27 +22,27 @@
     "start": "pnpm --filter @otp-router/server start"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
-    "@effect/platform-node": "4.0.0-rc.116",
-    "@effect/sql-pg": "4.0.0-rc.116",
-    "@effect/tsgo": "0.47.1",
-    "@effect/vitest": "4.0.0-rc.116",
+    "@biomejs/biome": "2.6.2",
+    "@effect/platform-node": "4.0.5",
+    "@effect/sql-pg": "4.0.5",
+    "@effect/tsgo": "0.56.0",
+    "@effect/vitest": "4.0.5",
     "@otp-router/client": "workspace:*",
     "@otp-router/engine": "workspace:*",
     "@otp-router/server": "workspace:*",
-    "@types/node": "26.6.3",
+    "@types/node": "26.6.5",
     "@types/pg": "8.23.1",
     "@types/semver": "7.8.0",
-    "effect": "4.0.0-rc.116",
-    "eslint-plugin-sonarjs": "4.2.2",
-    "libphonenumber-js": "1.13.14",
-    "oxlint": "1.86.0",
-    "oxlint-tsgolint": "7.0.2003",
-    "pg-boss": "12.35.1",
+    "effect": "4.0.5",
+    "libphonenumber-js": "1.13.15",
+    "oxlint": "1.89.0",
+    "oxlint-plugin-effect": "0.29.0",
+    "oxlint-tsgolint": "7.0.2004",
+    "pg-boss": "12.38.0",
     "semver": "7.8.5",
     "standardwebhooks": "1.1.1",
     "typescript": "7.0.2",
-    "vite": "8.3.1",
-    "vitest": "5.0.3"
+    "vite": "8.3.5",
+    "vitest": "5.0.5"
   }
 }

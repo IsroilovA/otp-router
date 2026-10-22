@@ -1,5 +1,5 @@
 import { Webhook } from "standardwebhooks";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Data, Effect, Schema } from "effect";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { rows } from "../database/query.js";

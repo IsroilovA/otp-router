@@ -1,6 +1,6 @@
 import { Effect, Schema } from "effect";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { HttpServerResponse } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { HttpServerResponse } from "effect/http";
 import { RuntimeAdministration, RuntimeCommand } from "@otp-router/engine/runtime";
 import { OtpRouterApi } from "../api.js";
 import { AdminContext } from "../contracts.js";

@@ -3,7 +3,7 @@ import { intentEligible } from "./eligibility.js";
 import { transitionAttempts } from "./attempts.js";
 import type { Attempt, Operation } from "./records.js";
 import { Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { databaseTime } from "../database/transaction.js";
 import { rows } from "../database/query.js";

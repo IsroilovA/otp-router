@@ -14,9 +14,9 @@ jobs:
         with:
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.10.0
+          node-version: 26.12.1
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
@@ -36,16 +36,16 @@ jobs:
       - if: matrix.runner == 'ubuntu-latest'
         uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
       - if: matrix.runner == 'ubuntu-latest'
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.10.0
+          node-version: 26.12.1
           cache: pnpm
       - if: matrix.runner == 'ubuntu-latest'
         run: pnpm install --frozen-lockfile
       - if: matrix.runner == 'ubuntu-latest'
         run: pnpm build
       - if: matrix.runner == 'ubuntu-latest'
-        run: npm install --global npm@12.2.0
+        run: npm install --global npm@12.2.1
       - if: matrix.runner == 'ubuntu-latest'
         run: pnpm --filter @otp-router/client pack:check
       - run: docker build -f apps/server/Dockerfile -t otp-router:smoke .
@@ -68,9 +68,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.10.0
+          node-version: 26.12.1
       - run: pnpm install --frozen-lockfile
       - id: plan
         run: node scripts/release/plan.ts server
@@ -172,16 +172,16 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: 26.10.0
+          node-version: 26.12.1
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
       - run: pnpm install --frozen-lockfile
       - id: plan
         run: node scripts/release/plan.ts client
       - if: steps.plan.outputs.state != 'skip'
-        run: npm install --global npm@12.2.0
+        run: npm install --global npm@12.2.1
       - if: steps.plan.outputs.state != 'skip'
         run: pnpm build
       - name: Pack published bytes
