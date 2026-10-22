@@ -1,19 +1,19 @@
 {
   "name": "@otp-router/server",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
-    "node": ">=26.10.0"
+    "node": ">=26.12.1"
   },
   "scripts": {
     "build": "node --eval \"require('node:fs').rmSync('dist', { recursive: true, force: true })\" && tsc --project tsconfig.build.json",
     "start": "node dist/main.js"
   },
   "dependencies": {
-    "@effect/platform-node": "4.0.0-rc.116",
+    "@effect/platform-node": "4.0.5",
     "@otp-router/engine": "workspace:*",
-    "effect": "4.0.0-rc.116",
+    "effect": "4.0.5",
     "jsonc-parser": "3.3.1"
   },
   "exports": {

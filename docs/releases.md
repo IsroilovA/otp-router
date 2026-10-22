@@ -8,25 +8,30 @@ Server and client versions are independent. Update the affected [server](../apps
 
 Versions must increase in SemVer order. Stable versions, including `0.0.1`, use `latest`. Versions ending in `-alpha.N`, `-beta.N`, or `-rc.N` use `next` and are marked as prereleases. Pin exact versions or image digests when deploying.
 
-| Component | Artifact | Release tag |
-| --- | --- | --- |
-| Server | `ghcr.io/isroilova/otp-router:<version>` for Linux amd64/arm64 | `server-v<version>` |
-| Client | Public npm package `@otp-router/client@<version>` | `client-v<version>` |
+| Component | Artifact                                                       | Release tag         |
+| --------- | -------------------------------------------------------------- | ------------------- |
+| Server    | `ghcr.io/isroilova/otp-router:<version>` for Linux amd64/arm64 | `server-v<version>` |
+| Client    | Public npm package `@otp-router/client@<version>`              | `client-v<version>` |
 
 Server Releases include OpenAPI, an image digest reference, and SHA-256 checksums. Tags and Releases are created after the artifacts are available. Published versions are never reused for changed content.
 
 Versions below `1.0.0` may break compatibility. Release notes must identify supported client/server pairings and upgrade steps for breaking changes. Schema changes follow the [database upgrade procedure](operations.md#database-upgrades). Deployment requirements belong in the [operations guide](operations.md).
 
-## Pending breaking replacement
+## Pending 0.3.0
 
-Server `0.2.0` and client `0.2.0` target each other and replace published `server-v0.1.0` / `client-v0.1.0` and earlier releases. These source versions prepare the replacement; merging, artifact publication, and deployment are separate actions.
+Server `0.3.0` and client `0.3.0` target each other and upgrade published `server-v0.2.0` / `client-v0.2.0`. These source versions prepare publication; merging, artifact publication, and deployment are separate actions.
 
-Use a separate fresh database and follow the [database replacement procedure](operations.md#database-upgrades), including retention of the old deployment's data and keys. No migration, import, or backfill is supplied.
+Update host runtimes to Node.js 26.12.1 or newer and use pnpm 12.15.0. Client packaging and publication use npm 12.2.1. Containers use Node 26 on Debian Trixie; PostgreSQL images remain pinned to 18.6.
 
-Update host runtimes to Node.js 26.10.0 or newer and use the pinned pnpm version. Client packaging and publication use npm 12.2.0. The container now uses Node 26 on Debian Trixie; PostgreSQL images are pinned to 18.6.
+Rebuild trusted deployment extensions against the pinned stable Effect `4.0.5` package set. Replace imports from `effect/unstable/http`, `effect/unstable/httpapi`, `effect/unstable/sql`, and `effect/unstable/observability` with the exported `effect/http`, `effect/http-api`, `effect/sql`, and `effect/observability` entrypoints. Some integration APIs remain marked unstable by Effect; the [compiler configuration](../tsconfig.base.json) explicitly allows the integrations this project adopts.
 
-Update integrations together:
+The HTTP contract and router database baseline are unchanged from `0.2.0`; no fresh router database or backfill is required. pg-boss upgrades its own schema to version 46 automatically during startup. Follow the [database upgrade procedure](operations.md#database-upgrades) before restarting the deployment.
 
+## Published 0.2.0 replacement
+
+Published server `0.2.0` and client `0.2.0` replaced `0.1.0` and earlier releases. Upgrading from those older releases still requires a separate fresh database and the [database replacement procedure](operations.md#replacing-010-and-earlier), including retention of the old deployment's data and keys. No migration, import, or backfill is supplied.
+
+For that replacement, update integrations together:
 - Remove the deployment project catalog and principal `projectIds`. Configure administrator credentials, backend principal identities, and administration ceilings; provision projects and grants through [project administration](projects.md). Direct engine calls must supply the authenticated principal ID.
 - Remove static provider and policy catalogs. Register installed adapters and versioned selectors, configure runtime administration permissions, and provision accounts, credentials, instances, policies, and assignments through [runtime administration](runtime-configuration.md). Custom adapters must implement [provider contract version 2](plugins.md#providers), with separate account identity, send secrets, callback secrets, execution settings, and templates.
 - Update runtime command consumers to the [current schemas](../packages/engine/src/runtime/contracts.ts). Commands constrain payloads to resource kinds; account grants require `allInstances: true`, and allowance scopes support limit edits without lifecycle commands or lifecycle metadata.
@@ -52,13 +57,13 @@ If an existing GHCR package is not linked to this repository, grant the reposito
 
 In npm package settings, add this GitHub Actions trusted publisher:
 
-| Setting | Value |
-| --- | --- |
-| Organization or user | `IsroilovA` |
-| Repository | `otp-router` |
-| Workflow filename | `check.yml` |
-| Environment | Empty |
-| Allowed actions | Direct `npm publish` |
+| Setting              | Value                |
+| -------------------- | -------------------- |
+| Organization or user | `IsroilovA`          |
+| Repository           | `otp-router`         |
+| Workflow filename    | `check.yml`          |
+| Environment          | Empty                |
+| Allowed actions      | Direct `npm publish` |
 
 Use [npm's setup guide](https://docs.npmjs.com/trusted-publishers/) or [trust command](https://docs.npmjs.com/cli/v11/commands/npm-trust/). Keep the package repository URL matched to this public repository for provenance. After verifying OIDC publication, require 2FA and disallow traditional publishing tokens in npm settings.
 
@@ -67,14 +72,14 @@ Use [npm's setup guide](https://docs.npmjs.com/trusted-publishers/) or [trust co
 Before merging:
 
 ```sh
-npm install --global npm@12.2.0
+npm install --global npm@12.2.1
 pnpm install --frozen-lockfile
 pnpm check
 pnpm test
 pnpm --filter @otp-router/client pack:check
 ```
 
-Confirm CI passes on Node 26.10.0 and image smoke tests pass on Linux amd64/arm64. Confirm npm trusted publishing and GHCR access are configured. Tests use fake or mocked providers; live delivery requires [provider validation](provider-setup.md).
+Confirm CI passes on Node 26.12.1 and image smoke tests pass on Linux amd64/arm64. Confirm npm trusted publishing and GHCR access are configured. Tests use fake or mocked providers; live delivery requires [provider validation](provider-setup.md).
 
 For each published component, verify its Release and artifacts: server assets and anonymous image pulls, or client installation in a clean project. Confirm registry channel tags resolve to the intended versions.
 

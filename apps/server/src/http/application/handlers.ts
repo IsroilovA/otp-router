@@ -1,6 +1,6 @@
 import { Cause, Effect, Schema } from "effect";
-import { HttpApiBuilder } from "effect/unstable/httpapi";
-import { type HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
+import { HttpApiBuilder } from "effect/http-api";
+import { type HttpServerRequest, HttpServerResponse } from "effect/http";
 import {
   Delivery,
   PrepareInput,

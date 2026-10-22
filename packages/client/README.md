@@ -1,9 +1,9 @@
 # OTP Router client
 
-A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 26.10.0 or newer. ESM only. Pin the version and review [release compatibility and upgrade notes](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md) before upgrading.
+A typed Promise client for the self-hosted [OTP Router](https://github.com/IsroilovA/otp-router) HTTP API. Requires Node.js 26.12.1 or newer. ESM only. Pin the version and review [release compatibility and upgrade notes](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md) before upgrading.
 
 ```sh
-npm install --save-exact @otp-router/client@0.2.0
+npm install --save-exact @otp-router/client@0.3.0
 ```
 
 ```ts
@@ -33,7 +33,7 @@ const current = await client.getChallenge(result.data.challengeId);
 
 Run this only on a trusted backend. Keep credentials and codes out of client applications and logs. Creation acknowledges durable work; provider acceptance does not verify a person.
 
-Use `createClient()` for managed challenges, external-code delivery, and history; use `createAdminClient()` for project and runtime administration. Version `0.2.0` pairs with server `0.2.0`; follow the [server database replacement procedure](https://github.com/IsroilovA/otp-router/blob/main/docs/operations.md#database-upgrades) when upgrading. Exported TypeScript declarations define methods and DTO fields.
+Use `createClient()` for managed challenges, external-code delivery, and history; use `createAdminClient()` for project and runtime administration. Version `0.3.0` pairs with server `0.3.0`; follow the [release upgrade instructions](https://github.com/IsroilovA/otp-router/blob/main/docs/releases.md#pending-030) when upgrading. Exported TypeScript declarations define methods and DTO fields.
 
 The optional `integrationReference` correlates upstream flows within a project. Supply opaque identifiers, never personal data or secrets; authorization services and webhook consumers receive it. Creation/preparation save it immutably, and retries must preserve its original presence and exact value. See the [correlation contract](https://github.com/IsroilovA/otp-router/blob/main/docs/api.md#integration-correlation) and coordinate updates for strict authorization/event validators.
 
@@ -45,9 +45,15 @@ Every mutation requires an explicit `idempotencyKey`. There are no automatic ret
 
 ```ts
 try {
-  await client.verifyChallenge(current.data.challengeId, {
-    code: "000123", purpose: "login", contextId: "authorized-session-id",
-  }, { idempotencyKey: randomUUID() });
+  await client.verifyChallenge(
+    current.data.challengeId,
+    {
+      code: "000123",
+      purpose: "login",
+      contextId: "authorized-session-id",
+    },
+    { idempotencyKey: randomUUID() },
+  );
 } catch (error: unknown) {
   if (error instanceof OtpRouterApiError && error.error.code === "incorrect_code") {
     const locked = error.error.reason === "locked";

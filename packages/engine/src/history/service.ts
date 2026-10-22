@@ -3,7 +3,7 @@ import { requireAccess } from "../projects/store.js";
 import { AttemptSnapshot } from "../delivery/history-contracts.js";
 import { IntegrationReference } from "../delivery/input.js";
 import { Effect, Layer, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { rows } from "../database/query.js";
 import { RouterConfig } from "../config/runtime.js";
 import { DomainError } from "../errors.js";

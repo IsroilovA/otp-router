@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { NodeHttpServer } from "@effect/platform-node";
 import { Effect, Exit, Layer, Schema, Scope } from "effect";
-import { HttpRouter } from "effect/unstable/http";
+import { HttpRouter } from "effect/http";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createClient, type OtpRouterClient } from "@otp-router/client";
 import { Router } from "@otp-router/engine/challenges";
@@ -59,7 +59,7 @@ const provider = Layer.effect(
 );
 let postgres: PostgresFixture | undefined;
 let runtime: IntegrationRuntime | undefined;
-let scope: Scope.Scope | undefined;
+let scope: Scope.Closeable | undefined;
 let client: OtpRouterClient | undefined;
 let baseUrl = "";
 

@@ -1,5 +1,5 @@
 import { assertCapabilities } from "../config/deployment.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { finalizeEvents } from "../history/publication.js";
 import { Effect, Result } from "effect";
 import { transaction as databaseTransaction } from "../database/transaction.js";

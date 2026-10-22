@@ -1,4 +1,5 @@
 ---
+
 name: release
 description: Prepare, publish, or verify an OTP Router release. Use for release readiness and interrupted publication, not service deployment.
 ---
@@ -6,7 +7,6 @@ description: Prepare, publish, or verify an OTP Router release. Use for release 
 # Release
 
 Follow the [release guide](../../../docs/releases.md); it owns versioning, changelog, verification, and recovery rules.
-
 1. Compare pending changes with published component tags and artifacts. Identify affected components and confirm intended versions.
 2. Prepare the version changes and PR using the guide's changelog and release-verification requirements.
 3. When merging is authorized, verify required checks on the current PR head, merge, and follow the resulting `main` publication run.

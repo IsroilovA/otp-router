@@ -1,5 +1,5 @@
-import { SqlSchema } from "effect/unstable/sql";
-import type { SqlError } from "effect/unstable/sql/SqlError";
+import { SqlSchema } from "effect/sql";
+import type { SqlError } from "effect/sql/SqlError";
 import type { Effect } from "effect";
 import { Schema } from "effect";
 

@@ -1,5 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { Ciphertext, type CryptoConfig, decrypt, encrypt } from "../crypto.js";
 import { rows } from "../database/query.js";

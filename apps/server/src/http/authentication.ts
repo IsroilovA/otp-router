@@ -1,6 +1,6 @@
 import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 import { Effect, Layer, Redacted, Schema } from "effect";
-import { HttpServerRequest } from "effect/unstable/http";
+import { HttpServerRequest } from "effect/http";
 import { Principals } from "../config/config.js";
 import { ApplicationAuth, RequestContext, AdminAuth, AdminContext } from "./contracts.js";
 import { errorMessages } from "./errors.js";

@@ -1,6 +1,6 @@
 import { createServer, type Server } from "node:http";
 import { Effect, Fiber, Layer } from "effect";
-import { HttpRouter, HttpServerResponse } from "effect/unstable/http";
+import { HttpRouter, HttpServerResponse } from "effect/http";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import { makeEngineLayer, EngineControl, engineMetrics } from "@otp-router/engine";
 import {

@@ -1,11 +1,11 @@
 {
   "name": "@otp-router/client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Typed backend HTTP client for self-hosted OTP Router",
   "type": "module",
   "license": "MIT",
   "engines": {
-    "node": ">=26.10.0"
+    "node": ">=26.12.1"
   },
   "exports": {
     ".": {
@@ -26,12 +26,12 @@
     "pack:check": "node scripts/check-pack.ts"
   },
   "dependencies": {
-    "effect": "4.0.0-rc.116"
+    "effect": "4.0.5"
   },
   "devDependencies": {
     "@otp-router/server": "workspace:*",
-    "rolldown": "1.2.12",
-    "rolldown-plugin-dts": "0.28.6"
+    "rolldown": "1.2.15",
+    "rolldown-plugin-dts": "0.28.8"
   },
   "repository": {
     "type": "git",

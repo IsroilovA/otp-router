@@ -1,7 +1,7 @@
 # Build from the workspace root: docker build -f examples/custom-adapter/Dockerfile .
-FROM node:26.10.0-trixie-slim
+FROM node:26.12.1-trixie-slim
 WORKDIR /app
-RUN npm install --global pnpm@12.8.1
+RUN npm install --global pnpm@12.15.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY packages/engine/package.json ./packages/engine/package.json
 COPY apps/server/package.json ./apps/server/package.json

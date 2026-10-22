@@ -1,7 +1,7 @@
 import { resource } from "../runtime/store.js";
 import { lockProject } from "../projects/store.js";
 import { deliveryTransaction as transaction } from "./transaction.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect, Schema } from "effect";
 import { providerDiagnostic } from "../providers/diagnostics.js";
 import type { RuntimeConfiguration } from "../config/config.js";

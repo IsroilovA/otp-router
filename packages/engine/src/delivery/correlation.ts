@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import type { CryptoConfig } from "../crypto.js";
 import { Data, Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import type { CorrelationReference } from "../providers/contract.js";
 import { rows } from "../database/query.js";
 

@@ -7,7 +7,7 @@ import {
 } from "../runtime/store.js";
 import { commonSendLimits, providerSendLimits, quotaBlocks } from "../delivery/quotas.js";
 import { deliveryWindowFits } from "../providers/timing.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "../database/query.js";
 import type { RuntimeConfiguration } from "../config/config.js";

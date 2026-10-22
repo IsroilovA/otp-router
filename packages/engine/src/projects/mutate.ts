@@ -2,7 +2,7 @@ import { transaction } from "../database/transaction.js";
 import { assertCapabilities } from "../config/deployment.js";
 import { createHash, randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import type { RuntimeConfiguration } from "../config/config.js";
 import { canonical } from "../crypto.js";
 import { rows } from "../database/query.js";

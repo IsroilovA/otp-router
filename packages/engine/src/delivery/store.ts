@@ -1,7 +1,7 @@
 import { DeliveryOwner } from "./owner.js";
 import { suppressPendingAttempts } from "./attempts.js";
 import { changed } from "./changes.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect } from "effect";
 import { single } from "../database/query.js";
 import { type Operation, Secrets } from "./records.js";

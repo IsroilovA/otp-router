@@ -1,5 +1,5 @@
 import { Context, Data, Effect, Layer, Redacted } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { PgBoss, type SendOptions } from "pg-boss";
 import { makeConsumers } from "./consumers.js";
 import {

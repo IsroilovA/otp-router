@@ -64,35 +64,29 @@ const readResponseBody = async (response: Response): Promise<Uint8Array> => {
 
 export const fetchTransport: HttpTransport = {
   execute: (request) =>
-    Effect.callback<HttpResponse, HttpTransportError>((resume, signal) => {
-      fetch(request.url, {
-        method: request.method,
-        redirect: "error",
-        headers: request.headers,
-        body: Uint8Array.from(request.body),
-        signal,
-      }).then(
-        (response) => {
-          readResponseBody(response).then(
-            (body) =>
-              resume(
-                Effect.succeed({
-                  status: response.status,
-                  headers: toHeaders(response.headers),
-                  body,
-                }),
-              ),
-            (error: unknown) =>
-              resume(
-                Effect.fail(
-                  error instanceof HttpTransportError
-                    ? error
-                    : new HttpTransportError({ reason: "response_failed" }),
-                ),
-              ),
-          );
-        },
-        () => resume(Effect.fail(new HttpTransportError({ reason: "request_failed" }))),
-      );
+    Effect.tryPromise({
+      try: async (signal) => {
+        let response: Response;
+        try {
+          response = await fetch(request.url, {
+            method: request.method,
+            redirect: "error",
+            headers: request.headers,
+            body: Uint8Array.from(request.body),
+            signal,
+          });
+        } catch {
+          throw new HttpTransportError({ reason: "request_failed" });
+        }
+        return {
+          status: response.status,
+          headers: toHeaders(response.headers),
+          body: await readResponseBody(response),
+        };
+      },
+      catch: (error) =>
+        error instanceof HttpTransportError
+          ? error
+          : new HttpTransportError({ reason: "response_failed" }),
     }),
 };

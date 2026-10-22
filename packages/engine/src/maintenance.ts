@@ -5,7 +5,7 @@ import { recoverDispatches } from "./delivery/recovery.js";
 import { cleanupEvents } from "./history/retention.js";
 import { deliveryTransaction as transaction } from "./delivery/transaction.js";
 import type { RuntimeConfiguration } from "./config/config.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect, Schema } from "effect";
 import { rows } from "./database/query.js";
 import { databaseTime } from "./database/transaction.js";

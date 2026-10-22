@@ -1,4 +1,4 @@
-import type { Headers } from "effect/unstable/http";
+import type { Headers } from "effect/http";
 import { Context, Data, type Effect } from "effect";
 
 export type WebhookQuery = Readonly<Record<string, string | ReadonlyArray<string>>>;

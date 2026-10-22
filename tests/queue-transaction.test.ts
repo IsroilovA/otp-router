@@ -4,7 +4,7 @@ import { NodeServices } from "@effect/platform-node";
 import { Data, Deferred, Effect, Exit, Fiber, Layer, Redacted, Schema } from "effect";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
-import type { SqlClient } from "effect/unstable/sql/SqlClient";
+import type { SqlClient } from "effect/sql/SqlClient";
 import { PgClient } from "@effect/sql-pg";
 import { makeDatabaseLayer } from "../packages/engine/src/database/client.js";
 import { migrate } from "../packages/engine/src/database/migrations.js";

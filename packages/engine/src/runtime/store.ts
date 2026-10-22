@@ -1,5 +1,5 @@
 import { Effect, Schema } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { rows } from "../database/query.js";
 import { DomainError } from "../errors.js";
 import { ResourceData, ResourceKind, type ResourceSnapshot, ResourceState } from "./contracts.js";

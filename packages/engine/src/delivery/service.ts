@@ -4,7 +4,7 @@ import { observeOperation, type InfrastructureError } from "../diagnostics/opera
 import { admissionLimit, lockQuotas } from "./quotas.js";
 import type { PgClient } from "@effect/sql-pg";
 import { Effect, Layer, Schema } from "effect";
-import type { SqlClient } from "effect/unstable/sql";
+import type { SqlClient } from "effect/sql";
 import { RouterConfig } from "../config/runtime.js";
 import { databaseTime } from "../database/transaction.js";
 import { DomainError } from "../errors.js";

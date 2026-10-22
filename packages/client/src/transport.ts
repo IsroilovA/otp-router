@@ -5,8 +5,8 @@ import {
   HttpClient,
   HttpClientRequest,
   type HttpClientResponse,
-} from "effect/unstable/http";
-import { HttpApiClient } from "effect/unstable/httpapi";
+} from "effect/http";
+import { HttpApiClient } from "effect/http-api";
 import type {
   AdminClientOptions,
   ClientResponse,

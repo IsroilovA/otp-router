@@ -35,8 +35,7 @@ const effectTestBlocks = [
 
 export default defineConfig({
   plugins: ["typescript", "import", "vitest", "unicorn", "oxc"],
-  // SonarJS resolves its own TypeScript 6 API dependency; project builds use TypeScript 7.
-  jsPlugins: ["eslint-plugin-sonarjs"],
+  jsPlugins: ["oxlint-plugin-effect/plugin"],
   categories: { correctness: "error" },
   options: {
     typeAware: true,
@@ -54,7 +53,7 @@ export default defineConfig({
         variant: "modified",
       },
     ],
-    "sonarjs/cognitive-complexity": ["error", 20],
+    "effect/maxCognitiveComplexity": ["error", { max: 20 }],
     "max-depth": ["error", 4],
     "max-params": ["error", 4],
     eqeqeq: ["error", "always"],

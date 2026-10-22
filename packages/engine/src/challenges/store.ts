@@ -1,5 +1,5 @@
 import type { Operation } from "../delivery/records.js";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import { Effect, Schema } from "effect";
 import { rows, single } from "../database/query.js";
 import { DomainError } from "../errors.js";

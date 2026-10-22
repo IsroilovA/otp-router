@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Cause, Effect, Exit } from "effect";
-import { SqlError } from "effect/unstable/sql";
+import { SqlError } from "effect/sql";
 import { vi } from "vitest";
 import { observeJob } from "./diagnostics.js";
 

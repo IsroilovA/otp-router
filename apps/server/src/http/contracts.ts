@@ -1,5 +1,5 @@
 import { Context, Schema } from "effect";
-import { HttpApiMiddleware, HttpApiSchema, HttpApiSecurity } from "effect/unstable/httpapi";
+import { HttpApiMiddleware, HttpApiSchema, HttpApiSecurity } from "effect/http-api";
 import { Opaque } from "@otp-router/engine/challenges";
 import {
   ForbiddenError,

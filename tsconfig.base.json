@@ -1,7 +1,7 @@
 {
   "compilerOptions": {
-    "target": "ES2024",
-    "lib": ["ES2024", "DOM"],
+    "target": "ES2025",
+    "lib": ["ES2025", "DOM"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "moduleDetection": "force",
@@ -27,6 +27,18 @@
     "plugins": [
       {
         "name": "@effect/language-service",
+        "allowedUnstableApis": [
+          "@effect/platform-node/NodeHttpServer",
+          "@effect/platform-node/NodeRuntime",
+          "@effect/platform-node/NodeServices",
+          "@effect/sql-pg/PgClient",
+          "@effect/sql-pg/PgMigrator",
+          "@effect/vitest",
+          "effect/http",
+          "effect/http-api",
+          "effect/observability/PrometheusMetrics",
+          "effect/sql"
+        ],
         "diagnosticSeverity": {
           "anyUnknownInErrorContext": "error",
           "floatingEffect": "error",

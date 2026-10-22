@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { Effect } from "effect";
-import { SqlClient } from "effect/unstable/sql";
+import { SqlClient } from "effect/sql";
 import type { Operation, Attempt } from "./records.js";
 import type { Outcome } from "./decision.js";
 
